@@ -1,0 +1,4 @@
+[console_scripts]
+pcs = pcs.app:main
+pcs_snmp_agent = pcs.snmp.pcs_snmp_agent:main
+

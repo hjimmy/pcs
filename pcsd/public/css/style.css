@@ -5,7 +5,7 @@ html, body {
 }
 
 a, a:link, a:visited, a:hover, a:active {
-  color: #2B85DB;
+  color: #4b77be;
   text-decoration: none;
 }
 
@@ -94,7 +94,7 @@ td.right {
   padding: 8px;
   padding-left: 16px;
   padding-right: 16px;
-  background: #000000;
+  background: #4b77be;
   float: left;
 }
 
@@ -112,7 +112,7 @@ div.first a {
 }
 
 #header a, #header a:link, #header a:visited, #header a:hover, #header a:active {
-  color: #cccccc
+  color: #ffffff,
 }
 
 #header a.active {
@@ -124,8 +124,8 @@ div.first a {
   font-size: 11px;
   font-weight: bold;
   text-align: right;
-  color: #dddddd;
-  background: #000000;
+  color: #ffffff;
+  background: #4b77be;
   padding: 2px 5px 2px 5px;
   border-radius: 5px;
   -moz-border-radius: 5px;
@@ -146,7 +146,7 @@ div.first a {
 }
 
 #menu_list a, #menu_list span{
-  color: #cccccc;
+  color: #ffffff;
   font-family: "Overpass";
   font-size: 12px;
   font-weight: bold;
@@ -708,7 +708,7 @@ tr td a.remove {
   font-size: 11px;
   font-weight: bold;
   text-align: left;
-  background: black;
+  background: #4b77be;
 
   display: none;
   width: auto;
@@ -788,7 +788,7 @@ li.menuheader {
 }
 
 #new_resource_agent td, #new_stonith_agent td, #create_new_cluster_form td {
-  color: white;
+  color: #999999;
 }
 
 .wizard_header {
