@@ -2,7 +2,7 @@
   <td id="page_header" colspan=3>
     <table id="config_options">
       <tr>
-        <td>CLUSTER PROPERTIES</td>
+        <td>集群属性</td>
       </tr>
     </table>
   </td>
@@ -20,12 +20,12 @@
       {{input
           type="text"
           value=Pcs.settingsController.filter
-          placeholder="Filter"
+          placeholder="搜索"
       }}
       {{#if Pcs.settingsController.show_advanced}}
-        <button onclick="Pcs.settingsController.set('show_advanced', false);">Hide advanced settings</button>
+        <button onclick="Pcs.settingsController.set('show_advanced', false);">隐藏高级设置</button>
       {{else}}
-        <button onclick="Pcs.settingsController.set('show_advanced', true);">Show advanced settings</button>
+        <button onclick="Pcs.settingsController.set('show_advanced', true);">显示高级设置</button>
       {{/if}}
       <form id="cluster_properties">
         <table>
@@ -37,12 +37,12 @@
         </table>
         {{#if Pcs.settingsController.filtered}}
           <button onclick="update_cluster_settings(); return false;">
-            Apply Changes
+            保存修改
           </button>
         {{/if}}
       {{/if}}
       <button onclick="show_loading_screen(); refresh_cluster_properties(); return false;">
-        Refresh
+        刷新
       </button>
     </form>
   </td>

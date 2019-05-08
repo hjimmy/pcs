@@ -1316,7 +1316,7 @@ function show_loading_screen() {
   $("#loading_screen_progress_bar").progressbar({ value: 100});
   $("#loading_screen").dialog({
     modal: true,
-    title: "Loading",
+    title: "加载中",
     height: 100,
     width: 250,
     hide: {

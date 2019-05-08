@@ -1,6 +1,6 @@
 <div id="node_info_header">
   <div id="node_info_header_title">
-    PERMISSIONS FOR CLUSTER <%= h(@cluster_name).upcase %>
+      集群<%= h(@cluster_name).upcase %>权限:
   </div>
 </div>
 <div id="node_sub_info">
@@ -20,7 +20,7 @@
           show_loading_screen();
           permissions_load_cluster('<%= h(@cluster_name)%>', hide_loading_screen);
         "
-      >Refresh</button>
+      >刷新</button>
     </div>
   <% else %>
     <script type="text/javascript">
@@ -106,14 +106,14 @@
             show_loading_screen();
             permissions_load_cluster('<%= h(@cluster_name) %>', hide_loading_screen);
           "
-        >Refresh</button>
+        >刷新</button>
         <button type="button"
           onclick="
             this.disabled = true;
             permissions_save_cluster($(this).parents('form').first());
             this.disabled = false;
           "
-        >Apply Changes</button>
+        >保存修改</button>
       </div>
     </form>
   <% end %>

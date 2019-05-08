@@ -123,7 +123,7 @@
   <script type="text/x-handlebars" data-template-name="components/resource-edit">
   {{#if resource}}
     <div id="node_info_header">
-      <div class="node_info_header_title" >Edit {{page_name}}&nbsp;</div>
+      <div class="node_info_header_title" >编辑 {{page_name}}&nbsp;</div>
       <div id="node_info_header_title_name">{{resource._id}}</div>
     </div>
     <div id="node_sub_info">
@@ -1004,8 +1004,8 @@ Use the 'Add' button to submit the form.">
         }}
         {{#if resource}}
           <input class="apply_changes" type="button" onclick="$(this).hide();create_resource($(this)
-          .parents('form'),true); return false;" value="Apply Changes" style="margin-top: 1em;" />
-          <input type="button" onclick="tree_view_onclick(curResource()); return false;"  value="Refresh" />
+          .parents('form'),true); return false;" value="保存修改" style="margin-top: 1em;" />
+          <input type="button" onclick="tree_view_onclick(curResource()); return false;"  value="刷新" />
         {{else}}
           <center>
             <input class="apply_changes" type="button" onclick="$(this).hide();create_resource($(this)
@@ -1076,8 +1076,8 @@ Use the 'Add' button to submit the form.">
             parameters=agent.advanced_parameters
         }}
         {{#if resource}}
-          <input class="apply_changes" type="button" onclick="$(this).hide();create_resource($(this).parents('form'), true, true); return false;" value="Apply Changes" style="margin-top: 1em;" />
-          <input type="button" onclick="tree_view_onclick(curStonith()); return false;" value="Refresh" />
+          <input class="apply_changes" type="button" onclick="$(this).hide();create_resource($(this).parents('form'), true, true); return false;" value="保存修改" style="margin-top: 1em;" />
+          <input type="button" onclick="tree_view_onclick(curStonith()); return false;" value="刷新" />
         {{else}}
           <center>
             <input class="apply_changes" type="button" type="submit" onclick="$(this).hide();create_resource($(this).parents('form'), false, true); return false;" value="Create Fence Instance" style="margin-top: 1em;" />
@@ -1184,7 +1184,7 @@ Use the 'Add' button to submit the form.">
                   <div style="float:left;">
                     <div class="menuheader">
                       <div id="dropdownr" class="label"  style="white-space:nowrap" onclick="window.location='/manage'">
-                        <table style="background: #000000">
+                        <table style="background: #4b77be">
                           <tr>
                             <td>
                               <%=@manage ? "Select Cluster" : "Cluster: " + @cluster_name%>
@@ -1197,7 +1197,7 @@ Use the 'Add' button to submit the form.">
                       </div>
                       <div style="width:100%;" class="menu">
                         <% if not @manage %>
-                          <a href="/manage" class="menu-item">Manage&nbsp;Clusters&nbsp;&nbsp;</a>
+                          <a href="/manage" class="menu-item">&nbsp;集群管理&nbsp;&nbsp;</a>
                         <% end %>
                         <% @clusters.each { |c| %>
                           <a href="<%=c.ui_address%>" class="menu-item"><%=c.name%>&nbsp;&nbsp;</a>
@@ -1213,7 +1213,7 @@ Use the 'Add' button to submit the form.">
                     <div class="menuheader">
                       <div id="dropdownr" class="label"><%=session[:username]%><div style="float:right;" class="downarrow sprites"></div></div>
                       <div style="width:100%" class="menu">
-                        <a href="/logout" class="menu-item">Logout&nbsp;&nbsp;</a>
+                        <a href="/logout" class="menu-item">注销&nbsp;&nbsp;</a>
                       </div>
                     </div>
                     <!-- <div id="dropdownr">
@@ -1227,18 +1227,18 @@ Use the 'Add' button to submit the form.">
           <table>
             <% if !@manage %>
               <tr>
-                <td class="menuitem first">{{#link-to "Nodes" }}NODES{{/link-to}}</td>
-                <td class="menuitem">{{#link-to "Resources" }}RESOURCES{{/link-to}}</td>
-                <td class="menuitem">{{#link-to "Fence Devices" }}FENCE DEVICES{{/link-to}}</td>
-                <td class="menuitem">{{#link-to "ACLs" }}ACLS{{/link-to}}</td>
-                <td class="menuitem">{{#link-to "Configuration" }}CLUSTER PROPERTIES{{/link-to}}</td>
-                <td class="menuitem"><a href="/manage">MANAGE CLUSTERS</a></td>
-                <!--<td class="menuitem">{{#link-to "Wizards" }}WIZARDS{{/link-to}}</td>-->
+                <td class="menuitem first">{{#link-to "Nodes" }}主机{{/link-to}}</td>
+                <td class="menuitem">{{#link-to "Resources" }}资源{{/link-to}}</td>
+                <td class="menuitem">{{#link-to "Fence Devices" }}FENCE设备{{/link-to}}</td>
+                <td class="menuitem">{{#link-to "ACLs" }}访问控制{{/link-to}}</td>
+                <td class="menuitem">{{#link-to "Configuration" }}集群属性{{/link-to}}</td>
+                <td class="menuitem"><a href="/manage">集群管理</a></td>
+                <!--<td class="menuitem">{{#link-to "Wizards" }}向导{{/link-to}}</td>-->
               </tr>
             <% else %>
               <tr>
-                <td class="menuitem first"><a href="/manage">MANAGE CLUSTERS</a></td>
-                <td class="menuitem"><a href="/permissions">PERMISSIONS</a></td>
+                <td class="menuitem first"><a href="/manage">集群管理</a></td>
+                <td class="menuitem"><a href="/permissions">权限</a></td>
               </tr>
             <% end %>
           </table>
