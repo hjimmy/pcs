@@ -1,5 +1,6 @@
 PYAGENTX_VERSION="0.4.pcs.1"
-PYAGENTX_URI="https://github.com/ondrejmular/pyagentx/archive/v${PYAGENTX_VERSION}.tar.gz"
+#PYAGENTX_URI="v${PYAGENTX_VERSION}.tar.gz"
+PYAGENTX_URI="v0.4.pcs.1.tar.gz"
 
 ifndef PYTHON
 	PYTHON := $(shell which python3 || which python2 || which python)
@@ -31,7 +32,8 @@ get_pyagentx:
 ifeq (${PYAGENTX_PROVIDED},false)
 	rm -rf ${PYAGENTX_DIR}
 	mkdir -p ${BUNDLES_TMP_DIR}
-	wget -qO- ${PYAGENTX_URI} | tar xvz -C ${BUNDLES_TMP_DIR}
+	pwd
+	tar zxvf ${PYAGENTX_URI} -C ${BUNDLES_TMP_DIR}
 endif
 
 build_pyagentx: get_pyagentx

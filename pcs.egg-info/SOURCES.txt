@@ -239,8 +239,8 @@ pcsd/public/css/images/ui-icons_4b8e0b_256x240.png
 pcsd/public/css/images/ui-icons_a83300_256x240.png
 pcsd/public/css/images/ui-icons_cccccc_256x240.png
 pcsd/public/css/images/ui-icons_ffffff_256x240.png
-pcsd/public/images/HAM-logo.ai
 pcsd/public/images/HAM-logo.png
+pcsd/public/images/HAM-logo.svg
 pcsd/public/images/Shell_bg.png
 pcsd/public/images/action-icons.png
 pcsd/public/images/field_bg.png
