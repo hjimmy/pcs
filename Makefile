@@ -118,8 +118,8 @@ install: install_bundled_libs
 	# https://bugzilla.redhat.com/1353934
 	mkdir /usr/local/ha/ -p
 	cp pacemaker_lic.py  /usr/local/ha/ 
-	sed -i 's/ExecStart=.*/ExecStart=\/usr\/bin\/python \/usr\/local\/ha\/pacemaker_lic.py/g' /lib/systemd/system/pacemaker.service        
-	sed -i '$a\ExecStopPost=\/usr\/bin\/killall -TERM pacemakerd' /lib/systemd/system/pacemaker.service
+	sed -i 's/ExecStart=.*/ExecStart=\/usr\/bin\/python \/usr\/local\/ha\/pacemaker_lic.py/g' /lib/systemd/system/pacemaker.service       	
+	sed -i '$$a\ExecStopPost=\/usr\/bin\/killall -TERM pacemakerd' /lib/systemd/system/pacemaker.service
 	systemctl daemon-reload	
 
 	sed -i '1s|^\(#!\)"\(.*\)"$$|\1\2|' ${DESTDIR}${PREFIX}/bin/pcs
