@@ -2,6 +2,7 @@ from __future__ import (
     absolute_import,
     division,
     print_function,
+    unicode_literals,
 )
 
 from pcs.test.tools.pcs_unittest import TestCase
@@ -59,7 +60,7 @@ class CreateWithSetTest(TestCase):
 
     def test_put_new_constraint_to_constraint_section(self):
         self.create()
-        self.env.push_cib.assert_called_once_with()
+        self.env.push_cib.assert_called_once_with(self.cib)
         self.independent_cib.find(".//constraints").append(etree.XML("""
             <rsc_some id="some_id" symmetrical="true">
                   <resource_set id="pcs_rsc_set_A_B" role="Master">
@@ -79,7 +80,7 @@ class CreateWithSetTest(TestCase):
 
     def test_refuse_duplicate(self):
         self.create()
-        self.env.push_cib.assert_called_once_with()
+        self.env.push_cib.assert_called_once_with(self.cib)
         assert_raise_library_error(self.create, (
             severities.ERROR,
             report_codes.DUPLICATE_CONSTRAINTS_EXIST,
@@ -106,8 +107,8 @@ class CreateWithSetTest(TestCase):
         self.create()
         self.create(duplication_alowed=True)
         expected_calls = [
-            mock.call(),
-            mock.call(),
+            mock.call(self.cib),
+            mock.call(self.cib),
         ]
         self.assertEqual(self.env.push_cib.call_count, len(expected_calls))
         self.env.push_cib.assert_has_calls(expected_calls)

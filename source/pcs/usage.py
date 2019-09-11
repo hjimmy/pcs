@@ -2,6 +2,7 @@ from __future__ import (
     absolute_import,
     division,
     print_function,
+    unicode_literals,
 )
 
 import re
@@ -18,14 +19,13 @@ def full_usage():
     out += strip_extras(constraint([],False))
     out += strip_extras(node([],False))
     out += strip_extras(acl([],False))
-    out += strip_extras(qdevice([],False))
-    out += strip_extras(quorum([],False))
-    out += strip_extras(booth([],False))
+    # out += strip_extras(qdevice([],False))
+    # out += strip_extras(quorum([],False))
+    # out += strip_extras(booth([],False))
     out += strip_extras(status([],False))
     out += strip_extras(config([],False))
     out += strip_extras(pcsd([],False))
     out += strip_extras(alert([], False))
-    out += strip_extras(client([], False))
     print(out.strip())
     print("Examples:\n" + examples.replace(" \ ",""))
 
@@ -111,15 +111,14 @@ def generate_completion_tree_from_usage():
     tree["property"] = generate_tree(property([],False))
     tree["acl"] = generate_tree(acl([],False))
     tree["constraint"] = generate_tree(constraint([],False))
-    tree["qdevice"] = generate_tree(qdevice([],False))
-    tree["quorum"] = generate_tree(quorum([],False))
+    # tree["qdevice"] = generate_tree(qdevice([],False))
+    # tree["quorum"] = generate_tree(quorum([],False))
     tree["status"] = generate_tree(status([],False))
     tree["config"] = generate_tree(config([],False))
     tree["pcsd"] = generate_tree(pcsd([],False))
     tree["node"] = generate_tree(node([], False))
     tree["alert"] = generate_tree(alert([], False))
-    tree["booth"] = generate_tree(booth([], False))
-    tree["client"] = generate_tree(client([], False))
+    # tree["booth"] = generate_tree(booth([], False))
     return tree
 
 def generate_tree(usage_txt):
@@ -156,33 +155,23 @@ Usage: pcs [-f file] [-h] [commands]...
 Control and configure pacemaker and corosync.
 
 Options:
-    -h, --help         Display usage and exit.
-    -f file            Perform actions on file instead of active CIB.
-    --debug            Print all network traffic and external commands run.
-    --version          Print pcs version information. List pcs capabilities if
-                       --full is specified.
-    --request-timeout  Timeout for each outgoing request to another node in
-                       seconds. Default is 60s.
-    --force            Override checks and errors, the exact behavior depends on
-                       the command. WARNING: Using the --force option is
-                       strongly discouraged unless you know what you are doing.
+    -h, --help  Display usage and exit.
+    -f file     Perform actions on file instead of active CIB.
+    --debug     Print all network traffic and external commands run.
+    --version   Print pcs version information.
 
 Commands:
     cluster     Configure cluster options and nodes.
     resource    Manage cluster resources.
-    stonith     Manage fence devices.
-    constraint  Manage resource constraints.
-    property    Manage pacemaker properties.
-    acl         Manage pacemaker access control lists.
-    qdevice     Manage quorum device provider on the local host.
-    quorum      Manage cluster quorum settings.
-    booth       Manage booth (cluster ticket manager).
+    stonith     Configure fence devices.
+    constraint  Set resource constraints.
+    property    Set pacemaker properties.
+    acl         Set pacemaker access control lists.
     status      View cluster status.
     config      View and manage cluster configuration.
     pcsd        Manage pcs daemon.
     node        Manage cluster nodes.
-    alert       Manage pacemaker alerts.
-    client      Manage pcsd client configuration.
+    alert       Set pacemaker alerts.
 """
 # Advanced usage to possibly add later
 #  --corosync_conf=<corosync file> Specify alternative corosync.conf file
@@ -210,29 +199,25 @@ Commands:
         only resource agents matching the filter will be shown). If --nodesc is
         used then descriptions of resource agents are not printed.
 
-    describe [<standard>:[<provider>:]]<type> [--full]
-        Show options for the specified resource. If --full is specified, all
-        options including advanced ones are shown.
+    describe [<standard>:[<provider>:]]<type>
+        Show options for the specified resource.
 
     create <resource id> [<standard>:[<provider>:]]<type> [resource options]
            [op <operation action> <operation options> [<operation action>
            <operation options>]...] [meta <meta options>...]
-           [clone [<clone options>] | master [<master options>] |
+           [--clone <clone options> | --master <master options> |
            --group <group id> [--before <resource id> | --after <resource id>]
-           | bundle <bundle id>] [--disabled] [--no-default-ops] [--wait[=n]]
-        Create specified resource. If clone is used a clone resource is
-        created. If master is specified a master/slave resource is created.
-        If --group is specified the resource is added to the group named. You
+           ] [--disabled] [--wait[=n]]
+        Create specified resource.  If --clone is used a clone resource is
+        created.  If --master is specified a master/slave resource is created.
+        If --group is specified the resource is added to the group named.  You
         can use --before or --after to specify the position of the added
         resource relatively to some resource already existing in the group.
-        If bundle is used, the resource will be created inside of the specified
-        bundle. If --disabled is specified the resource is not started
-        automatically. If --no-default-ops is specified, only monitor
-        operations are created for the resource and all other operations use
-        default settings. If --wait is specified, pcs will wait up to 'n'
-        seconds for the resource to start and then return 0 if the resource is
-        started, or 1 if the resource has not yet started. If 'n' is not
-        specified it defaults to 60 minutes.
+        If --disabled is specified the resource is not started automatically.
+        If --wait is specified, pcs will wait up to 'n' seconds for the resource
+        to start and then return 0 if the resource is started, or 1 if
+        the resource has not yet started.  If 'n' is not specified it defaults
+        to 60 minutes.
         Example: Create a new resource called 'VirtualIP' with IP address
             192.168.0.99, netmask of 32, monitored everything 30 seconds,
             on eth2:
@@ -244,22 +229,22 @@ Commands:
         Deletes the resource, group, master or clone (and all resources within
         the group/master/clone).
 
-    enable <resource id>... [--wait[=n]]
-        Allow the cluster to start the resources. Depending on the rest of the
-        configuration (constraints, options, failures, etc), the resources may
-        remain stopped. If --wait is specified, pcs will wait up to 'n' seconds
-        for the resources to start and then return 0 if the resources are
-        started, or 1 if the resources have not yet started. If 'n' is not
-        specified it defaults to 60 minutes.
+    enable <resource id> [--wait[=n]]
+        Allow the cluster to start the resource. Depending on the rest of the
+        configuration (constraints, options, failures, etc), the resource may
+        remain stopped.  If --wait is specified, pcs will wait up to 'n' seconds
+        for the resource to start and then return 0 if the resource is started,
+        or 1 if the resource has not yet started.  If 'n' is not specified it
+        defaults to 60 minutes.
 
-    disable <resource id>... [--wait[=n]]
-        Attempt to stop the resources if they are running and forbid the
-        cluster from starting them again. Depending on the rest of the
-        configuration (constraints, options, failures, etc), the resources may
-        remain started. If --wait is specified, pcs will wait up to 'n' seconds
-        for the resources to stop and then return 0 if the resources are
-        stopped or 1 if the resources have not stopped. If 'n' is not specified
-        it defaults to 60 minutes.
+    disable <resource id> [--wait[=n]]
+        Attempt to stop the resource if it is running and forbid the cluster
+        from starting it again.  Depending on the rest of the configuration
+        (constraints, options, failures, etc), the resource may remain
+        started.  If --wait is specified, pcs will wait up to 'n' seconds for
+        the resource to stop and then return 0 if the resource is stopped or 1
+        if the resource has not stopped.  If 'n' is not specified it defaults
+        to 60 minutes.
 
     restart <resource id> [node] [--wait=n]
         Restart the resource specified. If a node is specified and if the
@@ -293,7 +278,7 @@ Commands:
         This is mainly used for debugging resources that fail to demote.
 
     debug-monitor <resource id> [--full]
-        This command will force the specified resource to be monitored on this
+        This command will force the specified resource to be moniored on this
         node  ignoring the cluster recommendations and print the output from
         monitoring the resource.  Using --full will give more detailed output.
         This is mainly used for debugging resources that fail to be monitored.
@@ -313,7 +298,7 @@ Commands:
         to move and then return 0 on success or 1 on error.  If 'n' is not
         specified it defaults to 60 minutes.
         If you want the resource to preferably avoid running on some nodes but
-        be able to failover to them use 'pcs constraint location avoids'.
+        be able to failover to them use 'pcs location avoids'.
 
     ban <resource id> [node] [--master] [lifetime=<lifetime>] [--wait[=n]]
         Prevent the resource id specified from running on the node (or on the
@@ -328,7 +313,7 @@ Commands:
         on success or 1 on error. If 'n' is not specified it defaults to 60
         minutes.
         If you want the resource to preferably avoid running on some nodes but
-        be able to failover to them use 'pcs constraint location avoids'.
+        be able to failover to them use 'pcs location avoids'.
 
     clear <resource id> [node] [--master] [--wait[=n]]
         Remove constraints created by move and/or ban on the specified
@@ -375,8 +360,7 @@ Commands:
 
     op defaults [options]
         Set default values for operations, if no options are passed, lists
-        currently configured defaults. Defaults do not apply to resources which
-        override them with their own defined operations.
+        currently configured defaults.
 
     meta <resource id | group id | master id | clone id> <meta options>
          [--wait[=n]]
@@ -391,22 +375,20 @@ Commands:
     group add <group id> <resource id> [resource id] ... [resource id]
               [--before <resource id> | --after <resource id>] [--wait[=n]]
         Add the specified resource to the group, creating the group if it does
-        not exist. If the resource is present in another group it is moved to
-        the new group. You can use --before or --after to specify the position
-        of the added resources relatively to some resource already existing in
-        the group. By adding resources to a group they are already in and
-        specifying --after or --before you can move the resources in the group.
-        If --wait is specified, pcs will wait up to 'n' seconds for the
-        operation to finish (including moving resources if appropriate) and
-        then return 0 on success or 1 on error. If 'n' is not specified it
-        defaults to 60 minutes.
+        not exist.  If the resource is present in another group it is moved
+        to the new group.  You can use --before or --after to specify
+        the position of the added resources relatively to some resource already
+        existing in the group.  If --wait is specified, pcs will wait up to 'n'
+        seconds for the operation to finish (including moving resources if
+        appropriate) and then return 0 on success or 1 on error.  If 'n' is not
+        specified it defaults to 60 minutes.
 
     group remove <group id> <resource id> [resource id] ... [resource id]
           [--wait[=n]]
         Remove the specified resource(s) from the group, removing the group if
-        no resources remain in it. If --wait is specified, pcs will wait up to
-        'n' seconds for the operation to finish (including moving resources if
-        appropriate) and then return 0 on success or 1 on error. If 'n' is not
+        it no resources remain.  If --wait is specified, pcs will wait up to 'n'
+        seconds for the operation to finish (including moving resources if
+        appropriate) and then return 0 on success or 1 on error.  If 'n' is not
         specified it defaults to 60 minutes.
 
     ungroup <group id> [resource id] ... [resource id] [--wait[=n]]
@@ -418,10 +400,10 @@ Commands:
         defaults to 60 minutes.
 
     clone <resource id | group id> [clone options]... [--wait[=n]]
-        Set up the specified resource or group as a clone. If --wait is
+        Setup up the specified resource or group as a clone.  If --wait is
         specified, pcs will wait up to 'n' seconds for the operation to finish
         (including starting clone instances if appropriate) and then return 0
-        on success or 1 on error. If 'n' is not specified it defaults to 60
+        on success or 1 on error.  If 'n' is not specified it defaults to 60
         minutes.
 
     unclone <resource id | group id> [--wait[=n]]
@@ -433,93 +415,40 @@ Commands:
 
     master [<master/slave id>] <resource id | group id> [options] [--wait[=n]]
         Configure a resource or group as a multi-state (master/slave) resource.
-        If --wait is specified, pcs will wait up to 'n' seconds for the
-        operation to finish (including starting and promoting resource
-        instances if appropriate) and then return 0 on success or 1 on error.
-        If 'n' is not specified it defaults to 60 minutes.
+        If --wait is specified, pcs will wait up to 'n' seconds for the operation
+        to finish (including starting and promoting resource instances if
+        appropriate) and then return 0 on success or 1 on error.  If 'n' is not
+        specified it defaults to 60 minutes.
         Note: to remove a master you must remove the resource/group it contains.
 
-    bundle create <bundle id> container <container type> [<container options>]
-            [network <network options>] [port-map <port options>]...
-            [storage-map <storage options>]... [meta <meta options>]
-            [--disabled] [--wait[=n]]
-        Create a new bundle encapsulating no resources. The bundle can be used
-        either as it is or a resource may be put into it at any time.
-        If --disabled is specified, the bundle is not started automatically.
-        If --wait is specified, pcs will wait up to 'n' seconds for the bundle
-        to start and then return 0 on success or 1 on error. If 'n' is not
-        specified it defaults to 60 minutes.
+    manage <resource id> ... [resource n]
+        Set resources listed to managed mode (default).
 
-    bundle reset <bundle id> container <container type> [<container options>]
-            [network <network options>] [port-map <port options>]...
-            [storage-map <storage options>]... [meta <meta options>]
-            [--disabled] [--wait[=n]]
-        Configure specified bundle with given options. Unlike bundle update,
-        this command resets the bundle according given options - no previous
-        options are kept. Resources inside the bundle are kept as they are.
-        If --disabled is specified, the bundle is not started automatically.
-        If --wait is specified, pcs will wait up to 'n' seconds for the bundle
-        to start and then return 0 on success or 1 on error. If 'n' is not
-        specified it defaults to 60 minutes.
-
-    bundle update <bundle id> [container <container options>]
-            [network <network options>]
-            [port-map (add <port options>) | (remove <id>...)]...
-            [storage-map (add <storage options>) | (remove <id>...)]...
-            [meta <meta options>]
-            [--wait[=n]]
-        Add, remove or change options to specified bundle. If you wish to update
-        a resource encapsulated in the bundle, use the 'pcs resource update'
-        command instead and specify the resource id. If --wait is specified,
-        pcs will wait up to 'n' seconds for the operation to finish (including
-        moving resources if appropriate) and then return 0 on success or 1 on
-        error. If 'n' is not specified it defaults to 60 minutes.
-
-    manage <resource id>... [--monitor]
-        Set resources listed to managed mode (default). If --monitor is
-        specified, enable all monitor operations of the resources.
-
-    unmanage <resource id>... [--monitor]
-        Set resources listed to unmanaged mode. When a resource is in unmanaged
-        mode, the cluster is not allowed to start nor stop the resource. If
-        --monitor is specified, disable all monitor operations of the
-        resources.
+    unmanage <resource id> ... [resource n]
+        Set resources listed to unmanaged mode.
 
     defaults [options]
         Set default values for resources, if no options are passed, lists
-        currently configured defaults. Defaults do not apply to resources which
-        override them with their own defined values.
+        currently configured defaults.
 
     cleanup [<resource id>] [--node <node>]
-        Make the cluster forget failed operations from history of the resource
-        and re-detect its current state. This can be useful to purge knowledge
-        of past failures that have since been resolved. If a resource id is not
-        specified then all resources / stonith devices will be cleaned up. If a
-        node is not specified then resources / stonith devices on all nodes will
-        be cleaned up.
+        Cleans up the resource in the lrmd (useful to reset the resource status
+        and failcount).  This tells the cluster to forget the operation history
+        of a resource and re-detect its current state.  This can be useful to
+        purge knowledge of past failures that have since been resolved.  If a
+        resource id is not specified then all resources/stonith devices will be
+        cleaned up.  If a node is not specified then resources on all nodes
+        will be cleaned up.
 
-    refresh [<resource id>] [--node <node>] [--full]
-        Make the cluster forget the complete operation history (including
-        failures) of the resource and re-detect its current state. If you are
-        interested in forgetting failed operations only, use the 'pcs resource
-        cleanup' command. If a resource id is not specified then all resources
-        / stonith devices will be refreshed. If a node is not specified then
-        resources / stonith devices on all nodes will be refreshed. Use --full
-        to refresh a resource on all nodes, otherwise only nodes where the
-        resource's state is known will be considered.
+    failcount show <resource id> [node]
+        Show current failcount for specified resource from all nodes or
+        only on specified node.
 
-    failcount show [<resource id> [<node> [<operation> [<interval>]]]] [--full]
-        Show current failcount for resources, optionally filtered by a resource,
-        node, operation and its interval. If --full is specified do not sum
-        failcounts per resource and node. Operation, interval and --full
-        options require pacemaker-1.1.18 or newer.
-
-    failcount reset [<resource id> [<node> [<operation> [interval=<interval>]]]]
-        Reset failcount for specified resource on all nodes or only on specified
-        node. This tells the cluster to forget how many times a resource has
-        failed in the past. This may allow the resource to be started or moved
-        to a more preferred location. Operation and interval options require
-        pacemaker-1.1.18 or newer.
+    failcount reset <resource id> [node]
+        Reset failcount for specified resource on all nodes or only on
+        specified node.  This tells the cluster to forget how many times
+        a resource has failed in the past.  This may allow the resource to
+        be started or moved to a more preferred location.
 
     relocate dry-run [resource1] [resource2] ...
         The same as 'relocate run' but has no effect on the cluster.
@@ -594,14 +523,13 @@ Usage: pcs cluster [commands]...
 Configure cluster for use with pacemaker
 
 Commands:
-    auth [<node>[:<port>]] [...] [-u <username>] [-p <password>] [--force]
-            [--local]
+    auth [node] [...] [-u username] [-p password] [--force] [--local]
         Authenticate pcs to pcsd on nodes specified, or on all nodes
-        configured in the local cluster if no nodes are specified (authorization
+        configured in corosync.conf if no nodes are specified (authorization
         tokens are stored in ~/.pcs/tokens or /var/lib/pcsd/tokens for root).
         By default all nodes are also authenticated to each other, using
         --local only authenticates the local node (and does not authenticate
-        the remote nodes with each other). Using --force forces
+        the remote nodes with each other).  Using --force forces
         re-authentication to occur.
 
     setup [--start [--wait[=<n>]]] [--local] [--enable] --name <cluster name>
@@ -614,48 +542,41 @@ Commands:
             [--wait_for_all=<0|1>] [--auto_tie_breaker=<0|1>]
             [--last_man_standing=<0|1> [--last_man_standing_window=<time in ms>]]
             [--ipv6] [--token <timeout>] [--token_coefficient <timeout>]
-            [--join <timeout>] [--consensus <timeout>] [--netmtu <size>]
-            [--miss_count_const <count>] [--fail_recv_const <failures>]
-            [--encryption 0|1]
+            [--join <timeout>] [--consensus <timeout>] [--miss_count_const <count>]
+            [--fail_recv_const <failures>]
         Configure corosync and sync configuration out to listed nodes.
         --local will only perform changes on the local node,
         --start will also start the cluster on the specified nodes,
         --wait will wait up to 'n' seconds for the nodes to start,
         --enable will enable corosync and pacemaker on node startup,
         --transport allows specification of corosync transport (default: udpu;
-            udp for CMAN clusters),
+            udp for RHEL 6 clusters),
         --rrpmode allows you to set the RRP mode of the system. Currently only
             'passive' is supported or tested (using 'active' is not
             recommended).
         The --wait_for_all, --auto_tie_breaker, --last_man_standing,
             --last_man_standing_window options are all documented in corosync's
-            votequorum(5) man page. These options are not supported on CMAN
+            votequorum(5) man page. These options are not supported on RHEL 6
             clusters.
         --ipv6 will configure corosync to use ipv6 (instead of ipv4). This
-            option is not supported on CMAN clusters.
+            option is not supported on RHEL 6 clusters.
         --token <timeout> sets time in milliseconds until a token loss is
-            declared after not receiving a token (default 1000 ms;
-            10000 ms for CMAN clusters)
-        --token_coefficient <timeout> sets time in milliseconds used for
-            clusters with at least 3 nodes as a coefficient for real token
-            timeout calculation
+            declared after not receiving a token (default 1000 ms)
+        --token_coefficient <timeout> sets time in milliseconds used for clusters
+            with at least 3 nodes as a coefficient for real token timeout calculation
             (token + (number_of_nodes - 2) * token_coefficient) (default 650 ms)
-            This option is not supported on CMAN clusters.
+            This option is not supported on RHEL 6 clusters.
         --join <timeout> sets time in milliseconds to wait for join messages
             (default 50 ms)
         --consensus <timeout> sets time in milliseconds to wait for consensus
-            to be achieved before starting a new round of membership
-            configuration (default 1200 ms)
-        --netmtu <size> sets the network maximum transmit unit (default: 1500)
+            to be achieved before starting a new round of membership configuration
+            (default 1200 ms)
         --miss_count_const <count> sets the maximum number of times on
             receipt of a token a message is checked for retransmission before
             a retransmission occurs (default 5 messages)
         --fail_recv_const <failures> specifies how many rotations of the token
             without receiving any messages when messages should be received
-            may occur before a new configuration is formed
-            (default 2500 failures)
-        --encryption 0|1 disables (0) or enables (1) corosync communication
-            encryption (default 0)
+            may occur before a new configuration is formed (default 2500 failures)
 
         Configuring Redundant Ring Protocol (RRP)
 
@@ -672,22 +593,18 @@ Commands:
         ttl defaults to 1. If --broadcast is specified, --mcast0/1,
         --mcastport0/1 & --ttl0/1 are ignored.
 
-    start [--all | <node>... ] [--wait[=<n>]] [--request-timeout=<seconds>]
-        Start a cluster on specified node(s). If no nodes are specified then
-        start a cluster on the local node. If --all is specified then start
-        a cluster on all nodes. If the cluster has many nodes then the start
-        request may time out. In that case you should consider setting
-        --request-timeout to a suitable value. If --wait is specified, pcs
-        waits up to 'n' seconds for the cluster to get ready to provide
-        services after the cluster has successfully started.
+    start [--all] [node] [...] [--wait[=<n>]]
+        Start corosync & pacemaker on specified node(s), if a node is not
+        specified then corosync & pacemaker are started on the local node.
+        If --all is specified then corosync & pacemaker are started on all
+        nodes.  If --wait is specified, wait up to 'n' seconds for nodes
+        to start.
 
-    stop [--all | <node>... ] [--request-timeout=<seconds>]
-        Stop a cluster on specified node(s). If no nodes are specified then
-        stop a cluster on the local node. If --all is specified then stop
-        a cluster on all nodes. If the cluster is running resources which take
-        long time to stop then the stop request may time out before the cluster
-        actually stops. In that case you should consider setting
-        --request-timeout to a suitable value.
+    stop [--all] [node] [...]
+        Stop corosync & pacemaker on specified node(s), if a node is not
+        specified then corosync & pacemaker are stopped on the local node.
+        If --all is specified then corosync & pacemaker are stopped on all
+        nodes.
 
     kill
         Force corosync and pacemaker daemons to stop on the local node
@@ -695,22 +612,33 @@ Commands:
         cluster is not running and start it again. If you want to stop cluster
         on a node, run pcs cluster stop on that node.
 
-    enable [--all | <node>... ]
-        Configure cluster to run on node boot on specified node(s). If node is
-        not specified then cluster is enabled on the local node. If --all is
-        specified then cluster is enabled on all nodes.
+    enable [--all] [node] [...]
+        Configure corosync & pacemaker to run on node boot on specified
+        node(s), if node is not specified then corosync & pacemaker are
+        enabled on the local node. If --all is specified then corosync &
+        pacemaker are enabled on all nodes.
 
-    disable [--all | <node>... ]
-        Configure cluster to not run on node boot on specified node(s). If node
-        is not specified then cluster is disabled on the local node. If --all
-        is specified then cluster is disabled on all nodes.
+    disable [--all] [node] [...]
+        Configure corosync & pacemaker to not run on node boot on specified
+        node(s), if node is not specified then corosync & pacemaker are
+        disabled on the local node. If --all is specified then corosync &
+        pacemaker are disabled on all nodes. Note: this is the default after
+        installation.
+
+    remote-node add <hostname> <resource id> [options]
+        Enables the specified resource as a remote-node resource on the
+        specified hostname (hostname should be the same as 'uname -n').
+
+    remote-node remove <hostname>
+        Disables any resources configured to be remote-node resource on the
+        specified hostname (hostname should be the same as 'uname -n').
 
     status
         View current cluster status (an alias of 'pcs status cluster').
 
-    pcsd-status [<node>]...
-        Show current status of pcsd on nodes specified, or on all nodes
-        configured in the local cluster if no nodes are specified.
+    pcsd-status [node] [...]
+        Get current status of pcsd on nodes specified, or on all nodes
+        configured in corosync.conf if no nodes are specified.
 
     sync
         Sync corosync configuration to all nodes found from current
@@ -725,28 +653,20 @@ Commands:
         scope=configuration.  Do not specify a scope if you want to edit
         the saved CIB using pcs (pcs -f <command>).
 
-    cib-push <filename> [--wait[=<n>]]
-            [diff-against=<filename_original> | scope=<scope> | --config]
+    cib-push <filename> [scope=<scope> | --config] [--wait[=<n>]]
         Push the raw xml from <filename> to the CIB (Cluster Information Base).
         You can obtain the CIB by running the 'pcs cluster cib' command, which
         is recommended first step when you want to perform desired
         modifications (pcs -f <command>) for the one-off push.
-        If diff-against is specified, pcs diffs contents of filename against
-        contents of filename_original and pushes the result to the CIB.
         Specify scope to push a specific section of the CIB.  Valid values
         of the scope are: configuration, nodes, resources, constraints,
         crm_config, rsc_defaults, op_defaults.  --config is the same as
         scope=configuration.  Use of --config is recommended.  Do not specify
         a scope if you need to push the whole CIB or be warned in the case
-        of outdated CIB.
-        If --wait is specified wait up to 'n' seconds for changes to be applied.
+        of outdated CIB. If --wait is specified wait up to 'n' seconds for
+        changes to be applied.
         WARNING: the selected scope of the CIB will be overwritten by the
         current content of the specified file.
-        Example:
-            pcs cluster cib > original.xml
-            cp original.xml new.xml
-            pcs -f new.xml constraint location apache prefers node2
-            pcs cluster cib-push new.xml diff-against=original.xml
 
     cib-upgrade
         Upgrade the CIB to conform to the latest version of the document schema.
@@ -761,60 +681,20 @@ Commands:
         the whole CIB or be warned in the case of outdated CIB.
 
     node add <node[,node-altaddr]> [--start [--wait[=<n>]]] [--enable]
-            [--watchdog=<watchdog-path>] [--device=<path>] ...
-            [--no-watchdog-validation]
-        Add the node to the cluster and sync all relevant configuration files
-        to the new node. If --start is specified also start cluster on the new
-        node, if --wait is specified wait up to 'n' seconds for the new node to
-        start. If --enable is specified configure cluster to start on the new
-        node on boot.
+            [--watchdog=<watchdog-path>]
+        Add the node to corosync.conf and corosync on all nodes in the cluster
+        and sync the new corosync.conf to the new node.  If --start is
+        specified also start corosync/pacemaker on the new node, if --wait is
+        sepcified wait up to 'n' seconds for the new node to start.  If --enable
+        is specified enable corosync/pacemaker on new node.
         When using Redundant Ring Protocol (RRP) with udpu transport, specify
         the ring 0 address first followed by a ',' and then the ring 1 address.
-        Use --watchdog to specify path to watchdog on newly added node, when
-        SBD is enabled in cluster. If SBD is configured with shared storage,
-        use --device to specify path to shared device on new node. If
-        --no-watchdog-validation is specified, validation of watchdog will be
-        skipped. This command can only be run on an existing cluster node.
-
-        WARNING: By default, it is tested whether the specified watchdog is
-                 supported. This may cause a restart of the system when
-                 a watchdog with no-way-out-feature enabled is present. Use
-                 --no-watchdog-validation to skip watchdog validation.
+        Use --watchdog to specify path to watchdog on newly added node, when SBD
+        is enabled in cluster.
 
     node remove <node>
-        Shutdown specified node and remove it from the cluster.
-
-    node add-remote <node host> [<node name>] [options]
-           [op <operation action> <operation options> [<operation action>
-           <operation options>]...] [meta <meta options>...] [--wait[=<n>]]
-        Add the node to the cluster as a remote node. Sync all relevant
-        configuration files to the new node. Start the node and configure it to
-        start the cluster on boot.
-        Options are port and reconnect_interval. Operations and meta
-        belong to an underlying connection resource (ocf:pacemaker:remote).
-        If --wait is specified, wait up to 'n' seconds for the node to start.
-
-    node remove-remote <node identifier>
-        Shutdown specified remote node and remove it from the cluster.
-        The node-identifier can be the name of the node or the address of the
-        node.
-
-    node add-guest <node host> <resource id> [options] [--wait[=<n>]]
-        Make the specified resource a guest node resource. Sync all relevant
-        configuration files to the new node. Start the node and configure it to
-        start the cluster on boot.
-        Options are remote-addr, remote-port and remote-connect-timeout.
-        If --wait is specified, wait up to 'n' seconds for the node to start.
-
-    node remove-guest <node identifier>
-        Shutdown specified guest node and remove it from the cluster.
-        The node-identifier can be the name of the node or the address of the
-        node or id of the resource that is used as the guest node.
-
-    node clear <node name>
-        Remove specified node from various cluster caches. Use this if a
-        removed node is still considered by the cluster to be a member of the
-        cluster.
+        Shutdown specified node and remove it from pacemaker and corosync on
+        all other nodes in the cluster.
 
     uidgid
         List the current configured uids and gids of users allowed to connect
@@ -837,10 +717,10 @@ Commands:
 
     destroy [--all]
         Permanently destroy the cluster on the current node, killing all
-        cluster processes and removing all cluster configuration files. Using
-        --all will attempt to destroy the cluster on all nodes in the local
-        cluster.
-        WARNING: This command permanently removes any cluster configuration that
+        corosync/pacemaker processes removing all cib files and the
+        corosync.conf file.  Using --all will attempt to destroy the
+        cluster on all nodes configure in the corosync.conf file.
+        WARNING: This command permantly removes any cluster configuration that
         has been created. It is recommended to run 'pcs cluster stop' before
         destroying the cluster.
 
@@ -850,7 +730,7 @@ Commands:
         performed on the currently running cluster.  If -V is used
         more verbose output will be printed.
 
-    report [--from "YYYY-M-D H:M:S" [--to "YYYY-M-D H:M:S"]] <dest>
+    report [--from "YYYY-M-D H:M:S" [--to "YYYY-M-D" H:M:S"]] dest
         Create a tarball containing everything needed when reporting cluster
         problems.  If --from and --to are not used, the report will include
         the past 24 hours.
@@ -876,29 +756,13 @@ Commands:
         only stonith agents matching the filter will be shown). If --nodesc is
         used then descriptions of stonith agents are not printed.
 
-    describe <stonith agent> [--full]
-        Show options for specified stonith agent. If --full is specified, all
-        options including advanced ones are shown.
+    describe <stonith agent>
+        Show options for specified stonith agent.
 
     create <stonith id> <stonith device type> [stonith device options]
            [op <operation action> <operation options> [<operation action>
            <operation options>]...] [meta <meta options>...]
-           [--group <group id> [--before <stonith id> | --after <stonith id>]]
-           [--disabled] [--wait[=n]]
         Create stonith device with specified type and options.
-        If --group is specified the stonith device is added to the group named.
-        You can use --before or --after to specify the position of the added
-        stonith device relatively to some stonith device already existing in the
-        group.
-        If --disabled is specified the stonith device is not used.
-        If --wait is specified, pcs will wait up to 'n' seconds for the stonith
-        device to start and then return 0 if the stonith device is started, or 1
-        if the stonith device has not yet started.  If 'n' is not specified it
-        defaults to 60 minutes.
-        Example: Create a device for nodes node1 and node2
-            pcs stonith create MyFence fence_virt pcmk_host_list=node1,node2
-        Example: Use port p1 for node n1 and ports p2 and p3 for node n2
-            pcs stonith create MyFence fence_virt 'pcmk_host_map=n1:p1;n2:p2,p3'
 
     update <stonith id> [stonith device options]
         Add/Change options to specified stonith id.
@@ -906,68 +770,35 @@ Commands:
     delete <stonith id>
         Remove stonith id from configuration.
 
-    enable <stonith id>... [--wait[=n]]
-        Allow the cluster to use the stonith devices. If --wait is specified,
-        pcs will wait up to 'n' seconds for the stonith devices to start and
-        then return 0 if the stonith devices are started, or 1 if the stonith
-        devices have not yet started. If 'n' is not specified it defaults to 60
-        minutes.
-
-    disable <stonith id>... [--wait[=n]]
-        Attempt to stop the stonith devices if they are running and disallow
-        the cluster to use them. If --wait is specified, pcs will wait up to
-        'n' seconds for the stonith devices to stop and then return 0 if the
-        stonith devices are stopped or 1 if the stonith devices have not
-        stopped. If 'n' is not specified it defaults to 60 minutes.
-
     cleanup [<stonith id>] [--node <node>]
-        Make the cluster forget failed operations from history of the stonith
-        device and re-detect its current state. This can be useful to purge
-        knowledge of past failures that have since been resolved. If a stonith
-        id is not specified then all resources / stonith devices will be cleaned
-        up. If a node is not specified then resources / stonith devices on all
-        nodes will be cleaned up.
+        Cleans up the stonith device in the lrmd (useful to reset the status
+        and failcount).  This tells the cluster to forget the operation history
+        of a stonith device and re-detect its current state.  This can be
+        useful to purge knowledge of past failures that have since been
+        resolved.  If a stonith id is not specified then all resources/stonith
+        devices will be cleaned up.  If a node is not specified then resources
+        on all nodes will be cleaned up.
 
-    refresh [<stonith id>] [--node <node>] [--full]
-        Make the cluster forget the complete operation history (including
-        failures) of the stonith device and re-detect its current state. If you
-        are interested in forgetting failed operations only, use the 'pcs
-        stonith cleanup' command. If a stonith id is not specified then all
-        resources / stonith devices will be refreshed. If a node is not
-        specified then resources / stonith devices on all nodes will be
-        refreshed. Use --full to refresh a stonith device on all nodes,
-        otherwise only nodes where the stonith device's state is known will be
-        considered.
-
-    level [config]
+    level
         Lists all of the fencing levels currently configured.
 
-    level add <level> <target> <stonith id> [stonith id]...
-        Add the fencing level for the specified target with the list of stonith
-        devices to attempt for that target at that level. Fence levels are
-        attempted in numerical order (starting with 1). If a level succeeds
-        (meaning all devices are successfully fenced in that level) then no
-        other levels are tried, and the target is considered fenced.
-        Target may be a node name <node_name> or %<node_name> or
-        node%<node_name>, a node name regular expression regexp%<node_pattern>
-        or a node attribute value attrib%<name>=<value>.
+    level add <level> <node> <devices>
+        Add the fencing level for the specified node with a comma separated
+        list of devices (stonith ids) to attempt for that node at that level.
+        Fence levels are attempted in numerical order (starting with 1) if
+        a level succeeds (meaning all devices are successfully fenced in that
+        level) then no other levels are tried, and the node is considered
+        fenced.
 
-    level remove <level> [target] [stonith id]...
-        Removes the fence level for the level, target and/or devices specified.
-        If no target or devices are specified then the fence level is removed.
-        Target may be a node name <node_name> or %<node_name> or
-        node%<node_name>, a node name regular expression regexp%<node_pattern>
-        or a node attribute value attrib%<name>=<value>.
+    level remove <level> [node id] [stonith id] ... [stonith id]
+        Removes the fence level for the level, node and/or devices specified.
+        If no nodes or devices are specified then the fence level is removed.
 
-    level clear [target|stonith id(s)]
-        Clears the fence levels on the target (or stonith id) specified or
-        clears all fence levels if a target/stonith id is not specified. If
-        more than one stonith id is specified they must be separated by a comma
-        and no spaces.
-        Target may be a node name <node_name> or %<node_name> or
-        node%<node_name>, a node name regular expression regexp%<node_pattern>
-        or a node attribute value attrib%<name>=<value>.
-        Example: pcs stonith level clear dev_a,dev_b
+    level clear [node|stonith id(s)]
+        Clears the fence levels on the node (or stonith id) specified or clears
+        all fence levels if a node/stonith id is not specified.  If more than
+        one stonith id is specified they must be separated by a comma and no
+        spaces.  Example: pcs stonith level clear dev_a,dev_b
 
     level verify
         Verifies all fence devices and nodes specified in fence levels exist.
@@ -977,48 +808,29 @@ Commands:
         call to stonith which will turn the node off instead of rebooting it).
 
     confirm <node> [--force]
-        Confirm to the cluster that the specified node is powered off. This
-        allows the cluster to recover from a situation where no stonith device
-        is able to fence the node. This command should ONLY be used after
-        manually ensuring that the node is powered off and has no access to
-        shared resources.
+        Confirm that the host specified is currently down.  This command
+        should ONLY be used when the node specified has already been confirmed
+        to be powered off and to have no access to shared resources.
 
         WARNING: If this node is not actually powered off or it does have
         access to shared resources, data corruption/cluster failure can occur.
         To prevent accidental running of this command, --force or interactive
         user response is required in order to proceed.
 
-        NOTE: It is not checked if the specified node exists in the cluster
-        in order to be able to work with nodes not visible from the local
-        cluster partition.
-
-    sbd enable [--watchdog=<path>[@<node>]] ... [--device=<path>[@<node>]] ...
-               [<SBD_OPTION>=<value>] ... [--no-watchdog-validation]
+    sbd enable [--watchdog=<path>[@<node>]] ... [<SBD_OPTION>=<value>] ...
         Enable SBD in cluster. Default path for watchdog device is
         /dev/watchdog. Allowed SBD options: SBD_WATCHDOG_TIMEOUT (default: 5),
-        SBD_DELAY_START (default: no) and SBD_STARTMODE (default: always). It is
-        possible to specify up to 3 devices per node. If
-        --no-watchdog-validation is specified, validation of watchdogs will be
-        skipped.
-
+        SBD_DELAY_START (default: no) and SBD_STARTMODE (default: clean).
 
         WARNING: Cluster has to be restarted in order to apply these changes.
 
-        WARNING: By default, it is tested whether the specified watchdogs are
-                 supported. This may cause a restart of the system when
-                 a watchdog with no-way-out-feature enabled is present. Use
-                 --no-watchdog-validation to skip watchdog validation.
-
         Example of enabling SBD in cluster with watchdogs on node1 will be
         /dev/watchdog2, on node2 /dev/watchdog1, /dev/watchdog0 on all other
-        nodes, device /dev/sdb on node1, device /dev/sda on all other nodes and
-        watchdog timeout will bet set to 10 seconds:
+        nodes and watchdog timeout will bet set to 10 seconds:
         pcs stonith sbd enable \\
             --watchdog=/dev/watchdog2@node1 \\
             --watchdog=/dev/watchdog1@node2 \\
             --watchdog=/dev/watchdog0 \\
-            --device=/dev/sdb@node1 \\
-            --device=/dev/sda \\
             SBD_WATCHDOG_TIMEOUT=10
 
     sbd disable
@@ -1026,37 +838,14 @@ Commands:
 
         WARNING: Cluster has to be restarted in order to apply these changes.
 
-    sbd device setup --device=<path> [--device=<path>]...
-                     [watchdog-timeout=<integer>] [allocate-timeout=<integer>]
-                     [loop-timeout=<integer>] [msgwait-timeout=<integer>]
-        Initialize SBD structures on device(s) with specified timeouts.
-
-        WARNING: All content on device(s) will be overwritten.
-
-    sbd device message <device-path> <node> <message-type>
-        Manually set a message of the specified type on the device for the node.
-        Possible message types (they are documented in sbd(8) man page): test,
-        reset, off, crashdump, exit, clear
-
-    sbd status [--full]
-        Show status of SBD services in cluster and local device(s) configured.
-        If --full is specified, also dump of SBD headers on device(s)
-        will be shown.
+    sbd status
+        Show status of SBD services in cluster.
 
     sbd config
         Show SBD configuration in cluster.
 
-    sbd watchdog list
-        Show all available watchdog devices on the local node.
-
-        WARNING: Listing available watchdogs may cause a restart of the system
-                 when a watchdog with no-way-out-feature enabled is present.
-
-    sbd watchdog test [<watchdog-path>]
-        This operation is expected to force-reboot the local system without
-        following any shutdown procedures using a watchdog. If no watchdog is
-        specified, available watchdog will be used if only one watchdog device
-        is available on the local system.
+Examples:
+    pcs stonith create MyStonith fence_virt pcmk_host_list=f1
 """
     if pout:
         print(sub_usage(args, output))
@@ -1105,24 +894,20 @@ Manage resource constraints
 
 Commands:
     [list|show] --full
-        List all current constraints. If --full is specified also list the
-        constraint ids.
+        List all current location, order and colocation constraints, if --full
+        is specified also list the constraint ids.
 
-    location <resource> prefers <node>[=<score>] [<node>[=<score>]]...
-        Create a location constraint on a resource to prefer the specified node
-        with score (default score: INFINITY). Resource may be either a resource
-        id <resource_id> or %<resource_id> or resource%<resource_id>, or a
-        resource name regular expression regexp%<resource_pattern>.
+    location <resource id> prefers <node[=score]>...
+        Create a location constraint on a resource to prefer the specified
+        node and score (default score: INFINITY).
 
-    location <resource> avoids <node>[=<score>] [<node>[=<score>]]...
-        Create a location constraint on a resource to avoid the specified node
-        with score (default score: INFINITY). Resource may be either a resource
-        id <resource_id> or %<resource_id> or resource%<resource_id>, or a
-        resource name regular expression regexp%<resource_pattern>.
+    location <resource id> avoids <node[=score]>...
+        Create a location constraint on a resource to avoid the specified
+        node and score (default score: INFINITY).
 
-    location <resource> rule [id=<rule id>] [resource-discovery=<option>]
+    location <resource id> rule [id=<rule id>] [resource-discovery=<option>]
              [role=master|slave] [constraint-id=<id>]
-             [score=<score> | score-attribute=<attribute>] <expression>
+             [score=<score>|score-attribute=<attribute>] <expression>
         Creates a location rule on the specified resource where the expression
         looks like one of the following:
           defined|not_defined <attribute>
@@ -1135,30 +920,24 @@ Commands:
           ( <expression> )
         where duration options and date spec options are: hours, monthdays,
         weekdays, yeardays, months, weeks, years, weekyears, moon.
-        Resource may be either a resource id <resource_id> or %<resource_id> or
-        resource%<resource_id>, or a resource name regular expression
-        regexp%<resource_pattern>. If score is omitted it defaults to INFINITY.
-        If id is omitted one is generated from the resource id. If
-        resource-discovery is omitted it defaults to 'always'.
+        If score is omitted it defaults to INFINITY. If id is omitted one is
+        generated from the resource id. If resource-discovery is omitted it
+        defaults to 'always'.
 
-    location [show [resources|nodes [<node> | <resource>]...] [--full]]
-        List all the current location constraints. If 'resources' is specified,
-        location constraints are displayed per resource (default). If 'nodes'
-        is specified, location constraints are displayed per node. If specific
+    location [show [resources|nodes [node id|resource id]...] [--full]]
+        List all the current location constraints, if 'resources' is specified
+        location constraints are displayed per resource (default), if 'nodes'
+        is specified location constraints are displayed per node.  If specific
         nodes or resources are specified then we only show information about
-        them. Resource may be either a resource id <resource_id> or
-        %<resource_id> or resource%<resource_id>, or a resource name regular
-        expression regexp%<resource_pattern>. If --full is specified show the
-        internal constraint id's as well.
+        them.  If --full is specified show the internal constraint id's as well.
 
-    location add <id> <resource> <node> <score> [resource-discovery=<option>]
-        Add a location constraint with the appropriate id for the specified
-        resource, node name and score. Resource may be either a resource id
-        <resource_id> or %<resource_id> or resource%<resource_id>, or a
-        resource name regular expression regexp%<resource_pattern>.
+    location add <id> <resource id> <node> <score> [resource-discovery=<option>]
+        Add a location constraint with the appropriate id, resource id,
+        node name and score. (For more advanced pacemaker usage.)
 
-    location remove <id>
-        Remove a location constraint with the appropriate id.
+    location remove <id> [<resource id> <node> <score>]
+        Remove a location constraint with the appropriate id, resource id,
+        node name and score. (For more advanced pacemaker usage.)
 
     order [show] [--full]
         List all current ordering constraints (if --full is specified show
@@ -1175,10 +954,10 @@ Commands:
               <resourceX> ... [options]]
               [setoptions [constraint_options]]
         Create an ordered set of resources.
-        Available options are sequential=true/false, require-all=true/false and
-        action=start/promote/demote/stop. Available constraint_options are
-        id=<constraint-id>, kind=Optional/Mandatory/Serialize and
-        symmetrical=true/false.
+        Available options are sequential=true/false, require-all=true/false,
+        action=start/promote/demote/stop and role=Stopped/Started/Master/Slave.
+        Available constraint_options are id=<constraint-id>,
+        kind=Optional/Mandatory/Serialize and symmetrical=true/false.
 
     order remove <resource1> [resourceN]...
         Remove resource from any ordering constraint
@@ -1202,9 +981,10 @@ Commands:
                [set <resourceX> ... [options]]
                [setoptions [constraint_options]]
         Create a colocation constraint with a resource set.
-        Available options are sequential=true/false and
-        role=Stopped/Started/Master/Slave. Available constraint_options are id
-        and either of: score, score-attribute, score-attribute-mangle.
+        Available options are sequential=true/false, require-all=true/false,
+        action=start/promote/demote/stop and role=Stopped/Started/Master/Slave.
+        Available constraint_options are id, score, score-attribute and
+        score-attribute-mangle.
 
     colocation remove <source resource id> <target resource id>
         Remove colocation constraints with specified resources.
@@ -1223,14 +1003,15 @@ Commands:
                [set <resourceX> ... [<options>]]
                setoptions <constraint_options>
         Create a ticket constraint with a resource set.
-        Available options are role=Stopped/Started/Master/Slave. Required
-        constraint option is ticket=<ticket>. Optional constraint options are
-        id=<constraint-id> and loss-policy=fence/stop/freeze/demote.
+        Available options are sequential=true/false, require-all=true/false,
+        action=start/promote/demote/stop and role=Stopped/Started/Master/Slave.
+        Required constraint option is ticket=<ticket>. Optional constraint
+        options are id=<constraint-id> and loss-policy=fence/stop/freeze/demote.
 
     ticket remove <ticket> <resource id>
         Remove all ticket constraints with <ticket> from <resource id>.
 
-    remove <constraint id>...
+    remove [constraint id]...
         Remove constraint(s) or constraint rules with the specified id(s).
 
     ref <resource>...
@@ -1249,8 +1030,8 @@ Commands:
           <expression> and|or <expression>
           ( <expression> )
         where duration options and date spec options are: hours, monthdays,
-        weekdays, yeardays, months, weeks, years, weekyears, moon.
-        If score is omitted it defaults to INFINITY. If id is omitted one is
+        weekdays, yeardays, months, weeks, years, weekyears, moon
+        If score is ommited it defaults to INFINITY. If id is ommited one is
         generated from the constraint id.
 
     rule remove <rule id>
@@ -1352,27 +1133,15 @@ Commands:
     corosync
         View current membership information as seen by corosync.
 
-    quorum
-        View current quorum status.
-
-    qdevice <device model> [--full] [<cluster name>]
-        Show runtime status of specified model of quorum device provider.  Using
-        --full will give more detailed output.  If <cluster name> is specified,
-        only information about the specified cluster will be displayed.
-
-    booth
-        Print current status of booth on the local node.
-
-    nodes [corosync | both | config]
+    nodes [corosync|both|config]
         View current status of nodes from pacemaker. If 'corosync' is
-        specified, view current status of nodes from corosync instead. If
-        'both' is specified, view current status of nodes from both corosync &
-        pacemaker. If 'config' is specified, print nodes from corosync &
-        pacemaker configuration.
+        specified, print nodes currently configured in corosync, if 'both'
+        is specified, print nodes from both corosync & pacemaker.  If 'config'
+        is specified, print nodes from corosync & pacemaker configuration.
 
-    pcsd [<node>]...
-        Show current status of pcsd on nodes specified, or on all nodes
-        configured in the local cluster if no nodes are specified.
+    pcsd [<node>] ...
+        Show the current status of pcsd on the specified nodes.
+        When no nodes are specified, status of all nodes is displayed.
 
     xml
         View xml version of status (output from crm_mon -r -1 -X).
@@ -1407,18 +1176,14 @@ Commands:
     checkpoint view <checkpoint_number>
         Show specified configuration checkpoint.
 
-    checkpoint diff <checkpoint_number> <checkpoint_number>
-        Show differences between the two specified checkpoints. Use checkpoint
-        number 'live' to compare a checkpoint to the current live configuration.
-
     checkpoint restore <checkpoint_number>
         Restore cluster configuration to specified checkpoint.
 
     import-cman output=<filename> [input=<filename>] [--interactive]
             [output-format=corosync.conf|cluster.conf] [dist=<dist>]
-        Converts CMAN cluster configuration to Pacemaker cluster configuration.
-        Converted configuration will be saved to 'output' file.  To send
-        the configuration to the cluster nodes the 'pcs config restore'
+        Converts RHEL 6 (CMAN) cluster configuration to Pacemaker cluster
+        configuration. Converted configuration will be saved to 'output' file.
+        To send the configuration to the cluster nodes the 'pcs config restore'
         command can be used.  If --interactive is specified you will be
         prompted to solve incompatibilities manually.  If no input is specified
         /etc/cluster/cluster.conf will be used.  You can force to create output
@@ -1432,9 +1197,9 @@ Commands:
 
     import-cman output=<filename> [input=<filename>] [--interactive]
             output-format=pcs-commands|pcs-commands-verbose [dist=<dist>]
-        Converts CMAN cluster configuration to a list of pcs commands which
-        recreates the same cluster as Pacemaker cluster when executed.  Commands
-        will be saved to 'output' file.  For other options see above.
+        Converts RHEL 6 (CMAN) cluster configuration to a list of pcs commands
+        which recreates the same cluster as Pacemaker cluster when executed.
+        Commands will be saved to 'output' file.  For other options see above.
 
     export pcs-commands|pcs-commands-verbose [output=<filename>] [dist=<dist>]
         Creates a list of pcs commands which upon execution recreates
@@ -1463,8 +1228,9 @@ Commands:
         Load custom certificate and key files for use in pcsd.
 
     sync-certificates
-        Sync pcsd certificates to all nodes in the local cluster.
-        WARNING: This will restart pcsd daemon on the nodes.
+        Sync pcsd certificates to all nodes found from current corosync.conf
+        file (cluster.conf on systems running Corosync 1.x).  WARNING: This will
+        restart pcsd daemon on the nodes.
 
     clear-auth [--local] [--remote]
        Removes all system tokens which allow pcs/pcsd on the current system to
@@ -1494,42 +1260,34 @@ Commands:
         of specified node.  Attributes can be removed by setting an attribute
         without a value.
 
-    maintenance [--all | <node>...] [--wait[=n]]
-        Put specified node(s) into maintenance mode, if no nodes or options are
+    maintenance [--all] | [<node>]...
+        Put specified node(s) into maintenance mode, if no node or options are
         specified the current node will be put into maintenance mode, if --all
-        is specified all nodes will be put into maintenance mode.
-        If --wait is specified, pcs will wait up to 'n' seconds for the node(s)
-        to be put into maintenance mode and then return 0 on success or 1 if
-        the operation not succeeded yet. If 'n' is not specified it defaults
-        to 60 minutes.
+        is specified all nodes will be put into maintenace mode.
 
-    unmaintenance [--all | <node>...] [--wait[=n]]
-        Remove node(s) from maintenance mode, if no nodes or options are
+    unmaintenance [--all] | [<node>]...
+        Remove node(s) from maintenance mode, if no node or options are
         specified the current node will be removed from maintenance mode,
         if --all is specified all nodes will be removed from maintenance mode.
-        If --wait is specified, pcs will wait up to 'n' seconds for the node(s)
-        to be removed from maintenance mode and then return 0 on success or 1 if
-        the operation not succeeded yet. If 'n' is not specified it defaults
-        to 60 minutes.
 
-    standby [--all | <node>...] [--wait[=n]]
-        Put specified node(s) into standby mode (the node specified will no
-        longer be able to host resources), if no nodes or options are specified
-        the current node will be put into standby mode, if --all is specified
-        all nodes will be put into standby mode.
+    standby [--all | <node>] [--wait[=n]]
+        Put specified node into standby mode (the node specified will no longer
+        be able to host resources), if no node or options are specified the
+        current node will be put into standby mode, if --all is specified all
+        nodes will be put into standby mode.
         If --wait is specified, pcs will wait up to 'n' seconds for the node(s)
         to be put into standby mode and then return 0 on success or 1 if
-        the operation not succeeded yet. If 'n' is not specified it defaults
+        the operation not succeeded yet.  If 'n' is not specified it defaults
         to 60 minutes.
 
-    unstandby [--all | <node>...] [--wait[=n]]
-        Remove node(s) from standby mode (the node specified will now be able to
-        host resources), if no nodes or options are specified the current node
+    unstandby [--all | <node>] [--wait[=n]]
+        Remove node from standby mode (the node specified will now be able to
+        host resources), if no node or options are specified the current node
         will be removed from standby mode, if --all is specified all nodes will
         be removed from standby mode.
         If --wait is specified, pcs will wait up to 'n' seconds for the node(s)
         to be removed from standby mode and then return 0 on success or 1 if
-        the operation not succeeded yet. If 'n' is not specified it defaults
+        the operation not succeeded yet.  If 'n' is not specified it defaults
         to 60 minutes.
 
     utilization [[<node>] [--name <name>] | <node> <name>=<value> ...]
@@ -1546,205 +1304,191 @@ Commands:
     else:
         return output
 
-def qdevice(args=[], pout=True):
-    output = """
-Usage: pcs qdevice <command>
-Manage quorum device provider on the local host, currently only 'net' model is
-supported.
+# def qdevice(args=[], pout=True):
+#     output = """
+# Usage: pcs qdevice <command>
+# Manage quorum device provider on the local host, currently only 'net' model is
+# supported.
+#
+# Commands:
+#     status <device model> [--full] [<cluster name>]
+#         Show runtime status of specified model of quorum device provider.  Using
+#         --full will give more detailed output.  If <cluster name> is specified,
+#         only information about the specified cluster will be displayed.
+#
+#     setup model <device model> [--enable] [--start]
+#         Configure specified model of quorum device provider.  Quorum device then
+#         can be added to clusters by running "pcs quorum device add" command
+#         in a cluster.  --start will also start the provider.  --enable will
+#         configure the provider to start on boot.
+#
+#     destroy <device model>
+#         Disable and stop specified model of quorum device provider and delete
+#         its configuration files.
+#
+#     start <device model>
+#         Start specified model of quorum device provider.
+#
+#     stop <device model>
+#         Stop specified model of quorum device provider.
+#
+#     kill <device model>
+#         Force specified model of quorum device provider to stop (performs kill
+#         -9).  Note that init system (e.g. systemd) can detect that the qdevice
+#         is not running and start it again.  If you want to stop the qdevice, run
+#         "pcs qdevice stop" command.
+#
+#     enable <device model>
+#         Configure specified model of quorum device provider to start on boot.
+#
+#     disable <device model>
+#         Configure specified model of quorum device provider to not start
+#         on boot.
+# """
+#     if pout:
+#         print(sub_usage(args, output))
+#     else:
+#         return output
 
-Commands:
-    status <device model> [--full] [<cluster name>]
-        Show runtime status of specified model of quorum device provider.  Using
-        --full will give more detailed output.  If <cluster name> is specified,
-        only information about the specified cluster will be displayed.
+# def quorum(args=[], pout=True):
+#     output = """
+# Usage: pcs quorum <command>
+# Manage cluster quorum settings.
+#
+# Commands:
+#     [config]
+#         Show quorum configuration.
+#
+#     status
+#         Show quorum runtime status.
+#
+#     device add [<generic options>] model <device model> [<model options>]
+#         Add a quorum device to the cluster.  Quorum device needs to be created
+#         first by "pcs qdevice setup" command.  It is not possible to use more
+#         than one quorum device in a cluster simultaneously.  Generic options,
+#         model and model options are all documented in corosync's
+#         corosync-qdevice(8) man page.
+#
+#     device remove
+#         Remove a quorum device from the cluster.
+#
+#     device status [--full]
+#         Show quorum device runtime status.  Using --full will give more detailed
+#         output.
+#
+#     device update [<generic options>] [model <model options>]
+#         Add/Change quorum device options.  Generic options and model options are
+#         all documented in corosync's corosync-qdevice(8) man page.  Requires
+#         the cluster to be stopped.
+#
+#         WARNING: If you want to change "host" option of qdevice model net, use
+#         "pcs quorum device remove" and "pcs quorum device add" commands
+#         to set up configuration properly unless old and new host is the same
+#         machine.
+#
+#     expected-votes <votes>
+#         Set expected votes in the live cluster to specified value.  This only
+#         affects the live cluster, not changes any configuration files.
+#
+#     unblock [--force]
+#         Cancel waiting for all nodes when establishing quorum.  Useful in
+#         situations where you know the cluster is inquorate, but you are
+#         confident that the cluster should proceed with resource management
+#         regardless.  This command should ONLY be used when nodes which
+#         the cluster is waiting for have been confirmed to be powered off and
+#         to have no access to shared resources.
+#
+#         WARNING: If the nodes are not actually powered off or they do have
+#         access to shared resources, data corruption/cluster failure can occur.
+#         To prevent accidental running of this command, --force or interactive
+#         user response is required in order to proceed.
+#
+#     update [auto_tie_breaker=[0|1]] [last_man_standing=[0|1]]
+#             [last_man_standing_window=[<time in ms>]] [wait_for_all=[0|1]]
+#         Add/Change quorum options.  At least one option must be specified.
+#         Options are documented in corosync's votequorum(5) man page.  Requires
+#         the cluster to be stopped.
+# """
+#     if pout:
+#         print(sub_usage(args, output))
+#     else:
+#         return output
 
-    setup model <device model> [--enable] [--start]
-        Configure specified model of quorum device provider.  Quorum device then
-        can be added to clusters by running "pcs quorum device add" command
-        in a cluster.  --start will also start the provider.  --enable will
-        configure the provider to start on boot.
-
-    destroy <device model>
-        Disable and stop specified model of quorum device provider and delete
-        its configuration files.
-
-    start <device model>
-        Start specified model of quorum device provider.
-
-    stop <device model>
-        Stop specified model of quorum device provider.
-
-    kill <device model>
-        Force specified model of quorum device provider to stop (performs kill
-        -9).  Note that init system (e.g. systemd) can detect that the qdevice
-        is not running and start it again.  If you want to stop the qdevice, run
-        "pcs qdevice stop" command.
-
-    enable <device model>
-        Configure specified model of quorum device provider to start on boot.
-
-    disable <device model>
-        Configure specified model of quorum device provider to not start
-        on boot.
-"""
-    if pout:
-        print(sub_usage(args, output))
-    else:
-        return output
-
-def quorum(args=[], pout=True):
-    output = """
-Usage: pcs quorum <command>
-Manage cluster quorum settings.
-
-Commands:
-    [config]
-        Show quorum configuration.
-
-    status
-        Show quorum runtime status.
-
-    device add [<generic options>] model <device model> [<model options>]
-            [heuristics <heuristics options>]
-        Add a quorum device to the cluster. Quorum device should be configured
-        first with "pcs qdevice setup". It is not possible to use more than one
-        quorum device in a cluster simultaneously.
-        Currently the only supported model is 'net'. It requires model options
-        'algorithm' and 'host' to be specified. Options are documented in
-        corosync-qdevice(8) man page; generic options are 'sync_timeout' and
-        'timeout', for model net options check the quorum.device.net section,
-        for heuristics options see the quorum.device.heuristics section. Pcs
-        automatically creates and distributes TLS certificates and sets the
-        'tls' model option to the default value 'on'.
-        Example: pcs quorum device add model net algorithm=lms \\
-            host=qnetd.internal.example.com
-
-    device heuristics remove
-        Remove all heuristics settings of the configured quorum device.
-
-    device remove
-        Remove a quorum device from the cluster.
-
-    device status [--full]
-        Show quorum device runtime status.  Using --full will give more detailed
-        output.
-
-    device update [<generic options>] [model <model options>]
-            [heuristics <heuristics options>]
-        Add/Change quorum device options. Requires the cluster to be stopped.
-        Model and options are all documented in corosync-qdevice(8) man page;
-        for heuristics options check the quorum.device.heuristics subkey
-        section, for model options check the quorum.device.<device model> subkey
-        sections.
-
-        WARNING: If you want to change "host" option of qdevice model net, use
-        "pcs quorum device remove" and "pcs quorum device add" commands
-        to set up configuration properly unless old and new host is the same
-        machine.
-
-    expected-votes <votes>
-        Set expected votes in the live cluster to specified value.  This only
-        affects the live cluster, not changes any configuration files.
-
-    unblock [--force]
-        Cancel waiting for all nodes when establishing quorum.  Useful in
-        situations where you know the cluster is inquorate, but you are
-        confident that the cluster should proceed with resource management
-        regardless.  This command should ONLY be used when nodes which
-        the cluster is waiting for have been confirmed to be powered off and
-        to have no access to shared resources.
-
-        WARNING: If the nodes are not actually powered off or they do have
-        access to shared resources, data corruption/cluster failure can occur.
-        To prevent accidental running of this command, --force or interactive
-        user response is required in order to proceed.
-
-    update [auto_tie_breaker=[0|1]] [last_man_standing=[0|1]]
-            [last_man_standing_window=[<time in ms>]] [wait_for_all=[0|1]]
-        Add/Change quorum options.  At least one option must be specified.
-        Options are documented in corosync's votequorum(5) man page.  Requires
-        the cluster to be stopped.
-"""
-    if pout:
-        print(sub_usage(args, output))
-    else:
-        return output
-
-def booth(args=[], pout=True):
-    output = """
-Usage: pcs booth <command>
-Manage booth (cluster ticket manager)
-
-Commands:
-    setup sites <address> <address> [<address>...] [arbitrators <address> ...]
-            [--force]
-        Write new booth configuration with specified sites and arbitrators.
-        Total number of peers (sites and arbitrators) must be odd.  When
-        the configuration file already exists, command fails unless --force
-        is specified.
-
-    destroy
-        Remove booth configuration files.
-
-    ticket add <ticket> [<name>=<value> ...]
-        Add new ticket to the current configuration. Ticket options are
-        specified in booth manpage.
-
-    ticket remove <ticket>
-        Remove the specified ticket from the current configuration.
-
-    config [<node>]
-        Show booth configuration from the specified node or from the current
-        node if node not specified.
-
-    create ip <address>
-        Make the cluster run booth service on the specified ip address as
-        a cluster resource.  Typically this is used to run booth site.
-
-    remove
-        Remove booth resources created by the "pcs booth create" command.
-
-    restart
-        Restart booth resources created by the "pcs booth create" command.
-
-    ticket grant <ticket> [<site address>]
-        Grant the ticket for the site specified by address.  Site address which
-        has been specified with 'pcs booth create' command is used if
-        'site address' is omitted.  Specifying site address is mandatory when
-        running this command on an arbitrator.
-
-    ticket revoke <ticket> [<site address>]
-        Revoke the ticket for the site specified by address.  Site address which
-        has been specified with 'pcs booth create' command is used if
-        'site address' is omitted.  Specifying site address is mandatory when
-        running this command on an arbitrator.
-
-    status
-        Print current status of booth on the local node.
-
-    pull <node>
-        Pull booth configuration from the specified node.
-
-    sync [--skip-offline]
-        Send booth configuration from the local node to all nodes
-        in the cluster.
-
-    enable
-        Enable booth arbitrator service.
-
-    disable
-        Disable booth arbitrator service.
-
-    start
-        Start booth arbitrator service.
-
-    stop
-        Stop booth arbitrator service.
-"""
-    if pout:
-        print(sub_usage(args, output))
-    else:
-        return output
+# def booth(args=[], pout=True):
+#     output = """
+# Usage: pcs booth <command>
+# Manage booth (cluster ticket manager)
+#
+# Commands:
+#     setup sites <address> <address> [<address>...] [arbitrators <address> ...]
+#             [--force]
+#         Write new booth configuration with specified sites and arbitrators.
+#         Total number of peers (sites and arbitrators) must be odd.  When
+#         the configuration file already exists, command fails unless --force
+#         is specified.
+#
+#     destroy
+#         Remove booth configuration files.
+#
+#     ticket add <ticket> [<name>=<value> ...]
+#         Add new ticket to the current configuration. Ticket options are
+#         specified in booth manpage.
+#
+#     ticket remove <ticket>
+#         Remove the specified ticket from the current configuration.
+#
+#     config [<node>]
+#         Show booth configuration from the specified node or from the current
+#         node if node not specified.
+#
+#     create ip <address>
+#         Make the cluster run booth service on the specified ip address as
+#         a cluster resource.  Typically this is used to run booth site.
+#
+#     remove
+#         Remove booth resources created by the "pcs booth create" command.
+#
+#     restart
+#         Restart booth resources created by the "pcs booth create" command.
+#
+#     ticket grant <ticket> [<site address>]
+#         Grant the ticket for the site specified by address.  Site address which
+#         has been specified with 'pcs booth create' command is used if
+#         'site address' is omitted.  Specifying site address is mandatory when
+#         running this command on an arbitrator.
+#
+#     ticket revoke <ticket> [<site address>]
+#         Revoke the ticket for the site specified by address.  Site address which
+#         has been specified with 'pcs booth create' command is used if
+#         'site address' is omitted.  Specifying site address is mandatory when
+#         running this command on an arbitrator.
+#
+#     status
+#         Print current status of booth on the local node.
+#
+#     pull <node>
+#         Pull booth configuration from the specified node.
+#
+#     sync [--skip-offline]
+#         Send booth configuration from the local node to all nodes
+#         in the cluster.
+#
+#     enable
+#         Enable booth arbitrator service.
+#
+#     disable
+#         Disable booth arbitrator service.
+#
+#     start
+#         Start booth arbitrator service.
+#
+#     stop
+#         Stop booth arbitrator service.
+# """
+#     if pout:
+#         print(sub_usage(args, output))
+#     else:
+#         return output
 
 
 def alert(args=[], pout=True):
@@ -1763,7 +1507,7 @@ Commands:
 
     update <alert-id> [path=<path>] [description=<description>]
             [options [<option>=<value>]...] [meta [<meta-option>=<value>]...]
-        Update an existing alert handler with specified id.
+        Update existing alert handler with specified id.
 
     remove <alert-id> ...
         Remove alert handlers with specified ids.
@@ -1776,27 +1520,10 @@ Commands:
     recipient update <recipient-id> [value=<recipient-value>]
             [description=<description>] [options [<option>=<value>]...]
             [meta [<meta-option>=<value>]...]
-        Update an existing recipient identified by its id.
+        Update existing recipient identified by it's id.
 
     recipient remove <recipient-id> ...
         Remove specified recipients.
-"""
-    if pout:
-        print(sub_usage(args, output))
-    else:
-        return output
-
-
-def client(args=[], pout=True):
-    output = """
-Usage: pcs client <command>
-Manage pcsd client configuration.
-
-Commands:
-    local-auth [<pcsd-port>] [-u <username>] [-p <password>]
-        Authenticate current user to local pcsd. This is requiered to run some
-        pcs commands which may require permissions of root user such as 'pcs
-        cluster start'.
 """
     if pout:
         print(sub_usage(args, output))
@@ -1808,16 +1535,15 @@ def show(main_usage_name, rest_usage_names):
     usage_map = {
         "acl": acl,
         "alert": alert,
-        "booth": booth,
-        "client": client,
         "cluster": cluster,
         "config": config,
         "constraint": constraint,
         "node": node,
         "pcsd": pcsd,
         "property": property,
-        "qdevice": qdevice,
-        "quorum": quorum,
+        # "qdevice": qdevice,
+        # "quorum": quorum,
+        # "booth": booth,
         "resource": resource,
         "status": status,
         "stonith": stonith,

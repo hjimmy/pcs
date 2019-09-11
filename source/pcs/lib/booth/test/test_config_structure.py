@@ -2,6 +2,7 @@ from __future__ import (
     absolute_import,
     division,
     print_function,
+    unicode_literals,
 )
 
 from pcs.test.tools.pcs_unittest import TestCase
@@ -56,22 +57,20 @@ class ValidateTicketOptionsTest(TestCase):
         expected_errors = [
             (
                 severities.ERROR,
-                report_codes.INVALID_OPTIONS,
+                report_codes.INVALID_OPTION,
                 {
-                    "option_names": ["site"],
+                    "option_name": "site",
                     "option_type": "booth ticket",
                     "allowed": list(config_structure.TICKET_KEYS),
-                    "allowed_patterns": [],
                 },
             ),
             (
                 severities.ERROR,
-                report_codes.INVALID_OPTIONS,
+                report_codes.INVALID_OPTION,
                 {
-                    "option_names": ["port"],
+                    "option_name": "port",
                     "option_type": "booth ticket",
                     "allowed": list(config_structure.TICKET_KEYS),
-                    "allowed_patterns": [],
                 },
             ),
             (
@@ -85,12 +84,11 @@ class ValidateTicketOptionsTest(TestCase):
             ),
             (
                 severities.ERROR,
-                report_codes.INVALID_OPTIONS,
+                report_codes.INVALID_OPTION,
                 {
-                    "option_names": ["unknown"],
+                    "option_name": "unknown",
                     "option_type": "booth ticket",
                     "allowed": list(config_structure.TICKET_KEYS),
-                    "allowed_patterns": [],
                 },
                 report_codes.FORCE_OPTIONS
             ),
@@ -118,12 +116,11 @@ class ValidateTicketOptionsTest(TestCase):
         expected_errors = [
             (
                 severities.ERROR,
-                report_codes.INVALID_OPTIONS,
+                report_codes.INVALID_OPTION,
                 {
-                    "option_names": ["site"],
+                    "option_name": "site",
                     "option_type": "booth ticket",
                     "allowed": list(config_structure.TICKET_KEYS),
-                    "allowed_patterns": [],
                 },
             ),
         ]
@@ -142,12 +139,11 @@ class ValidateTicketOptionsTest(TestCase):
             expected_errors + [
                 (
                     severities.WARNING,
-                    report_codes.INVALID_OPTIONS,
+                    report_codes.INVALID_OPTION,
                     {
-                        "option_names": ["unknown"],
+                        "option_name": "unknown",
                         "option_type": "booth ticket",
                         "allowed": list(config_structure.TICKET_KEYS),
-                        "allowed_patterns": [],
                     },
                 ),
             ]

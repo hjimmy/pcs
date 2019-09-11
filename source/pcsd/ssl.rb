@@ -2,13 +2,11 @@ require 'rubygems'
 require 'webrick'
 require 'webrick/https'
 require 'openssl'
-gem 'rack', '< 2.0.0'
 require 'rack'
 require 'socket'
 
 require 'bootstrap.rb'
 require 'pcs.rb'
-require 'settings.rb'
 
 unless defined? OpenSSL::SSL::OP_NO_TLSv1_1
   OpenSSL::SSL::OP_NO_TLSv1_1 = 268435456
@@ -67,76 +65,41 @@ def run_server(server, webrick_options, secondary_addrs)
   primary_addr = webrick_options[:BindAddress]
   port = webrick_options[:Port]
 
-  ciphers = 'DEFAULT:!RC4:!3DES:@STRENGTH'
+  ciphers = 'DEFAULT:!RC4:!3DES:@STRENGTH!'
   ciphers = ENV['PCSD_SSL_CIPHERS'] if ENV['PCSD_SSL_CIPHERS']
   # no need to validate ciphers, ssl context will validate them for us
 
   $logger.info("Listening on #{primary_addr} port #{port}")
-  begin
-    server.run(Sinatra::Application, webrick_options) { |server_instance|
-      # configure ssl options
-      server_instance.ssl_context.ciphers = ciphers
-      if ENV['PCSD_REJECT_SSL_RENEG'] and ENV['PCSD_REJECT_SSL_RENEG'].downcase == "true" then
-        # reject ssl/tls renegotiation
-        negotiation_counter = Hash.new
-        server_instance.ssl_context.renegotiation_cb = lambda do |ssl_socket|
-          # This callback is called for every negotiation including the first
-          # one for a new connection. remove all closed sockets from the
-          # counter to clean it up
-          negotiation_counter.delete_if { |key, val| key.io.closed? }
-          # sign our socket in
-          if negotiation_counter.key?(ssl_socket)
-            negotiation_counter[ssl_socket] += 1
-          else
-            negotiation_counter[ssl_socket] = 0
-          end
-          # The only way to disallow the renegotiation is to raise an exception.
-          if negotiation_counter[ssl_socket] > 0
-            $logger.error("Client renegotiation disabled, closing connection")
-            raise RuntimeError.new(
-              "Client renegotiation disabled, closing connection"
-            )
-          end
-        end
-      end
-      # set listening addresses
-      secondary_addrs.each { |addr|
-        $logger.info("Adding listener on #{addr} port #{port}")
-        server_instance.listen(addr, port)
-      }
-      # notify systemd we are running
-      if ISSYSTEMCTL
-        if ENV['NOTIFY_SOCKET']
-          socket_name = ENV['NOTIFY_SOCKET'].dup
-          if socket_name.start_with?('@')
-            # abstract namespace socket
-            socket_name[0] = "\0"
-          end
-          $logger.info("Notifying systemd we are running (socket #{socket_name})")
-          sd_socket = Socket.new(Socket::AF_UNIX, Socket::SOCK_DGRAM)
-          sd_socket.connect(Socket.pack_sockaddr_un(socket_name))
-          sd_socket.send('READY=1', 0)
-          sd_socket.close()
-        end
-      end
+  server.run(Sinatra::Application, webrick_options) { |server_instance|
+    # configure ssl options
+    server_instance.ssl_context.ciphers = ciphers
+    # set listening addresses
+    secondary_addrs.each { |addr|
+      $logger.info("Adding listener on #{addr} port #{port}")
+      server_instance.listen(addr, port)
     }
-  rescue Errno::EADDRNOTAVAIL, Errno::EADDRINUSE => e
-    $logger.error 'Unable to bind to specified address(es), exiting'
-    $logger.error e.message
-    exit 1
-  rescue SocketError => e
-    $logger.error e.message
-    exit 1
-  end
+    # notify systemd we are running
+    if ISSYSTEMCTL
+      socket_name = ENV['NOTIFY_SOCKET']
+      if socket_name
+        if socket_name.start_with?('@')
+          # abstract namespace socket
+          socket_name[0] = "\0"
+        end
+        $logger.info("Notifying systemd we are running (socket #{socket_name})")
+        sd_socket = Socket.new(Socket::AF_UNIX, Socket::SOCK_DGRAM)
+        sd_socket.connect(Socket.pack_sockaddr_un(socket_name))
+        sd_socket.send('READY=1', 0)
+        sd_socket.close()
+      end
+    end
+  }
 end
 
 if not File.exists?(CRT_FILE) or not File.exists?(KEY_FILE)
   crt, key = generate_cert_key_pair(server_name)
-  # File.open(path, mode, options)
-  # File.open(path, mode, perm, options)
-  # In order to set permissions, the method must be called with 4 arguments.
-  File.open(CRT_FILE, 'w', 0600, {}) {|f| f.write(crt)}
-  File.open(KEY_FILE, 'w', 0600, {}) {|f| f.write(key)}
+  File.open(CRT_FILE, 'w',0700) {|f| f.write(crt)}
+  File.open(KEY_FILE, 'w',0700) {|f| f.write(key)}
 else
   crt, key = nil, nil
   begin
@@ -153,15 +116,6 @@ else
   end
 end
 
-dh_key_bits_default = 1024
-dh_key_bits = dh_key_bits_default
-if ENV['PCSD_SSL_DH_KEX_BITS']
-  dh_key_bits = Integer(ENV['PCSD_SSL_DH_KEX_BITS']) rescue dh_key_bits_default
-end
-$logger.info "Generating #{dh_key_bits}bits long DH key..."
-dh_key = OpenSSL::PKey::DH.generate(dh_key_bits)
-$logger.info "DH key created"
-
 default_bind = true
 # see https://github.com/ClusterLabs/pcs/issues/51
 primary_addr = if RUBY_VERSION >= '2.1' then '*' else '::' end
@@ -176,7 +130,7 @@ if ENV['PCSD_BIND_ADDR']
 end
 
 webrick_options = {
-  :Port               => ENV['PCSD_PORT'] || PCSD_DEFAULT_PORT,
+  :Port               => 2224,
   :BindAddress        => primary_addr,
   :Host               => primary_addr,
   :SSLEnable          => true,
@@ -185,7 +139,6 @@ webrick_options = {
   :SSLPrivateKey      => OpenSSL::PKey::RSA.new(key),
   :SSLCertName        => [[ "CN", server_name ]],
   :SSLOptions         => get_ssl_options(),
-  :SSLTmpDhCallback   => lambda {|ctx, is_export, keylen| dh_key},
 }
 
 server = ::Rack::Handler::WEBrick

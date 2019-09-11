@@ -2,6 +2,7 @@ from __future__ import (
     absolute_import,
     division,
     print_function,
+    unicode_literals,
 )
 
 import sys
@@ -11,10 +12,10 @@ from pcs import (
     usage,
     utils,
 )
+from pcs.lib.pacemaker_values import is_true
 from pcs.cli.common.console_report import indent
 from pcs.cli.common.errors import CmdLineInputError
 from pcs.lib.errors import LibraryError
-from pcs.lib.pacemaker.values import is_true
 
 def acl_cmd(lib, argv, modifiers):
     if len(argv) < 1:
@@ -324,3 +325,4 @@ def _permission_to_str(permission):
         out += ["id", permission.get("reference")]
     out.append("({0})".format(permission.get("id")))
     return " ".join(out)
+

@@ -2,6 +2,7 @@ from __future__ import (
     absolute_import,
     division,
     print_function,
+    unicode_literals,
 )
 
 from functools import partial
@@ -12,7 +13,6 @@ from pcs.lib import reports
 from pcs.lib.cib.constraint import constraint
 from pcs.lib.cib import tools
 from pcs.lib.errors import LibraryError
-from pcs.lib.xml_tools import remove_when_pointless
 
 TAG_NAME = 'rsc_ticket'
 DESCRIPTION = "constraint id"
@@ -54,7 +54,7 @@ def prepare_options_with_set(cib, options, resource_set_list):
     )
     report  = _validate_options_common(options)
     if "ticket" not in options or not options["ticket"].strip():
-        report.append(reports.required_option_is_missing(['ticket']))
+        report.append(reports.required_option_is_missing('ticket'))
     if report:
         raise LibraryError(*report)
     return options
@@ -65,11 +65,11 @@ def prepare_options_plain(cib, options, ticket, resource_id):
     report = _validate_options_common(options)
 
     if not ticket:
-        report.append(reports.required_option_is_missing(['ticket']))
+        report.append(reports.required_option_is_missing('ticket'))
     options["ticket"] = ticket
 
     if not resource_id:
-        report.append(reports.required_option_is_missing(['rsc']))
+        report.append(reports.required_option_is_missing('rsc'))
     options["rsc"] = resource_id
 
     if "rsc-role" in options:
@@ -127,10 +127,8 @@ def remove_with_resource_set(constraint_section, ticket_key, resource_id):
         if not len(set_element):
             ticket_element = set_element.getparent()
             ticket_element.remove(set_element)
-            #We do not care about attributes since without an attribute "rsc"
-            #they are pointless. Attribute "rsc" is mutually exclusive with
-            #resource_set (see rng) so it cannot be in this ticket_element.
-            remove_when_pointless(ticket_element, attribs_important=False)
+            if not len(ticket_element):
+                ticket_element.getparent().remove(ticket_element)
 
     return len(ref_element_list) > 0
 

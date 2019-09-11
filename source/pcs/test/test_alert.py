@@ -1,14 +1,16 @@
+
 from __future__ import (
     absolute_import,
     division,
     print_function,
+    unicode_literals,
 )
 
 import shutil
 
 from pcs.test.tools.misc import (
     get_test_resource as rc,
-    skip_unless_pacemaker_version,
+    is_minimum_pacemaker_version,
     outdent,
 )
 from pcs.test.tools.assertions import AssertPcsMixin
@@ -20,10 +22,11 @@ old_cib = rc("cib-empty.xml")
 empty_cib = rc("cib-empty-2.5.xml")
 temp_cib = rc("temp-cib.xml")
 
-skip_unless_alerts_supported = skip_unless_pacemaker_version(
-    (1, 1, 15),
-    "alerts"
-)
+
+ALERTS_SUPPORTED = is_minimum_pacemaker_version(1, 1, 15)
+ALERTS_NOT_SUPPORTED_MSG = "Pacemaker version is too old (must be >= 1.1.15)" +\
+    " to test alerts"
+
 
 class PcsAlertTest(unittest.TestCase, AssertPcsMixin):
     def setUp(self):
@@ -31,7 +34,7 @@ class PcsAlertTest(unittest.TestCase, AssertPcsMixin):
         self.pcs_runner = PcsRunner(temp_cib)
 
 
-@skip_unless_alerts_supported
+@unittest.skipUnless(ALERTS_SUPPORTED, ALERTS_NOT_SUPPORTED_MSG)
 class AlertCibUpgradeTest(unittest.TestCase, AssertPcsMixin):
     def setUp(self):
         shutil.copy(old_cib, temp_cib)
@@ -60,7 +63,7 @@ Alerts:
         )
 
 
-@skip_unless_alerts_supported
+@unittest.skipUnless(ALERTS_SUPPORTED, ALERTS_NOT_SUPPORTED_MSG)
 class CreateAlertTest(PcsAlertTest):
     def test_create_multiple_without_id(self):
         self.assert_pcs_success(
@@ -148,7 +151,7 @@ Alerts:
         )
 
 
-@skip_unless_alerts_supported
+@unittest.skipUnless(ALERTS_SUPPORTED, ALERTS_NOT_SUPPORTED_MSG)
 class UpdateAlertTest(PcsAlertTest):
     def test_update_everything(self):
         self.assert_pcs_success(
@@ -189,15 +192,15 @@ Alerts:
 
     def test_not_existing_alert(self):
         self.assert_pcs_fail(
-            "alert update alert1", "Error: alert 'alert1' does not exist\n"
+            "alert update alert1", "Error: Alert 'alert1' not found.\n"
         )
 
 
-@skip_unless_alerts_supported
+@unittest.skipUnless(ALERTS_SUPPORTED, ALERTS_NOT_SUPPORTED_MSG)
 class RemoveAlertTest(PcsAlertTest):
     def test_not_existing_alert(self):
         self.assert_pcs_fail(
-            "alert remove alert1", "Error: alert 'alert1' does not exist\n"
+            "alert remove alert1", "Error: Alert 'alert1' not found.\n"
         )
 
     def test_one(self):
@@ -257,7 +260,7 @@ class RemoveAlertTest(PcsAlertTest):
         )
 
 
-@skip_unless_alerts_supported
+@unittest.skipUnless(ALERTS_SUPPORTED, ALERTS_NOT_SUPPORTED_MSG)
 class AddRecipientTest(PcsAlertTest):
     def test_success(self):
         self.assert_pcs_success("alert create path=test")
@@ -353,7 +356,7 @@ Alerts:
 
 
 
-@skip_unless_alerts_supported
+@unittest.skipUnless(ALERTS_SUPPORTED, ALERTS_NOT_SUPPORTED_MSG)
 class UpdateRecipientAlert(PcsAlertTest):
     def test_success(self):
         self.assert_pcs_success("alert create path=test")
@@ -467,7 +470,7 @@ Alerts:
     def test_no_recipient(self):
         self.assert_pcs_fail(
             "alert recipient update rec description=desc",
-            "Error: recipient 'rec' does not exist\n"
+            "Error: Recipient 'rec' does not exist\n"
         )
 
     def test_empty_value(self):
@@ -481,7 +484,7 @@ Alerts:
         )
 
 
-@skip_unless_alerts_supported
+@unittest.skipUnless(ALERTS_SUPPORTED, ALERTS_NOT_SUPPORTED_MSG)
 class RemoveRecipientTest(PcsAlertTest):
     def test_one(self):
         self.assert_pcs_success("alert create path=test")
@@ -554,8 +557,8 @@ class RemoveRecipientTest(PcsAlertTest):
         )
         self.assert_pcs_fail(
             "alert recipient remove rec1 rec2 rec3", outdent("""\
-                Error: recipient 'rec2' does not exist
-                Error: recipient 'rec3' does not exist
+                Error: Recipient 'rec2' does not exist
+                Error: Recipient 'rec3' does not exist
                 """
             )
         )

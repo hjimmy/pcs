@@ -2,6 +2,7 @@ from __future__ import (
     absolute_import,
     division,
     print_function,
+    unicode_literals,
 )
 
 from pcs.test.tools.pcs_unittest import TestCase
@@ -15,7 +16,8 @@ from pcs.test.tools.pcs_unittest import mock
 from pcs import settings
 from pcs.common import report_codes
 from pcs.lib.errors import ReportItemSeverity as severity
-from pcs.lib.external import CommandRunner
+from pcs.lib.node import NodeAddresses
+from pcs.lib.external import CommandRunner, NodeCommunicator
 
 from pcs.lib.corosync import live as lib
 
@@ -67,6 +69,22 @@ class GetLocalClusterConfTest(TestCase):
                     "reason": "No such file or directory",
                 }
             )
+        )
+
+
+class SetRemoteCorosyncConfTest(TestCase):
+    def test_success(self):
+        config = "test {\nconfig: data\n}\n"
+        node = NodeAddresses("node1")
+        mock_communicator = mock.MagicMock(spec_set=NodeCommunicator)
+        mock_communicator.call_node.return_value = "dummy return"
+
+        lib.set_remote_corosync_conf(mock_communicator, node, config)
+
+        mock_communicator.call_node.assert_called_once_with(
+            node,
+            "remote/set_corosync_conf",
+            "corosync_conf=test+%7B%0Aconfig%3A+data%0A%7D%0A"
         )
 
 
@@ -193,3 +211,4 @@ class SetExpectedVotesTest(TestCase):
         mock_runner.run.assert_called_once_with([
             self.path("corosync-quorumtool"), "-e", "3"
         ])
+

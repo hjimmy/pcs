@@ -2,6 +2,7 @@ from __future__ import (
     absolute_import,
     division,
     print_function,
+    unicode_literals,
 )
 
 import sys
@@ -9,6 +10,8 @@ import xml.dom.minidom
 from collections import defaultdict
 from xml.dom.minidom import parseString
 
+import pcs.cli.constraint_colocation.command as colocation_command
+import pcs.cli.constraint_order.command as order_command
 from pcs import (
     rule as rule_utils,
     usage,
@@ -18,18 +21,11 @@ from pcs.cli import (
     constraint_colocation,
     constraint_order,
 )
-from pcs.cli.common import parse_args
-from pcs.cli.common.console_report import warn
-from pcs.cli.common.errors import CmdLineInputError
-import pcs.cli.constraint_colocation.command as colocation_command
-import pcs.cli.constraint_order.command as order_command
 from pcs.cli.constraint_ticket import command as ticket_command
+from pcs.cli.common.errors import CmdLineInputError
 from pcs.lib.cib.constraint import resource_set
 from pcs.lib.cib.constraint.order import ATTRIB as order_attrib
-from pcs.lib.env_tools import get_nodes
 from pcs.lib.errors import LibraryError
-from pcs.lib.node import node_addresses_contain_label
-from pcs.lib.pacemaker.values import sanitize_id
 
 
 OPTIONS_ACTION = resource_set.ATTRIB["action"]
@@ -40,120 +36,111 @@ DEFAULT_ROLE = "Started"
 OPTIONS_SYMMETRICAL = order_attrib["symmetrical"]
 OPTIONS_KIND = order_attrib["kind"]
 
-RESOURCE_TYPE_RESOURCE = "resource"
-RESOURCE_TYPE_REGEXP = "regexp"
-
 def constraint_cmd(argv):
     lib = utils.get_library_wrapper()
-    modifiers = utils.get_modifiers()
-
+    modificators = utils.get_modificators()
     if len(argv) == 0:
         argv = ["list"]
+
     sub_cmd = argv.pop(0)
+    if (sub_cmd == "help"):
+        usage.constraint(argv)
+    elif (sub_cmd == "location"):
+        if len (argv) == 0:
+            sub_cmd2 = "show"
+        else:
+            sub_cmd2 = argv.pop(0)
 
-    try:
-        if (sub_cmd == "help"):
-            usage.constraint(argv)
-        elif (sub_cmd == "location"):
-            if len (argv) == 0:
-                sub_cmd2 = "show"
-            else:
-                sub_cmd2 = argv.pop(0)
-
-            if (sub_cmd2 == "add"):
-                location_add(argv)
-            elif (sub_cmd2 in ["remove","delete"]):
-                location_add(argv,True)
-            elif (sub_cmd2 == "show"):
-                location_show(argv)
-            elif len(argv) >= 2:
-                if argv[0] == "rule":
-                    location_rule([sub_cmd2] + argv)
-                else:
-                    location_prefer([sub_cmd2] + argv)
-            else:
-                usage.constraint()
-                sys.exit(1)
-        elif (sub_cmd == "order"):
-            if (len(argv) == 0):
-                sub_cmd2 = "show"
-            else:
-                sub_cmd2 = argv.pop(0)
-
-            if (sub_cmd2 == "set"):
-                try:
-                    order_command.create_with_set(lib, argv, modifiers)
-                except CmdLineInputError as e:
-                    utils.exit_on_cmdline_input_errror(e, "constraint", 'order set')
-                except LibraryError as e:
-                    utils.process_library_reports(e.args)
-            elif (sub_cmd2 in ["remove","delete"]):
-                order_rm(argv)
-            elif (sub_cmd2 == "show"):
-                order_command.show(lib, argv, modifiers)
-            else:
-                order_start([sub_cmd2] + argv)
-        elif sub_cmd == "ticket":
-            usage_name = "ticket"
-            try:
-                command_map = {
-                    "set": ticket_command.create_with_set,
-                    "add": ticket_command.add,
-                    "remove": ticket_command.remove,
-                    "show": ticket_command.show,
-                }
-                sub_command = argv[0] if argv else "show"
-                if sub_command not in command_map:
-                    raise CmdLineInputError()
-                usage_name = "ticket "+sub_command
-
-                command_map[sub_command](lib, argv[1:], modifiers)
-            except LibraryError as e:
-                utils.process_library_reports(e.args)
-            except CmdLineInputError as e:
-                utils.exit_on_cmdline_input_errror(e, "constraint", usage_name)
-
-        elif (sub_cmd == "colocation"):
-            if (len(argv) == 0):
-                sub_cmd2 = "show"
-            else:
-                sub_cmd2 = argv.pop(0)
-
-            if (sub_cmd2 == "add"):
-                colocation_add(argv)
-            elif (sub_cmd2 in ["remove","delete"]):
-                colocation_rm(argv)
-            elif (sub_cmd2 == "set"):
-                try:
-
-                    colocation_command.create_with_set(lib, argv, modifiers)
-                except LibraryError as e:
-                    utils.process_library_reports(e.args)
-                except CmdLineInputError as e:
-                    utils.exit_on_cmdline_input_errror(e, "constraint", "colocation set")
-            elif (sub_cmd2 == "show"):
-                colocation_command.show(lib, argv, modifiers)
-            else:
-                usage.constraint()
-                sys.exit(1)
-        elif (sub_cmd in ["remove","delete"]):
-            constraint_rm(argv)
-        elif (sub_cmd == "show" or sub_cmd == "list"):
+        if (sub_cmd2 == "add"):
+            location_add(argv)
+        elif (sub_cmd2 in ["remove","delete"]):
+            location_add(argv,True)
+        elif (sub_cmd2 == "show"):
             location_show(argv)
-            order_command.show(lib, argv, modifiers)
-            colocation_command.show(lib, argv, modifiers)
-            ticket_command.show(lib, argv, modifiers)
-        elif (sub_cmd == "ref"):
-            constraint_ref(argv)
-        elif (sub_cmd == "rule"):
-            constraint_rule(argv)
+        elif len(argv) >= 2:
+            if argv[0] == "rule":
+                location_rule([sub_cmd2] + argv)
+            else:
+                location_prefer([sub_cmd2] + argv)
         else:
             usage.constraint()
             sys.exit(1)
-    except LibraryError as e:
-        utils.process_library_reports(e.args)
-    except CmdLineInputError as e:
-        utils.exit_on_cmdline_input_errror(e, "resource", sub_cmd)
+    elif (sub_cmd == "order"):
+        if (len(argv) == 0):
+            sub_cmd2 = "show"
+        else:
+            sub_cmd2 = argv.pop(0)
+
+        if (sub_cmd2 == "set"):
+            try:
+                order_command.create_with_set(lib, argv, modificators)
+            except CmdLineInputError as e:
+                utils.exit_on_cmdline_input_errror(e, "constraint", 'order set')
+            except LibraryError as e:
+                utils.process_library_reports(e.args)
+        elif (sub_cmd2 in ["remove","delete"]):
+            order_rm(argv)
+        elif (sub_cmd2 == "show"):
+            order_command.show(lib, argv, modificators)
+        else:
+            order_start([sub_cmd2] + argv)
+    elif sub_cmd == "ticket":
+        usage_name = "ticket"
+        try:
+            command_map = {
+                "set": ticket_command.create_with_set,
+                "add": ticket_command.add,
+                "remove": ticket_command.remove,
+                "show": ticket_command.show,
+            }
+            sub_command = argv[0] if argv else "show"
+            if sub_command not in command_map:
+                raise CmdLineInputError()
+            usage_name = "ticket "+sub_command
+
+            command_map[sub_command](lib, argv[1:], modificators)
+        except LibraryError as e:
+            utils.process_library_reports(e.args)
+        except CmdLineInputError as e:
+            utils.exit_on_cmdline_input_errror(e, "constraint", usage_name)
+
+    elif (sub_cmd == "colocation"):
+        if (len(argv) == 0):
+            sub_cmd2 = "show"
+        else:
+            sub_cmd2 = argv.pop(0)
+
+        if (sub_cmd2 == "add"):
+            colocation_add(argv)
+        elif (sub_cmd2 in ["remove","delete"]):
+            colocation_rm(argv)
+        elif (sub_cmd2 == "set"):
+            try:
+
+                colocation_command.create_with_set(lib, argv, modificators)
+            except LibraryError as e:
+                utils.process_library_reports(e.args)
+            except CmdLineInputError as e:
+                utils.exit_on_cmdline_input_errror(e, "constraint", "colocation set")
+        elif (sub_cmd2 == "show"):
+            colocation_command.show(lib, argv, modificators)
+        else:
+            usage.constraint()
+            sys.exit(1)
+    elif (sub_cmd in ["remove","delete"]):
+        constraint_rm(argv)
+    elif (sub_cmd == "show" or sub_cmd == "list"):
+        location_show(argv)
+        order_command.show(lib, argv, modificators)
+        colocation_command.show(lib, argv, modificators)
+        ticket_command.show(lib, argv, modificators)
+    elif (sub_cmd == "ref"):
+        constraint_ref(argv)
+    elif (sub_cmd == "rule"):
+        constraint_rule(argv)
+    else:
+        usage.constraint()
+        sys.exit(1)
 
 
 
@@ -528,7 +515,7 @@ def order_find_duplicates(dom, constraint_el):
 
 # Show the currently configured location constraints by node or resource
 def location_show(argv):
-    if argv and argv[0] == "nodes":
+    if (len(argv) != 0 and argv[0] == "nodes"):
         byNode = True
         showDetail = False
     elif "--full" in utils.pcs_options:
@@ -539,61 +526,31 @@ def location_show(argv):
         showDetail = False
 
     if len(argv) > 1:
-        if byNode:
-            valid_noderes = argv[1:]
-        else:
-            valid_noderes = [
-                parse_args.parse_typed_arg(
-                    arg,
-                    [RESOURCE_TYPE_RESOURCE, RESOURCE_TYPE_REGEXP],
-                    RESOURCE_TYPE_RESOURCE
-                )
-                for arg in argv[1:]
-            ]
+        valid_noderes = argv[1:]
     else:
         valid_noderes = []
 
     (dummy_dom,constraintsElement) = getCurrentConstraints()
-    print("\n".join(location_lines(
-        constraintsElement,
-        showDetail=showDetail,
-        byNode=byNode,
-        valid_noderes=valid_noderes
-    )))
-
-def location_lines(
-    constraintsElement, showDetail=False, byNode=False, valid_noderes=None
-):
-    all_lines = []
     nodehashon = {}
     nodehashoff = {}
     rschashon = {}
     rschashoff = {}
     ruleshash = defaultdict(list)
-    all_loc_constraints = constraintsElement.getElementsByTagName(
-        'rsc_location'
-    )
+    all_loc_constraints = constraintsElement.getElementsByTagName('rsc_location')
 
-    all_lines.append("Location Constraints:")
+    print("Location Constraints:")
     for rsc_loc in all_loc_constraints:
-        if rsc_loc.hasAttribute("rsc-pattern"):
-            lc_rsc_type = RESOURCE_TYPE_REGEXP
-            lc_rsc_value = rsc_loc.getAttribute("rsc-pattern")
-            lc_name = "Resource pattern: {0}".format(lc_rsc_value)
-        else:
-            lc_rsc_type = RESOURCE_TYPE_RESOURCE
-            lc_rsc_value = rsc_loc.getAttribute("rsc")
-            lc_name = "Resource: {0}".format(lc_rsc_value)
-        lc_rsc = lc_rsc_type, lc_rsc_value, lc_name
-        lc_id = rsc_loc.getAttribute("id")
         lc_node = rsc_loc.getAttribute("node")
+        lc_rsc = rsc_loc.getAttribute("rsc")
+        lc_id = rsc_loc.getAttribute("id")
         lc_score = rsc_loc.getAttribute("score")
         lc_role = rsc_loc.getAttribute("role")
+        lc_name = "Resource: " + lc_rsc
         lc_resource_discovery = rsc_loc.getAttribute("resource-discovery")
 
         for child in rsc_loc.childNodes:
             if child.nodeType == child.ELEMENT_NODE and child.tagName == "rule":
-                ruleshash[lc_rsc].append(child)
+                ruleshash[lc_name].append(child)
 
 # NEED TO FIX FOR GROUP LOCATION CONSTRAINTS (where there are children of
 # rsc_location)
@@ -609,50 +566,32 @@ def location_lines(
         else:
             positive = False
 
-        if positive:
+        if positive == True:
             nodeshash = nodehashon
             rschash = rschashon
         else:
             nodeshash = nodehashoff
             rschash = rschashoff
 
-        hash_element = {
-            "id": lc_id,
-            "rsc_type": lc_rsc_type,
-            "rsc_value": lc_rsc_value,
-            "rsc_label": lc_name,
-            "node": lc_node,
-            "score": lc_score,
-            "role": lc_role,
-            "resource-discovery": lc_resource_discovery,
-        }
         if lc_node in nodeshash:
-            nodeshash[lc_node].append(hash_element)
+            nodeshash[lc_node].append((lc_id,lc_rsc,lc_score, lc_role, lc_resource_discovery))
         else:
-            nodeshash[lc_node] = [hash_element]
+            nodeshash[lc_node] = [(lc_id, lc_rsc,lc_score, lc_role, lc_resource_discovery)]
+
         if lc_rsc in rschash:
-            rschash[lc_rsc].append(hash_element)
+            rschash[lc_rsc].append((lc_id,lc_node,lc_score, lc_role, lc_resource_discovery))
         else:
-            rschash[lc_rsc] = [hash_element]
+            rschash[lc_rsc] = [(lc_id,lc_node,lc_score, lc_role, lc_resource_discovery)]
 
-    nodelist = sorted(set(list(nodehashon.keys()) + list(nodehashoff.keys())))
-    rsclist = sorted(
-        set(list(rschashon.keys()) + list(rschashoff.keys())),
-        key=lambda item: (
-            {
-                RESOURCE_TYPE_RESOURCE: 1,
-                RESOURCE_TYPE_REGEXP: 0,
-            }[item[0]],
-            item[1]
-        )
-    )
+    nodelist = list(set(list(nodehashon.keys()) + list(nodehashoff.keys())))
+    rsclist = list(set(list(rschashon.keys()) + list(rschashoff.keys())))
 
-    if byNode:
+    if byNode == True:
         for node in nodelist:
-            if valid_noderes:
+            if len(valid_noderes) != 0:
                 if node not in valid_noderes:
                     continue
-            all_lines.append("  Node: " + node)
+            print("  Node: " + node)
 
             nodehash_label = (
                 (nodehashon, "    Allowed to run:"),
@@ -660,31 +599,27 @@ def location_lines(
             )
             for nodehash, label in nodehash_label:
                 if node in nodehash:
-                    all_lines.append(label)
+                    print(label)
                     for options in nodehash[node]:
-                        line_parts = [(
-                            "      " + options["rsc_label"]
-                            + " (" + options["id"] + ")"
-                        )]
-                        if options["role"]:
+                        line_parts = [
+                            "      " + options[1] + " (" + options[0] + ")",
+                        ]
+                        if options[3]:
+                            line_parts.append("(role: {0})".format(options[3]))
+                        if options[4]:
                             line_parts.append(
-                                "(role: {0})".format(options["role"])
+                                "(resource-discovery={0})".format(options[4])
                             )
-                        if options["resource-discovery"]:
-                            line_parts.append(
-                                "(resource-discovery={0})".format(
-                                    options["resource-discovery"]
-                                )
-                            )
-                        line_parts.append("Score: " + options["score"])
-                        all_lines.append(" ".join(line_parts))
-        all_lines += _show_location_rules(ruleshash, showDetail)
+                        line_parts.append("Score: " + options[2])
+                        print(" ".join(line_parts))
+        show_location_rules(ruleshash,showDetail)
     else:
+        rsclist.sort()
         for rsc in rsclist:
-            if valid_noderes:
-                if rsc[0:2] not in valid_noderes:
+            if len(valid_noderes) != 0:
+                if rsc not in valid_noderes:
                     continue
-            all_lines.append("  {0}".format(rsc[2]))
+            print("  Resource: " + rsc)
             rschash_label = (
                 (rschashon, "    Enabled on:"),
                 (rschashoff, "    Disabled on:"),
@@ -692,47 +627,32 @@ def location_lines(
             for rschash, label in rschash_label:
                 if rsc in rschash:
                     for options in rschash[rsc]:
-                        if not options["node"]:
+                        if not options[1]:
                             continue
                         line_parts = [
                             label,
-                            options["node"],
-                            "(score:{0})".format(options["score"]),
+                            options[1],
+                            "(score:{0})".format(options[2]),
                         ]
-                        if options["role"]:
+                        if options[3]:
+                            line_parts.append("(role: {0})".format(options[3]))
+                        if options[4]:
                             line_parts.append(
-                                "(role: {0})".format(options["role"])
-                            )
-                        if options["resource-discovery"]:
-                            line_parts.append(
-                                "(resource-discovery={0})".format(
-                                    options["resource-discovery"]
-                                )
+                                "(resource-discovery={0})".format(options[4])
                             )
                         if showDetail:
-                            line_parts.append("(id:{0})".format(options["id"]))
-                        all_lines.append(" ".join(line_parts))
-            miniruleshash = {}
-            miniruleshash[rsc] = ruleshash[rsc]
-            all_lines += _show_location_rules(miniruleshash, showDetail, True)
-    return all_lines
+                            line_parts.append("(id:{0})".format(options[0]))
+                        print(" ".join(line_parts))
+            miniruleshash={}
+            miniruleshash["Resource: " + rsc] = ruleshash["Resource: " + rsc]
+            show_location_rules(miniruleshash,showDetail, True)
 
-def _show_location_rules(ruleshash, showDetail, noheader=False):
-    all_lines = []
+def show_location_rules(ruleshash,showDetail,noheader=False):
     constraint_options = {}
-    for rsc in sorted(
-        ruleshash.keys(),
-        key=lambda item: (
-            {
-                RESOURCE_TYPE_RESOURCE: 1,
-                RESOURCE_TYPE_REGEXP: 0,
-            }[item[0]],
-            item[1]
-        )
-    ):
-        constrainthash = defaultdict(list)
+    for rsc in ruleshash:
+        constrainthash= defaultdict(list)
         if not noheader:
-            all_lines.append("  {0}".format(rsc[2]))
+            print("  " + rsc)
         for rule in ruleshash[rsc]:
             constraint_id = rule.parentNode.getAttribute("id")
             constrainthash[constraint_id].append(rule)
@@ -746,24 +666,15 @@ def _show_location_rules(ruleshash, showDetail, noheader=False):
             else:
                 constraint_option_info = ""
 
-            all_lines.append(
-                "    Constraint: " + constraint_id + constraint_option_info
-            )
+            print("    Constraint: " + constraint_id + constraint_option_info)
             for rule in constrainthash[constraint_id]:
-                all_lines.append(rule_utils.ExportDetailed().get_string(
+                print(rule_utils.ExportDetailed().get_string(
                     rule, showDetail, "      "
                 ))
-    return all_lines
 
 def location_prefer(argv):
     rsc = argv.pop(0)
     prefer_option = argv.pop(0)
-
-    dummy_rsc_type, rsc_value = parse_args.parse_typed_arg(
-        rsc,
-        [RESOURCE_TYPE_RESOURCE, RESOURCE_TYPE_REGEXP],
-        RESOURCE_TYPE_RESOURCE
-    )
 
     if prefer_option == "prefers":
         prefer = True
@@ -792,159 +703,80 @@ def location_prefer(argv):
                 else:
                     score = "-" + score
             node = nodeconf_a[0]
-        location_add([
-            sanitize_id("location-{0}-{1}-{2}".format(rsc_value, node, score)),
-            rsc,
-            node,
-            score
-        ])
+        location_add(["location-" +rsc+"-"+node+"-"+score,rsc,node,score])
 
 
 def location_add(argv,rm=False):
-    if rm:
-        location_remove(argv)
-        return
-
-    if len(argv) < 4:
-        usage.constraint(["location add"])
+    if len(argv) < 4 and (rm == False or len(argv) < 1):
+        usage.constraint()
         sys.exit(1)
 
     constraint_id = argv.pop(0)
-    rsc_type, rsc_value = parse_args.parse_typed_arg(
-        argv.pop(0),
-        [RESOURCE_TYPE_RESOURCE, RESOURCE_TYPE_REGEXP],
-        RESOURCE_TYPE_RESOURCE
-    )
-    node = argv.pop(0)
-    score = argv.pop(0)
-    options = []
-    # For now we only allow setting resource-discovery
-    if len(argv) > 0:
-        for arg in argv:
-            if '=' in arg:
-                options.append(arg.split('=',1))
-            else:
-                print("Error: bad option '%s'" % arg)
-                usage.constraint(["location add"])
-                sys.exit(1)
-            if options[-1][0] != "resource-discovery" and "--force" not in utils.pcs_options:
-                utils.err("bad option '%s', use --force to override" % options[-1][0])
 
-    id_valid, id_error = utils.validate_xml_id(constraint_id, 'constraint id')
-    if not id_valid:
-        utils.err(id_error)
-
-    if not utils.is_score(score):
-        utils.err("invalid score '%s', use integer or INFINITY or -INFINITY" % score)
-
-    required_version = None
-    if [x for x in options if x[0] == "resource-discovery"]:
-        required_version = 2, 2, 0
-    if rsc_type == RESOURCE_TYPE_REGEXP:
-        required_version = 2, 6, 0
-
-    if required_version:
-        dom = utils.cluster_upgrade_to_version(required_version)
+    # If we're removing, we only care about the id
+    if (rm == True):
+        resource_name = ""
+        node = ""
+        score = ""
     else:
-        dom = utils.get_cib_dom()
+        id_valid, id_error = utils.validate_xml_id(constraint_id, 'constraint id')
+        if not id_valid:
+            utils.err(id_error)
+        resource_name = argv.pop(0)
+        node = argv.pop(0)
+        score = argv.pop(0)
+        options = []
+        # For now we only allow setting resource-discovery
+        if len(argv) > 0:
+            for arg in argv:
+                if '=' in arg:
+                    options.append(arg.split('=',1))
+                else:
+                    print("Error: bad option '%s'" % arg)
+                    usage.constraint(["location add"])
+                    sys.exit(1)
+                if options[-1][0] != "resource-discovery" and "--force" not in utils.pcs_options:
+                    utils.err("bad option '%s', use --force to override" % options[-1][0])
 
-    if rsc_type == RESOURCE_TYPE_RESOURCE:
-        rsc_valid, rsc_error, correct_id = utils.validate_constraint_resource(
-            dom, rsc_value
-        )
-        if "--autocorrect" in utils.pcs_options and correct_id:
-            rsc_value = correct_id
-        elif not rsc_valid:
-            utils.err(rsc_error)
 
-    # Verify that specified node exists in the cluster
-    if not utils.usefile:
-        lib_env = utils.get_lib_env()
-        existing_nodes = get_nodes(
-            corosync_conf=lib_env.get_corosync_conf(),
-            tree=lib_env.get_cib(),
-        )
-        if not node_addresses_contain_label(existing_nodes, node):
-            warn(
-                (
-                    "Node '{node}' does not seem to be in the cluster. If you "
-                    "are about to add node '{node}' to the cluster, you can "
-                    "safely ignore this warning."
-                ).format(node=node)
+        resource_valid, resource_error, correct_id \
+            = utils.validate_constraint_resource(
+                utils.get_cib_dom(), resource_name
             )
-    else:
-        warn("Validation for node existence in the cluster will be skipped")
+        if "--autocorrect" in utils.pcs_options and correct_id:
+            resource_name = correct_id
+        elif not resource_valid:
+            utils.err(resource_error)
+        if not utils.is_score(score):
+            utils.err("invalid score '%s', use integer or INFINITY or -INFINITY" % score)
 
     # Verify current constraint doesn't already exist
     # If it does we replace it with the new constraint
-    dummy_dom, constraintsElement = getCurrentConstraints(dom)
+    (dom,constraintsElement) = getCurrentConstraints()
     elementsToRemove = []
+
     # If the id matches, or the rsc & node match, then we replace/remove
     for rsc_loc in constraintsElement.getElementsByTagName('rsc_location'):
-        if (
-            rsc_loc.getAttribute("id") == constraint_id
-            or
-            (
-                rsc_loc.getAttribute("node") == node
-                and
-                (
-                    (
-                        RESOURCE_TYPE_RESOURCE == rsc_type
-                        and
-                        rsc_loc.getAttribute("rsc") == rsc_value
-                    )
-                    or
-                    (
-                        RESOURCE_TYPE_REGEXP == rsc_type
-                        and
-                        rsc_loc.getAttribute("rsc-pattern") == rsc_value
-                    )
-                )
-            )
-        ):
+        if (constraint_id == rsc_loc.getAttribute("id")) or \
+                (rsc_loc.getAttribute("rsc") == resource_name and \
+                rsc_loc.getAttribute("node") == node and not rm):
             elementsToRemove.append(rsc_loc)
+
     for etr in elementsToRemove:
         constraintsElement.removeChild(etr)
 
-    element = dom.createElement("rsc_location")
-    element.setAttribute("id",constraint_id)
-    if rsc_type == RESOURCE_TYPE_RESOURCE:
-        element.setAttribute("rsc", rsc_value)
-    elif rsc_type == RESOURCE_TYPE_REGEXP:
-        element.setAttribute("rsc-pattern", rsc_value)
-    element.setAttribute("node",node)
-    element.setAttribute("score",score)
-    for option in options:
-        element.setAttribute(option[0], option[1])
-    constraintsElement.appendChild(element)
-
-    utils.replace_cib_configuration(dom)
-
-def location_remove(argv):
-    # This code was originally merged in the location_add function and was
-    # documented to take 1 or 4 arguments:
-    # location remove <id> [<resource id> <node> <score>]
-    # However it has always ignored all arguments but constraint id. Therefore
-    # this command / function has no use as it can be fully replaced by "pcs
-    # constraint remove" which also removes constraints by id. For now I keep
-    # things as they are but we should solve this when moving these functions
-    # to pcs.lib.
-    if len(argv) != 1:
-        usage.constraint(["location remove"])
-        sys.exit(1)
-
-    constraint_id = argv.pop(0)
-    dom, constraintsElement = getCurrentConstraints()
-
-    elementsToRemove = []
-    for rsc_loc in constraintsElement.getElementsByTagName('rsc_location'):
-        if constraint_id == rsc_loc.getAttribute("id"):
-            elementsToRemove.append(rsc_loc)
-
-    if (len(elementsToRemove) == 0):
+    if (rm == True and len(elementsToRemove) == 0):
         utils.err("resource location id: " + constraint_id + " not found.")
-    for etr in elementsToRemove:
-        constraintsElement.removeChild(etr)
+
+    if (not rm):
+        element = dom.createElement("rsc_location")
+        element.setAttribute("id",constraint_id)
+        element.setAttribute("rsc",resource_name)
+        element.setAttribute("node",node)
+        element.setAttribute("score",score)
+        for option in options:
+            element.setAttribute(option[0], option[1])
+        constraintsElement.appendChild(element)
 
     utils.replace_cib_configuration(dom)
 
@@ -953,52 +785,29 @@ def location_rule(argv):
         usage.constraint(["location", "rule"])
         sys.exit(1)
 
-    rsc_type, rsc_value = parse_args.parse_typed_arg(
-        argv.pop(0),
-        [RESOURCE_TYPE_RESOURCE, RESOURCE_TYPE_REGEXP],
-        RESOURCE_TYPE_RESOURCE
-    )
+    res_name = argv.pop(0)
+    resource_valid, resource_error, correct_id \
+        = utils.validate_constraint_resource(utils.get_cib_dom(), res_name)
+    if "--autocorrect" in utils.pcs_options and correct_id:
+        res_name = correct_id
+    elif not resource_valid:
+        utils.err(resource_error)
+
     argv.pop(0) # pop "rule"
-    options, rule_argv = rule_utils.parse_argv(
-        argv,
-        {
-            "constraint-id": None,
-            "resource-discovery": None,
-        }
-    )
-    resource_discovery = (
-        "resource-discovery" in options
-        and
-        options["resource-discovery"]
-    )
 
-    required_version = None
-    if resource_discovery:
-        required_version = 2, 2, 0
-    if rsc_type == RESOURCE_TYPE_REGEXP:
-        required_version = 2, 6, 0
-
-    if required_version:
-        dom = utils.cluster_upgrade_to_version(required_version)
-    else:
-        dom = utils.get_cib_dom()
-
-    if rsc_type == RESOURCE_TYPE_RESOURCE:
-        rsc_valid, rsc_error, correct_id = utils.validate_constraint_resource(
-            dom, rsc_value
-        )
-        if "--autocorrect" in utils.pcs_options and correct_id:
-            rsc_value = correct_id
-        elif not rsc_valid:
-            utils.err(rsc_error)
-
-    cib, constraints = getCurrentConstraints(dom)
-    lc = cib.createElement("rsc_location")
+    options, rule_argv = rule_utils.parse_argv(argv, {"constraint-id": None, "resource-discovery": None,})
 
     # If resource-discovery is specified, we use it with the rsc_location
     # element not the rule
-    if resource_discovery:
+    if "resource-discovery" in options and options["resource-discovery"]:
+        utils.checkAndUpgradeCIB(2,2,0)
+        cib, constraints = getCurrentConstraints(utils.get_cib_dom())
+        lc = cib.createElement("rsc_location")
         lc.setAttribute("resource-discovery", options.pop("resource-discovery"))
+    else:
+        cib, constraints = getCurrentConstraints(utils.get_cib_dom())
+        lc = cib.createElement("rsc_location")
+
 
     constraints.appendChild(lc)
     if options.get("constraint-id"):
@@ -1007,7 +816,7 @@ def location_rule(argv):
         )
         if not id_valid:
             utils.err(id_error)
-        if utils.does_id_exist(dom, options["constraint-id"]):
+        if utils.does_id_exist(cib, options["constraint-id"]):
             utils.err(
                 "id '%s' is already in use, please specify another one"
                 % options["constraint-id"]
@@ -1015,14 +824,8 @@ def location_rule(argv):
         lc.setAttribute("id", options["constraint-id"])
         del options["constraint-id"]
     else:
-        lc.setAttribute(
-            "id",
-            utils.find_unique_id(dom, sanitize_id("location-" + rsc_value))
-        )
-    if rsc_type == RESOURCE_TYPE_RESOURCE:
-        lc.setAttribute("rsc", rsc_value)
-    elif rsc_type == RESOURCE_TYPE_REGEXP:
-        lc.setAttribute("rsc-pattern", rsc_value)
+        lc.setAttribute("id", utils.find_unique_id(cib, "location-" + res_name))
+    lc.setAttribute("rsc", res_name)
 
     rule_utils.dom_rule_add(lc, options, rule_argv)
     location_rule_check_duplicates(constraints, lc)
@@ -1046,18 +849,8 @@ def location_rule_check_duplicates(dom, constraint_el):
 
 def location_rule_find_duplicates(dom, constraint_el):
     def normalize(constraint_el):
-        if constraint_el.hasAttribute("rsc-pattern"):
-            rsc = (
-                RESOURCE_TYPE_REGEXP,
-                constraint_el.getAttribute("rsc-pattern")
-            )
-        else:
-            rsc = (
-                RESOURCE_TYPE_RESOURCE,
-                constraint_el.getAttribute("rsc")
-            )
         return (
-            rsc,
+            constraint_el.getAttribute("rsc"),
             [
                 rule_utils.ExportAsExpression().get_string(rule_el, True)
                 for rule_el in constraint_el.getElementsByTagName("rule")

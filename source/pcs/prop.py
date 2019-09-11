@@ -2,6 +2,7 @@ from __future__ import (
     absolute_import,
     division,
     print_function,
+    unicode_literals,
 )
 
 import sys
@@ -137,3 +138,4 @@ def get_default_properties():
     for name, prop in prop_def_dict.items():
         parameters[name] = prop["default"]
     return parameters
+

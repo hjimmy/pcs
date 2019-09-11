@@ -2,6 +2,7 @@ from __future__ import (
     absolute_import,
     division,
     print_function,
+    unicode_literals,
 )
 
 class LibraryError(Exception):
@@ -53,32 +54,8 @@ class ReportItem(object):
         self.info = info if info else dict()
 
     def __repr__(self):
-        return "{severity} {code}: {info} forceable: {forceable}".format(
+        return "{severity} {code}: {info}".format(
             severity=self.severity,
             code=self.code,
-            info=self.info,
-            forceable=self.forceable,
+            info=self.info
         )
-
-class ReportListAnalyzer(object):
-    def __init__(self, report_list):
-        self.__error_list = None
-        self.__report_list = report_list
-
-    def reports_with_severities(self, severity_list):
-        return [
-            report_item for report_item in self.report_list
-            if report_item.severity in severity_list
-        ]
-
-    @property
-    def report_list(self):
-        return self.__report_list
-
-    @property
-    def error_list(self):
-        if self.__error_list is None:
-            self.__error_list = self.reports_with_severities(
-                [ReportItemSeverity.ERROR]
-            )
-        return self.__error_list

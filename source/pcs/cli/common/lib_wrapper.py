@@ -2,6 +2,7 @@ from __future__ import (
     absolute_import,
     division,
     print_function,
+    unicode_literals,
 )
 
 import logging
@@ -17,16 +18,9 @@ from pcs.lib.commands import (
     acl,
     alert,
     booth,
-    cluster,
-    fencing_topology,
-    node,
     qdevice,
     quorum,
-    remote_node,
     resource_agent,
-    resource,
-    cib_options,
-    stonith,
     sbd,
     stonith_agent,
 )
@@ -46,21 +40,21 @@ def wrapper(dictionary):
 
 def cli_env_to_lib_env(cli_env):
     return LibraryEnvironment(
-        logging.getLogger("pcs"),
+        logging.getLogger("old_cli"),
         LibraryReportProcessorToConsole(cli_env.debug),
         cli_env.user,
         cli_env.groups,
         cli_env.cib_data,
         cli_env.corosync_conf_data,
         booth=cli_env.booth,
-        token_file_data_getter=cli_env.token_file_data_getter,
+        auth_tokens_getter=cli_env.auth_tokens_getter,
         cluster_conf_data=cli_env.cluster_conf_data,
-        request_timeout=cli_env.request_timeout,
     )
 
 def lib_env_to_cli_env(lib_env, cli_env):
     if not lib_env.is_cib_live:
-        cli_env.cib_data = lib_env.final_mocked_cib_content
+        cli_env.cib_data = lib_env._get_cib_xml()
+        cli_env.cib_upgraded = lib_env.cib_upgraded
     if not lib_env.is_corosync_conf_live:
         cli_env.corosync_conf_data = lib_env.get_corosync_conf_data()
     if not lib_env.is_cluster_conf_live:
@@ -182,34 +176,6 @@ def load_module(env, middleware_factory, name):
             }
         )
 
-    if name == "cluster":
-        return bind_all(
-            env,
-            middleware.build(
-                middleware_factory.cib,
-                middleware_factory.corosync_conf_existing,
-            ),
-            {
-                "node_clear": cluster.node_clear,
-                "verify": cluster.verify,
-            }
-        )
-
-    if name == "remote_node":
-        return bind_all(
-            env,
-            middleware.build(
-                middleware_factory.cib,
-                middleware_factory.corosync_conf_existing,
-            ),
-            {
-                "node_add_remote": remote_node.node_add_remote,
-                "node_add_guest": remote_node.node_add_guest,
-                "node_remove_remote": remote_node.node_remove_remote,
-                "node_remove_guest": remote_node.node_remove_guest,
-            }
-        )
-
     if name == 'constraint_colocation':
         return bind_all(
             env,
@@ -239,37 +205,6 @@ def load_module(env, middleware_factory, name):
                 'show': constraint_ticket.show,
                 'add': constraint_ticket.create,
                 'remove': constraint_ticket.remove,
-            }
-        )
-
-    if name == "fencing_topology":
-        return bind_all(
-            env,
-            middleware.build(middleware_factory.cib),
-            {
-                "add_level": fencing_topology.add_level,
-                "get_config": fencing_topology.get_config,
-                "remove_all_levels": fencing_topology.remove_all_levels,
-                "remove_levels_by_params":
-                    fencing_topology.remove_levels_by_params,
-                "verify": fencing_topology.verify,
-            }
-        )
-
-    if name == "node":
-        return bind_all(
-            env,
-            middleware.build(middleware_factory.cib),
-            {
-                "maintenance_unmaintenance_all":
-                    node.maintenance_unmaintenance_all,
-                "maintenance_unmaintenance_list":
-                    node.maintenance_unmaintenance_list,
-                "maintenance_unmaintenance_local":
-                    node.maintenance_unmaintenance_local,
-                "standby_unstandby_all": node.standby_unstandby_all,
-                "standby_unstandby_list": node.standby_unstandby_list,
-                "standby_unstandby_local": node.standby_unstandby_local,
             }
         )
 
@@ -304,7 +239,6 @@ def load_module(env, middleware_factory, name):
                 "add_device": quorum.add_device,
                 "get_config": quorum.get_config,
                 "remove_device": quorum.remove_device,
-                "remove_device_heuristics": quorum.remove_device_heuristics,
                 "set_expected_votes_live": quorum.set_expected_votes_live,
                 "set_options": quorum.set_options,
                 "status": quorum.status_text,
@@ -327,56 +261,6 @@ def load_module(env, middleware_factory, name):
             }
         )
 
-    if name == "resource":
-        return bind_all(
-            env,
-            middleware.build(
-                middleware_factory.cib,
-                middleware_factory.corosync_conf_existing,
-            ),
-            {
-                "bundle_create": resource.bundle_create,
-                "bundle_reset": resource.bundle_reset,
-                "bundle_update": resource.bundle_update,
-                "create": resource.create,
-                "create_as_master": resource.create_as_master,
-                "create_as_clone": resource.create_as_clone,
-                "create_in_group": resource.create_in_group,
-                "create_into_bundle": resource.create_into_bundle,
-                "disable": resource.disable,
-                "enable": resource.enable,
-                "get_failcounts": resource.get_failcounts,
-                "manage": resource.manage,
-                "unmanage": resource.unmanage,
-            }
-        )
-
-    if name == "cib_options":
-        return bind_all(
-            env,
-            middleware.build(
-                middleware_factory.cib,
-            ),
-            {
-                "set_operations_defaults": cib_options.set_operations_defaults,
-                "set_resources_defaults": cib_options.set_resources_defaults,
-            }
-        )
-
-    if name == "stonith":
-        return bind_all(
-            env,
-            middleware.build(
-                middleware_factory.cib,
-                middleware_factory.corosync_conf_existing,
-            ),
-            {
-                "create": stonith.create,
-                "create_in_group": stonith.create_in_group,
-            }
-        )
-
-
     if name == "sbd":
         return bind_all(
             env,
@@ -387,12 +271,6 @@ def load_module(env, middleware_factory, name):
                 "get_cluster_sbd_status": sbd.get_cluster_sbd_status,
                 "get_cluster_sbd_config": sbd.get_cluster_sbd_config,
                 "get_local_sbd_config": sbd.get_local_sbd_config,
-                "initialize_block_devices": sbd.initialize_block_devices,
-                "get_local_devices_info": sbd.get_local_devices_info,
-                "set_message": sbd.set_message,
-                "get_local_available_watchdogs":
-                    sbd.get_local_available_watchdogs,
-                "test_local_watchdog": sbd.test_local_watchdog,
             }
         )
 

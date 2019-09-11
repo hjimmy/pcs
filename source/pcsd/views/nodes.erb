@@ -330,10 +330,6 @@
         <td>Node Name:</td>
         <td><input type=text name=new_nodename></td>
       </tr>
-      <tr>
-        <td>PCSD port:</td>
-        <td><input class="port" type="text" name="new_node_port" placeholder="<%= PCSD_DEFAULT_PORT %>"/></td>
-      </tr>
       {{#if Pcs.need_ring1_address}}
       <tr>
         <td>Ring1 address:</td>
@@ -351,38 +347,10 @@
           <input type="text" name="watchdog" placeholder="/dev/watchdog" />
         </td>
       </tr>
-      <tr class="add_node_sbd_device">
-        <td>
-          SBD device(s):
-        </td>
-        <td>
-          <input type="text" name="devices[]" />
-          <a href="#" onclick="add_sbd_device_textbox(); return false;">(+)</a>
-        </td>
-      </tr>
-      <tr>
-        <td>
-          <label for="node_add_no_watchdog_validation_checkbox">
-            Skip watchdog validation:
-            <span
-                class="infoicon sprites"
-                style="margin-left: 5px; float: right"
-                title="By default, it is tested whether the specified watchdog is supported. This may cause a restart of the system when a watchdog with no-way-out-feature enabled is present. Use this option to skip watchdog validation."
-            ></span>
-          </label>
-        </td>
-        <td>
-          <input
-              type="checkbox"
-              name="no_watchdog_validation"
-              id="node_add_no_watchdog_validation_checkbox"
-          />
-        </td>
-      </tr>
       {{/if}}
       {{#if Pcs.is_cman_with_udpu_transport}}
       <tr>
-        <td colspan="2" style="color: orange">This is a CMAN cluster with UDPU transport,<br>cluster restart is required to apply node addition.</td>
+        <td colspan="2" style="color: orange">This is a RHEL 6 cluster with UDPU transport,<br>cluster restart is required to apply node addition.</td>
       </tr>
       {{/if}}
     </table>

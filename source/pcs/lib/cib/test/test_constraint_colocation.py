@@ -2,6 +2,7 @@ from __future__ import (
     absolute_import,
     division,
     print_function,
+    unicode_literals,
 )
 
 from pcs.test.tools.pcs_unittest import TestCase
@@ -83,9 +84,9 @@ class PrepareOptionsWithSetTest(TestCase):
             }),
             (
                 severities.ERROR,
-                report_codes.INVALID_OPTIONS,
+                report_codes.INVALID_OPTION,
                 {
-                    "option_names": ["unknown"],
+                    "option_name": "unknown",
                     "option_type": None,
                     "allowed": [
                         "id",
@@ -93,7 +94,6 @@ class PrepareOptionsWithSetTest(TestCase):
                         "score-attribute",
                         "score-attribute-mangle",
                     ],
-                    "allowed_patterns": [],
                 }
             ),
         )

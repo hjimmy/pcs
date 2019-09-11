@@ -4,14 +4,14 @@ require 'rubygems'
 require 'etc'
 require 'json'
 require 'stringio'
+require 'orderedhash'
 
 require 'bootstrap.rb'
 require 'pcs.rb'
 require 'auth.rb'
-require 'remote.rb'
 
 def cli_format_response(status, text=nil, data=nil)
-  response = Hash.new
+  response = OrderedHash.new
   response['status'] = status
   response['text'] = text if text
   response['data'] = data if data
@@ -27,13 +27,9 @@ end
 
 # bootstrap, emulate environment created by pcsd http server
 auth_user = {}
-PCS = get_pcs_path()
+PCS = get_pcs_path(File.expand_path(File.dirname(__FILE__)))
 $logger_device = StringIO.new
 $logger = configure_logger($logger_device)
-
-capabilities, capabilities_pcsd = get_capabilities($logger)
-CAPABILITIES = capabilities.freeze
-CAPABILITIES_PCSD = capabilities_pcsd.freeze
 
 # check and set user
 uid = Process.uid
@@ -70,13 +66,7 @@ allowed_commands = {
     # returns tokens of the user who runs pcsd-cli, thus no permission check
     'only_superuser' => false,
     'permissions' => nil,
-    'call' => lambda { |params, auth_user_|
-      token_cfg = read_token_file()
-      return {
-        :tokens => token_cfg.tokens,
-        :ports => token_cfg.ports,
-      }
-    },
+    'call' => lambda { |params, auth_user_| read_tokens() },
   },
   'auth' => {
     'only_superuser' => false,
@@ -122,22 +112,8 @@ allowed_commands = {
       pcsd_restart_nodes(auth_user_, params['nodes'] || [])
     }
   },
-  'node_status' => {
-    'only_superuser' => true,
-    'permissions' => Permissions::FULL,
-    'call' => lambda { |params, auth_user_|
-      return JSON.parse(node_status(
-        {
-          :version => '2',
-          :operations => '1',
-          :skip_auth_check => '1',
-        },
-        {},
-        auth_user_
-      ))
-    }
-  },
 }
+
 if allowed_commands.key?(command)
   begin
     params = JSON.parse(STDIN.read)

@@ -2,6 +2,7 @@ from __future__ import (
     absolute_import,
     division,
     print_function,
+    unicode_literals,
 )
 
 
@@ -11,41 +12,29 @@ from pcs.common import report_codes
 from pcs.lib import reports
 from pcs.lib.cib import resource
 from pcs.lib.cib.constraint import resource_set
-from pcs.lib.cib.tools import (
-    find_unique_id,
-    find_element_by_tag_and_id,
-)
+from pcs.lib.cib.tools import export_attributes, find_unique_id, find_parent
 from pcs.lib.errors import LibraryError, ReportItemSeverity
-from pcs.lib.xml_tools import (
-    export_attributes,
-    find_parent,
-)
 
 
 def _validate_attrib_names(attrib_names, options):
-    invalid_names = [
-        name for name in options.keys()
-        if name not in attrib_names
-    ]
-    if invalid_names:
-        raise LibraryError(
-            reports.invalid_options(invalid_names, attrib_names, None)
-        )
+    for option_name in options.keys():
+        if option_name not in attrib_names:
+            raise LibraryError(
+                reports.invalid_option(option_name, attrib_names, None)
+            )
 
 def find_valid_resource_id(
     report_processor, cib, can_repair_to_clone, in_clone_allowed, id
 ):
-    parent_tags = resource.clone.ALL_TAGS + [resource.bundle.TAG]
-    resource_element = find_element_by_tag_and_id(
-        parent_tags + [resource.primitive.TAG, resource.group.TAG],
-        cib,
-        id,
-    )
+    resource_element = resource.find_by_id(cib, id)
 
-    if resource_element.tag in parent_tags:
+    if(resource_element is None):
+        raise LibraryError(reports.resource_does_not_exist(id))
+
+    if resource_element.tag in resource.TAGS_CLONE:
         return resource_element.attrib["id"]
 
-    clone = find_parent(resource_element, parent_tags)
+    clone = find_parent(resource_element, resource.TAGS_CLONE)
     if clone is None:
         return resource_element.attrib["id"]
 

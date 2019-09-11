@@ -2,29 +2,24 @@ from __future__ import (
     absolute_import,
     division,
     print_function,
+    unicode_literals,
 )
 
 import os
-import os.path
 import shutil
 import socket
 from pcs.test.tools import pcs_unittest as unittest
 
-from pcs.test.tools.assertions import (
-    ac,
-    AssertPcsMixin,
-)
+from pcs.test.tools.assertions import AssertPcsMixin
 from pcs.test.tools.misc import (
+    ac,
     get_test_resource as rc,
-    skip_unless_pacemaker_version,
-    skip_if_service_enabled,
-    outdent,
+    is_minimum_pacemaker_version,
 )
 from pcs.test.tools.pcs_runner import (
     pcs,
     PcsRunner,
 )
-from pcs.test.bin_mock import get_mock_settings
 
 from pcs import utils
 
@@ -58,7 +53,7 @@ class ClusterTest(unittest.TestCase, AssertPcsMixin):
             os.unlink(cluster_conf_tmp)
 
     def testNodeStandby(self):
-        # only basic test, standby subcommands were moved to 'pcs node'
+        # only basic test, standby subcommands were m oved to 'pcs node'
         output, returnVal = pcs(temp_cib, "cluster standby rh7-1")
         ac(output, "")
         assert returnVal == 0
@@ -68,132 +63,55 @@ class ClusterTest(unittest.TestCase, AssertPcsMixin):
         assert returnVal == 0
 
     def testRemoteNode(self):
-        self.pcs_runner.mock_settings = get_mock_settings("crm_resource_binary")
         o,r = pcs(
             temp_cib,
-            "resource create D1 ocf:heartbeat:Dummy --no-default-ops",
-            mock_settings=self.pcs_runner.mock_settings,
+            "resource create D1 ocf:heartbeat:Dummy --no-default-ops"
         )
         assert r==0 and o==""
 
         o,r = pcs(
             temp_cib,
-            "resource create D2 ocf:heartbeat:Dummy --no-default-ops",
-            mock_settings=self.pcs_runner.mock_settings,
+            "resource create D2 ocf:heartbeat:Dummy --no-default-ops"
         )
         assert r==0 and o==""
 
-        o,r = pcs(
-            temp_cib,
-            "cluster remote-node rh7-2g D1",
-            mock_settings=self.pcs_runner.mock_settings,
-        )
+        o,r = pcs(temp_cib, "cluster remote-node rh7-2 D1")
         assert r==1 and o.startswith("\nUsage: pcs cluster remote-node")
 
-        o,r = pcs(
-            temp_cib,
-            "cluster remote-node add rh7-2g D1 --force",
-            mock_settings=self.pcs_runner.mock_settings,
-        )
+        o,r = pcs(temp_cib, "cluster remote-node add rh7-2 D1")
+        assert r==0 and o==""
+
+        o,r = pcs(temp_cib, "cluster remote-node add rh7-1 D2 remote-port=100 remote-addr=400 remote-connect-timeout=50")
+        assert r==0 and o==""
+
+        o,r = pcs(temp_cib, "resource --full")
         assert r==0
-        self.assertEqual(
-            o,
-            "Warning: this command is deprecated, use 'pcs cluster node"
-                " add-guest'\n"
-        )
+        ac(o," Resource: D1 (class=ocf provider=heartbeat type=Dummy)\n  Meta Attrs: remote-node=rh7-2 \n  Operations: monitor interval=60s (D1-monitor-interval-60s)\n Resource: D2 (class=ocf provider=heartbeat type=Dummy)\n  Meta Attrs: remote-node=rh7-1 remote-port=100 remote-addr=400 remote-connect-timeout=50 \n  Operations: monitor interval=60s (D2-monitor-interval-60s)\n")
 
-        o,r = pcs(
-            temp_cib,
-            "cluster remote-node add rh7-1 D2 remote-port=100 remote-addr=400"
-            " remote-connect-timeout=50 --force",
-            mock_settings=self.pcs_runner.mock_settings,
-        )
-        assert r==0
-        self.assertEqual(
-            o,
-            "Warning: this command is deprecated, use 'pcs cluster node"
-                " add-guest'\n"
-        )
-
-        self.assert_pcs_success("resource --full", outdent(
-            """\
-             Resource: D1 (class=ocf provider=heartbeat type=Dummy)
-              Meta Attrs: remote-node=rh7-2g
-              Operations: monitor interval=10s timeout=20s (D1-monitor-interval-10s)
-             Resource: D2 (class=ocf provider=heartbeat type=Dummy)
-              Meta Attrs: remote-addr=400 remote-connect-timeout=50 remote-node=rh7-1 remote-port=100
-              Operations: monitor interval=10s timeout=20s (D2-monitor-interval-10s)
-            """
-        ))
-
-        o,r = pcs(
-            temp_cib,
-            "cluster remote-node remove",
-            mock_settings=self.pcs_runner.mock_settings,
-        )
+        o,r = pcs(temp_cib, "cluster remote-node remove")
         assert r==1 and o.startswith("\nUsage: pcs cluster remote-node")
 
-        self.assert_pcs_fail(
-            "cluster remote-node remove rh7-2g",
-            "Error: this command is deprecated, use 'pcs cluster node"
-            " remove-guest', use --force to override\n"
-        )
-        self.assert_pcs_success(
-            "cluster remote-node remove rh7-2g --force",
-            "Warning: this command is deprecated, use 'pcs cluster node"
-            " remove-guest'\n"
-        )
+        o,r = pcs(temp_cib, "cluster remote-node remove rh7-2")
+        assert r==0 and o==""
 
-        self.assert_pcs_fail(
-            "cluster remote-node add rh7-2g NOTARESOURCE --force",
-            "Error: unable to find resource 'NOTARESOURCE'\n"
-                "Warning: this command is deprecated, use"
-                " 'pcs cluster node add-guest'\n"
-            ,
-        )
+        o,r = pcs(temp_cib, "cluster remote-node add rh7-2 NOTARESOURCE")
+        assert r==1
+        ac(o,"Error: unable to find resource 'NOTARESOURCE'\n")
 
-        self.assert_pcs_fail(
-            "cluster remote-node remove rh7-2g",
-            "Error: this command is deprecated, use 'pcs cluster node"
-                " remove-guest', use --force to override\n"
-        )
-        self.assert_pcs_fail(
-            "cluster remote-node remove rh7-2g --force",
-            "Error: unable to remove: cannot find remote-node 'rh7-2g'\n"
-            "Warning: this command is deprecated, use 'pcs cluster node"
-                " remove-guest'\n"
-        )
+        o,r = pcs(temp_cib, "cluster remote-node remove rh7-2")
+        assert r==1
+        ac(o,"Error: unable to remove: cannot find remote-node 'rh7-2'\n")
 
+        o,r = pcs(temp_cib, "resource --full")
+        assert r==0
+        ac(o," Resource: D1 (class=ocf provider=heartbeat type=Dummy)\n  Operations: monitor interval=60s (D1-monitor-interval-60s)\n Resource: D2 (class=ocf provider=heartbeat type=Dummy)\n  Meta Attrs: remote-node=rh7-1 remote-port=100 remote-addr=400 remote-connect-timeout=50 \n  Operations: monitor interval=60s (D2-monitor-interval-60s)\n")
 
-        self.assert_pcs_success("resource --full", outdent(
-            """\
-             Resource: D1 (class=ocf provider=heartbeat type=Dummy)
-              Operations: monitor interval=10s timeout=20s (D1-monitor-interval-10s)
-             Resource: D2 (class=ocf provider=heartbeat type=Dummy)
-              Meta Attrs: remote-addr=400 remote-connect-timeout=50 remote-node=rh7-1 remote-port=100
-              Operations: monitor interval=10s timeout=20s (D2-monitor-interval-10s)
-            """
-        ))
+        o,r = pcs(temp_cib, "cluster remote-node remove rh7-1")
+        assert r==0 and o==""
 
-        self.assert_pcs_fail(
-            "cluster remote-node remove rh7-1",
-            "Error: this command is deprecated, use 'pcs cluster node"
-                " remove-guest', use --force to override\n"
-        )
-        self.assert_pcs_success(
-            "cluster remote-node remove rh7-1 --force",
-            "Warning: this command is deprecated, use 'pcs cluster node"
-                " remove-guest'\n"
-        )
-
-        self.assert_pcs_success("resource --full", outdent(
-            """\
-             Resource: D1 (class=ocf provider=heartbeat type=Dummy)
-              Operations: monitor interval=10s timeout=20s (D1-monitor-interval-10s)
-             Resource: D2 (class=ocf provider=heartbeat type=Dummy)
-              Operations: monitor interval=10s timeout=20s (D2-monitor-interval-10s)
-            """
-        ))
+        o,r = pcs(temp_cib, "resource --full")
+        assert r==0
+        ac(o," Resource: D1 (class=ocf provider=heartbeat type=Dummy)\n  Operations: monitor interval=60s (D1-monitor-interval-60s)\n Resource: D2 (class=ocf provider=heartbeat type=Dummy)\n  Operations: monitor interval=60s (D2-monitor-interval-60s)\n")
 
     def test_cluster_setup_bad_args(self):
         output, returnVal = pcs(temp_cib, "cluster setup")
@@ -251,8 +169,8 @@ Warning: Unable to resolve hostname: nonexistant-address.invalid
         corosync_conf = """\
 totem {
     version: 2
-    cluster_name: cname
     secauth: off
+    cluster_name: cname
     transport: udpu
 }
 
@@ -310,8 +228,8 @@ Error: {0} already exists, use --force to overwrite
             ac(data, """\
 totem {
     version: 2
-    cluster_name: cname
     secauth: off
+    cluster_name: cname
     transport: udpu
 }
 
@@ -438,111 +356,6 @@ Error: {0} already exists, use --force to overwrite
 </cluster>
 """)
 
-    def test_cluster_setup_encryption_enabled(self):
-        if utils.is_rhel6():
-            return
-
-        output, returnVal = pcs(
-            temp_cib,
-            "cluster setup --local --corosync_conf={0} --name cname rh7-1.localhost rh7-2.localhost --encryption=1"
-            .format(corosync_conf_tmp)
-        )
-        self.assertEqual("", output)
-        self.assertEqual(0, returnVal)
-        with open(corosync_conf_tmp) as f:
-            data = f.read()
-            ac(data, """\
-totem {
-    version: 2
-    cluster_name: cname
-    transport: udpu
-}
-
-nodelist {
-    node {
-        ring0_addr: rh7-1.localhost
-        nodeid: 1
-    }
-
-    node {
-        ring0_addr: rh7-2.localhost
-        nodeid: 2
-    }
-}
-
-quorum {
-    provider: corosync_votequorum
-    two_node: 1
-}
-
-logging {
-    to_logfile: yes
-    logfile: /var/log/cluster/corosync.log
-    to_syslog: yes
-}
-""")
-
-    def test_cluster_setup_encryption_disabled(self):
-        if utils.is_rhel6():
-            return
-
-        output, returnVal = pcs(
-            temp_cib,
-            "cluster setup --local --corosync_conf={0} --name cname rh7-1.localhost rh7-2.localhost --encryption=0"
-            .format(corosync_conf_tmp)
-        )
-        self.assertEqual("", output)
-        self.assertEqual(0, returnVal)
-        with open(corosync_conf_tmp) as f:
-            data = f.read()
-            ac(data, """\
-totem {
-    version: 2
-    cluster_name: cname
-    secauth: off
-    transport: udpu
-}
-
-nodelist {
-    node {
-        ring0_addr: rh7-1.localhost
-        nodeid: 1
-    }
-
-    node {
-        ring0_addr: rh7-2.localhost
-        nodeid: 2
-    }
-}
-
-quorum {
-    provider: corosync_votequorum
-    two_node: 1
-}
-
-logging {
-    to_logfile: yes
-    logfile: /var/log/cluster/corosync.log
-    to_syslog: yes
-}
-""")
-
-    def test_cluster_setup_encryption_bad_value(self):
-        if utils.is_rhel6():
-            return
-
-        output, returnVal = pcs(
-            temp_cib,
-            "cluster setup --local --corosync_conf={0} --name cname rh7-1.localhost rh7-2.localhost --encryption=bad"
-            .format(corosync_conf_tmp)
-        )
-        self.assertEqual(
-            "Error: 'bad' is not a valid --encryption value, use 0, 1\n",
-            output
-        )
-        self.assertEqual(1, returnVal)
-
-    @skip_if_service_enabled("sbd")
     def test_cluster_setup_2_nodes_no_atb(self):
         # Setup a 2 node cluster and make sure the two node config is set, then
         # add a node and make sure that it's unset, then remove a node and make
@@ -562,8 +375,8 @@ logging {
             ac(data, """\
 totem {
     version: 2
-    cluster_name: cname
     secauth: off
+    cluster_name: cname
     transport: udpu
 }
 
@@ -603,8 +416,8 @@ logging {
             ac(data, """\
 totem {
     version: 2
-    cluster_name: cname
     secauth: off
+    cluster_name: cname
     transport: udpu
 }
 
@@ -648,8 +461,8 @@ logging {
             ac(data, """\
 totem {
     version: 2
-    cluster_name: cname
     secauth: off
+    cluster_name: cname
     transport: udpu
 }
 
@@ -689,8 +502,8 @@ logging {
             ac(data, """\
 totem {
     version: 2
-    cluster_name: cname
     secauth: off
+    cluster_name: cname
     transport: udpu
 }
 
@@ -735,8 +548,8 @@ logging {
             ac(data, """\
 totem {
     version: 2
-    cluster_name: cname
     secauth: off
+    cluster_name: cname
     transport: udpu
 }
 
@@ -777,8 +590,8 @@ logging {
             ac(data, """\
 totem {
     version: 2
-    cluster_name: cname
     secauth: off
+    cluster_name: cname
     transport: udpu
 }
 
@@ -819,8 +632,8 @@ logging {
             ac(data, """\
 totem {
     version: 2
-    cluster_name: cname
     secauth: off
+    cluster_name: cname
     transport: udpu
 }
 
@@ -860,8 +673,8 @@ logging {
             ac(data, """\
 totem {
     version: 2
-    cluster_name: cname
     secauth: off
+    cluster_name: cname
     transport: udpu
 }
 
@@ -906,8 +719,8 @@ logging {
             ac(data, """\
 totem {
     version: 2
-    cluster_name: cname
     secauth: off
+    cluster_name: cname
     transport: udpu
 }
 
@@ -952,8 +765,8 @@ logging {
             ac(data, """\
 totem {
     version: 2
-    cluster_name: cname
     secauth: off
+    cluster_name: cname
     transport: udpu
 }
 
@@ -1002,8 +815,8 @@ logging {
             ac(data, """\
 totem {
     version: 2
-    cluster_name: cname
     secauth: off
+    cluster_name: cname
     transport: udp
 }
 
@@ -1352,7 +1165,7 @@ logging {
             .format(cluster_conf_tmp)
         )
         ac(output, """\
-Warning: Using udpu transport on a CMAN cluster, cluster restart is required after node add or remove
+Warning: Using udpu transport on a RHEL 6 cluster, cluster restart is required after node add or remove
 """)
         self.assertEqual(returnVal, 0)
         with open(cluster_conf_tmp) as f:
@@ -1403,8 +1216,8 @@ Warning: Using udpu transport on a CMAN cluster, cluster restart is required aft
             ac(data, """\
 totem {
     version: 2
-    cluster_name: cname
     secauth: off
+    cluster_name: cname
     transport: udpu
     ip_version: ipv6
 }
@@ -1444,7 +1257,7 @@ logging {
             .format(cluster_conf_tmp)
         )
         ac(output, """\
-Warning: --ipv6 ignored as it is not supported on CMAN clusters
+Warning: --ipv6 ignored as it is not supported on RHEL 6 clusters
 """)
         self.assertEqual(returnVal, 0)
         with open(cluster_conf_tmp) as f:
@@ -1497,7 +1310,7 @@ Warning: --ipv6 ignored as it is not supported on CMAN clusters
         assert r == 1
         ac(
             o,
-            "Error: 'blah' is not a valid RRP mode value, use active, passive, use --force to override\n"
+            "Error: 'blah' is not a valid RRP mode value, use passive, active, use --force to override\n"
         )
 
         o,r = pcs(
@@ -1511,8 +1324,8 @@ Warning: --ipv6 ignored as it is not supported on CMAN clusters
             ac(data, """\
 totem {
     version: 2
-    cluster_name: cname
     secauth: off
+    cluster_name: cname
     transport: udp
     rrp_mode: passive
 
@@ -1570,8 +1383,8 @@ logging {
             ac(data, """\
 totem {
     version: 2
-    cluster_name: cname
     secauth: off
+    cluster_name: cname
     transport: udp
     rrp_mode: passive
 
@@ -1629,8 +1442,8 @@ logging {
             ac(data, """\
 totem {
     version: 2
-    cluster_name: cname
     secauth: off
+    cluster_name: cname
     transport: udp
     rrp_mode: passive
 
@@ -1688,8 +1501,8 @@ logging {
             ac(data, """\
 totem {
     version: 2
-    cluster_name: cname
     secauth: off
+    cluster_name: cname
     transport: udp
     rrp_mode: passive
 
@@ -1756,8 +1569,8 @@ logging {
             ac(data, """\
 totem {
     version: 2
-    cluster_name: cname
     secauth: off
+    cluster_name: cname
     transport: udp
     rrp_mode: active
 
@@ -1822,8 +1635,8 @@ logging {
             ac(data, """\
 totem {
     version: 2
-    cluster_name: cname
     secauth: off
+    cluster_name: cname
     transport: udp
     rrp_mode: active
 
@@ -1898,8 +1711,8 @@ logging {
             ac(data, """\
 totem {
     version: 2
-    cluster_name: cname
     secauth: off
+    cluster_name: cname
     transport: udpu
     rrp_mode: passive
 }
@@ -1987,8 +1800,8 @@ logging {
             ac(data, """\
 totem {
     version: 2
-    cluster_name: test99
     secauth: off
+    cluster_name: test99
     transport: udpu
 }
 
@@ -2037,8 +1850,8 @@ logging {
             .format(cluster_conf_tmp)
         )
         ac(output, """\
-Error: 'blah' is not a valid RRP mode value, use active, passive, use --force to override
-Warning: Enabling broadcast for all rings as CMAN does not support broadcast in only one ring
+Error: 'blah' is not a valid RRP mode value, use passive, active, use --force to override
+Warning: Enabling broadcast for all rings as RHEL 6 does not support broadcast in only one ring
 """)
         self.assertEqual(returnVal, 1)
 
@@ -2317,7 +2130,7 @@ Warning: Enabling broadcast for all rings as CMAN does not support broadcast in 
         )
         ac(output, """\
 Error: using a RRP mode of 'active' is not supported or tested, use --force to override
-Warning: Enabling broadcast for all rings as CMAN does not support broadcast in only one ring
+Warning: Enabling broadcast for all rings as RHEL 6 does not support broadcast in only one ring
 """)
         self.assertEqual(returnVal, 1)
 
@@ -2327,7 +2140,7 @@ Warning: Enabling broadcast for all rings as CMAN does not support broadcast in 
             .format(cluster_conf_tmp)
         )
         ac(output, """\
-Warning: Enabling broadcast for all rings as CMAN does not support broadcast in only one ring
+Warning: Enabling broadcast for all rings as RHEL 6 does not support broadcast in only one ring
 Warning: using a RRP mode of 'active' is not supported or tested
 """)
         self.assertEqual(returnVal, 0)
@@ -2396,7 +2209,7 @@ Error: if one node is configured for RRP, all nodes must be configured for RRP
         )
         ac(output, """\
 Error: --addr0 and --addr1 can only be used with --transport=udp
-Warning: Using udpu transport on a CMAN cluster, cluster restart is required after node add or remove
+Warning: Using udpu transport on a RHEL 6 cluster, cluster restart is required after node add or remove
 """)
         self.assertEqual(returnVal, 1)
 
@@ -2486,7 +2299,7 @@ Warning: Using udpu transport on a CMAN cluster, cluster restart is required aft
             .format(cluster_conf_tmp)
         )
         ac(output, """\
-Warning: Enabling broadcast for all rings as CMAN does not support broadcast in only one ring
+Warning: Enabling broadcast for all rings as RHEL 6 does not support broadcast in only one ring
 """)
         self.assertEqual(returnVal, 0)
         with open(cluster_conf_tmp) as f:
@@ -2501,7 +2314,7 @@ Warning: Enabling broadcast for all rings as CMAN does not support broadcast in 
             .format(cluster_conf_tmp)
         )
         ac(output, """\
-Warning: Enabling broadcast for all rings as CMAN does not support broadcast in only one ring
+Warning: Enabling broadcast for all rings as RHEL 6 does not support broadcast in only one ring
 """)
         self.assertEqual(returnVal, 0)
         with open(cluster_conf_tmp) as f:
@@ -2519,10 +2332,10 @@ Warning: Enabling broadcast for all rings as CMAN does not support broadcast in 
             .format(cluster_conf_tmp)
         )
         ac(output, """\
-Warning: --wait_for_all ignored as it is not supported on CMAN clusters
-Warning: --auto_tie_breaker ignored as it is not supported on CMAN clusters
-Warning: --last_man_standing ignored as it is not supported on CMAN clusters
-Warning: --last_man_standing_window ignored as it is not supported on CMAN clusters
+Warning: --wait_for_all ignored as it is not supported on RHEL 6 clusters
+Warning: --auto_tie_breaker ignored as it is not supported on RHEL 6 clusters
+Warning: --last_man_standing ignored as it is not supported on RHEL 6 clusters
+Warning: --last_man_standing_window ignored as it is not supported on RHEL 6 clusters
 """)
         self.assertEqual(returnVal, 0)
         with open(cluster_conf_tmp) as f:
@@ -2562,7 +2375,7 @@ Warning: --last_man_standing_window ignored as it is not supported on CMAN clust
             return
 
         o,r = pcs(
-            "cluster setup --local --corosync_conf={0} --name test99 rh7-1.localhost rh7-2.localhost --token 20000 --join 20001 --consensus 20002 --miss_count_const 20003 --fail_recv_const 20004 --token_coefficient 20005 --netmtu 21000"
+            "cluster setup --local --corosync_conf={0} --name test99 rh7-1.localhost rh7-2.localhost --token 20000 --join 20001 --consensus 20002 --miss_count_const 20003 --fail_recv_const 20004 --token_coefficient 20005"
             .format(corosync_conf_tmp)
         )
         ac(o,"")
@@ -2572,8 +2385,8 @@ Warning: --last_man_standing_window ignored as it is not supported on CMAN clust
             ac(data, """\
 totem {
     version: 2
-    cluster_name: test99
     secauth: off
+    cluster_name: test99
     transport: udpu
     token: 20000
     token_coefficient: 20005
@@ -2581,7 +2394,6 @@ totem {
     consensus: 20002
     miss_count_const: 20003
     fail_recv_const: 20004
-    netmtu: 21000
 }
 
 nodelist {
@@ -2619,7 +2431,7 @@ logging {
             .format(cluster_conf_tmp)
         )
         ac(output, """\
-Warning: --token_coefficient ignored as it is not supported on CMAN clusters
+Warning: --token_coefficient ignored as it is not supported on RHEL 6 clusters
 """)
         self.assertEqual(returnVal, 0)
         with open(cluster_conf_tmp) as f:
@@ -2779,6 +2591,28 @@ Warning: --token_coefficient ignored as it is not supported on CMAN clusters
             assert r == 0
             ac(o, "No uidgids configured in cluster.conf\n")
 
+    def testClusterUpgrade(self):
+        if not is_minimum_pacemaker_version(1, 1, 11):
+            print("WARNING: Unable to test cluster upgrade because pacemaker is older than 1.1.11")
+            return
+        with open(temp_cib) as myfile:
+            data = myfile.read()
+            assert data.find("pacemaker-1.2") != -1
+            assert data.find("pacemaker-2.") == -1
+
+        o,r = pcs("cluster cib-upgrade")
+        ac(o,"Cluster CIB has been upgraded to latest version\n")
+        assert r == 0
+
+        with open(temp_cib) as myfile:
+            data = myfile.read()
+            assert data.find("pacemaker-1.2") == -1
+            assert data.find("pacemaker-2.") != -1
+
+        o,r = pcs("cluster cib-upgrade")
+        ac(o,"Cluster CIB has been upgraded to latest version\n")
+        assert r == 0
+
     def test_can_not_setup_cluster_for_unknown_transport_type(self):
         if utils.is_rhel6():
             return
@@ -2797,8 +2631,8 @@ Warning: --token_coefficient ignored as it is not supported on CMAN clusters
             ac(data, """\
 totem {
     version: 2
-    cluster_name: cname
     secauth: off
+    cluster_name: cname
     transport: unknown
 }
 
@@ -2989,70 +2823,3 @@ logging {
 </cluster>
 """)
 
-
-class ClusterUpgradeTest(unittest.TestCase, AssertPcsMixin):
-    def setUp(self):
-        shutil.copy(rc("cib-empty-1.2.xml"), temp_cib)
-        self.pcs_runner = PcsRunner(temp_cib)
-
-    @skip_unless_pacemaker_version((1, 1, 11), "CIB schema upgrade")
-    def testClusterUpgrade(self):
-        with open(temp_cib) as myfile:
-            data = myfile.read()
-            assert data.find("pacemaker-1.2") != -1
-            assert data.find("pacemaker-2.") == -1
-
-        o,r = pcs("cluster cib-upgrade")
-        ac(o,"Cluster CIB has been upgraded to latest version\n")
-        assert r == 0
-
-        with open(temp_cib) as myfile:
-            data = myfile.read()
-            assert data.find("pacemaker-1.2") == -1
-            assert data.find("pacemaker-2.") != -1
-
-        o,r = pcs("cluster cib-upgrade")
-        ac(o,"Cluster CIB has been upgraded to latest version\n")
-        assert r == 0
-
-
-
-class ClusterStartStop(unittest.TestCase, AssertPcsMixin):
-    def setUp(self):
-        self.pcs_runner = PcsRunner()
-
-    def test_all_and_nodelist(self):
-        self.assert_pcs_fail(
-            "cluster stop rh7-1 rh7-2 --all",
-            stdout_full="Error: Cannot specify both --all and a list of nodes.\n"
-        )
-        self.assert_pcs_fail(
-            "cluster start rh7-1 rh7-2 --all",
-            stdout_full="Error: Cannot specify both --all and a list of nodes.\n"
-        )
-
-
-class ClusterEnableDisable(unittest.TestCase, AssertPcsMixin):
-    def setUp(self):
-        self.pcs_runner = PcsRunner()
-
-    def test_all_and_nodelist(self):
-        self.assert_pcs_fail(
-            "cluster enable rh7-1 rh7-2 --all",
-            stdout_full="Error: Cannot specify both --all and a list of nodes.\n"
-        )
-        self.assert_pcs_fail(
-            "cluster disable rh7-1 rh7-2 --all",
-            stdout_full="Error: Cannot specify both --all and a list of nodes.\n"
-        )
-
-class NodeRemove(unittest.TestCase, AssertPcsMixin):
-    def setUp(self):
-        self.pcs_runner = PcsRunner()
-
-    def test_fail_when_node_does_not_exists(self):
-        self.assert_pcs_fail(
-            "cluster node remove not-existent --force", #
-            "Error: node 'not-existent' does not appear to exist in"
-                " configuration\n"
-        )

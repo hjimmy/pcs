@@ -2,30 +2,40 @@ from __future__ import (
     absolute_import,
     division,
     print_function,
+    unicode_literals,
 )
 
 from pcs.test.tools.pcs_unittest import TestCase
 import os.path
 import logging
+try:
+    # python2
+    from urllib2 import (
+        HTTPError as urllib_HTTPError,
+        URLError as urllib_URLError
+    )
+except ImportError:
+    # python3
+    from urllib.error import (
+        HTTPError as urllib_HTTPError,
+        URLError as urllib_URLError
+    )
 
 from pcs.test.tools.assertions import (
     assert_raise_library_error,
     assert_report_item_equal,
     assert_report_item_list_equal,
 )
-from pcs.test.tools.custom_mock import (
-    MockCurl,
-    MockLibraryReportProcessor,
-)
+from pcs.test.tools.custom_mock import MockLibraryReportProcessor
 from pcs.test.tools.pcs_unittest import mock
-from pcs.test.tools.misc import outdent
 
 from pcs import settings
-from pcs.common import (
-    pcs_pycurl as pycurl,
-    report_codes,
+from pcs.common import report_codes
+from pcs.lib import reports
+from pcs.lib.errors import (
+    LibraryError,
+    ReportItemSeverity as severity
 )
-from pcs.lib.errors import ReportItemSeverity as severity
 
 import pcs.lib.external as lib
 
@@ -74,28 +84,21 @@ class CommandRunnerTest(TestCase):
         self.assert_popen_called_with(
             mock_popen,
             command,
-            {"env": {}, "stdin": lib.DEVNULL,}
+            {"env": {}, "stdin": None,}
         )
         logger_calls = [
-            mock.call("Running: {0}\nEnvironment:".format(command_str)),
-            mock.call(
-                outdent(
-                    """\
-                    Finished running: {0}
-                    Return value: {1}
-                    --Debug Stdout Start--
-                    {2}
-                    --Debug Stdout End--
-                    --Debug Stderr Start--
-                    {3}
-                    --Debug Stderr End--"""
-                ).format(
-                    command_str,
-                    expected_retval,
-                    expected_stdout,
-                    expected_stderr,
-                )
-            )
+            mock.call("Running: {0}".format(command_str)),
+            mock.call("""\
+Finished running: {0}
+Return value: {1}
+--Debug Stdout Start--
+{2}
+--Debug Stdout End--
+--Debug Stderr Start--
+{3}
+--Debug Stderr End--""".format(
+                command_str, expected_retval, expected_stdout, expected_stderr
+            ))
         ]
         self.assertEqual(self.mock_logger.debug.call_count, len(logger_calls))
         self.mock_logger.debug.assert_has_calls(logger_calls)
@@ -108,7 +111,6 @@ class CommandRunnerTest(TestCase):
                     {
                         "command": command_str,
                         "stdin": None,
-                        "environment": dict(),
                     }
                 ),
                 (
@@ -137,19 +139,15 @@ class CommandRunnerTest(TestCase):
         mock_process.returncode = expected_retval
         mock_popen.return_value = mock_process
 
-        global_env = {"a": "a", "b": "b"}
         runner = lib.CommandRunner(
             self.mock_logger,
             self.mock_reporter,
-            global_env.copy()
+            {"a": "a", "b": "b"}
         )
-        #{C} is for check that no python template conflict appear
         real_stdout, real_stderr, real_retval = runner.run(
             command,
-            env_extend={"b": "B", "c": "{C}"}
+            env_extend={"b": "B", "c": "C"}
         )
-        #check that env_exted did not affect initial env of runner
-        self.assertEqual(runner._env_vars, global_env)
 
         self.assertEqual(real_stdout, expected_stdout)
         self.assertEqual(real_stderr, expected_stderr)
@@ -158,37 +156,21 @@ class CommandRunnerTest(TestCase):
         self.assert_popen_called_with(
             mock_popen,
             command,
-            {"env": {"a": "a", "b": "B", "c": "{C}"}, "stdin": lib.DEVNULL,}
+            {"env": {"a": "a", "b": "B", "c": "C"}, "stdin": None,}
         )
         logger_calls = [
-            mock.call(
-                outdent(
-                    """\
-                    Running: {0}
-                    Environment:
-                      a=a
-                      b=B
-                      c={1}"""
-                ).format(command_str, "{C}")
-            ),
-            mock.call(
-                outdent(
-                    """\
-                    Finished running: {0}
-                    Return value: {1}
-                    --Debug Stdout Start--
-                    {2}
-                    --Debug Stdout End--
-                    --Debug Stderr Start--
-                    {3}
-                    --Debug Stderr End--"""
-                ).format(
-                    command_str,
-                    expected_retval,
-                    expected_stdout,
-                    expected_stderr,
-                )
-            )
+            mock.call("Running: {0}".format(command_str)),
+            mock.call("""\
+Finished running: {0}
+Return value: {1}
+--Debug Stdout Start--
+{2}
+--Debug Stdout End--
+--Debug Stderr Start--
+{3}
+--Debug Stderr End--""".format(
+                command_str, expected_retval, expected_stdout, expected_stderr
+            ))
         ]
         self.assertEqual(self.mock_logger.debug.call_count, len(logger_calls))
         self.mock_logger.debug.assert_has_calls(logger_calls)
@@ -201,7 +183,6 @@ class CommandRunnerTest(TestCase):
                     {
                         "command": command_str,
                         "stdin": None,
-                        "environment": {"a": "a", "b": "B", "c": "{C}"},
                     }
                 ),
                 (
@@ -246,32 +227,21 @@ class CommandRunnerTest(TestCase):
             {"env": {}, "stdin": -1}
         )
         logger_calls = [
-            mock.call(
-                outdent(
-                    """\
-                    Running: {0}
-                    Environment:
-                    --Debug Input Start--
-                    {1}
-                    --Debug Input End--"""
-                ).format(command_str, stdin)
-            ),
-            mock.call(
-                outdent(
-                    """\
-                    Finished running: {0}
-                    Return value: {1}
-                    --Debug Stdout Start--
-                    {2}
-                    --Debug Stdout End--
-                    --Debug Stderr Start--
-                    {3}
-                    --Debug Stderr End--"""
-                ).format(
-                    command_str,
-                    expected_retval,
-                    expected_stdout,
-                    expected_stderr,
+            mock.call("""\
+Running: {0}
+--Debug Input Start--
+{1}
+--Debug Input End--""".format(command_str, stdin)),
+            mock.call("""\
+Finished running: {0}
+Return value: {1}
+--Debug Stdout Start--
+{2}
+--Debug Stdout End--
+--Debug Stderr Start--
+{3}
+--Debug Stderr End--""".format(
+                command_str, expected_retval, expected_stdout, expected_stderr
             ))
         ]
         self.assertEqual(self.mock_logger.debug.call_count, len(logger_calls))
@@ -285,7 +255,6 @@ class CommandRunnerTest(TestCase):
                     {
                         "command": command_str,
                         "stdin": stdin,
-                        "environment": dict(),
                     }
                 ),
                 (
@@ -327,10 +296,10 @@ class CommandRunnerTest(TestCase):
         self.assert_popen_called_with(
             mock_popen,
             command,
-            {"env": {}, "stdin": lib.DEVNULL,}
+            {"env": {}, "stdin": None,}
         )
         logger_calls = [
-            mock.call("Running: {0}\nEnvironment:".format(command_str)),
+            mock.call("Running: {0}".format(command_str)),
         ]
         self.assertEqual(self.mock_logger.debug.call_count, len(logger_calls))
         self.mock_logger.debug.assert_has_calls(logger_calls)
@@ -343,7 +312,6 @@ class CommandRunnerTest(TestCase):
                     {
                         "command": command_str,
                         "stdin": None,
-                        "environment": dict(),
                     }
                 )
             ]
@@ -376,10 +344,10 @@ class CommandRunnerTest(TestCase):
         self.assert_popen_called_with(
             mock_popen,
             command,
-            {"env": {}, "stdin": lib.DEVNULL,}
+            {"env": {}, "stdin": None,}
         )
         logger_calls = [
-            mock.call("Running: {0}\nEnvironment:".format(command_str)),
+            mock.call("Running: {0}".format(command_str)),
         ]
         self.assertEqual(self.mock_logger.debug.call_count, len(logger_calls))
         self.mock_logger.debug.assert_has_calls(logger_calls)
@@ -392,14 +360,14 @@ class CommandRunnerTest(TestCase):
                     {
                         "command": command_str,
                         "stdin": None,
-                        "environment": dict(),
                     }
                 )
             ]
         )
 
+
 @mock.patch(
-    "pcs.lib.external.pycurl.Curl",
+    "pcs.lib.external.NodeCommunicator._NodeCommunicator__get_opener",
     autospec=True
 )
 class NodeCommunicatorTest(TestCase):
@@ -407,24 +375,26 @@ class NodeCommunicatorTest(TestCase):
         self.mock_logger = mock.MagicMock(logging.Logger)
         self.mock_reporter = MockLibraryReportProcessor()
 
+    def fixture_response(self, response_code, response_data):
+        response = mock.MagicMock(["getcode", "read"])
+        response.getcode.return_value = response_code
+        response.read.return_value = response_data.encode("utf-8")
+        return response
+
+    def fixture_http_exception(self, response_code, response_data):
+        response = urllib_HTTPError("url", response_code, "msg", [], None)
+        response.read = mock.MagicMock(
+            return_value=response_data.encode("utf-8")
+        )
+        return response
+
     def fixture_logger_call_send(self, url, data):
         send_msg = "Sending HTTP Request to: {url}"
         if data:
             send_msg += "\n--Debug Input Start--\n{data}\n--Debug Input End--"
         return mock.call(send_msg.format(url=url, data=data))
 
-    def fixture_logger_call_debug_data(self, url, data):
-        send_msg = outdent("""\
-            Communication debug info for calling: {url}
-            --Debug Communication Info Start--
-            {data}
-            --Debug Communication Info End--"""
-        )
-        return mock.call(send_msg.format(url=url, data=data))
-
-    def fixture_logger_calls(
-        self, url, data, response_code, response_data, debug_data
-    ):
+    def fixture_logger_calls(self, url, data, response_code, response_data):
         result_msg = (
             "Finished calling: {url}\nResponse Code: {code}"
             + "\n--Debug Response Start--\n{response}\n--Debug Response End--"
@@ -433,8 +403,7 @@ class NodeCommunicatorTest(TestCase):
             self.fixture_logger_call_send(url, data),
             mock.call(result_msg.format(
                 url=url, code=response_code, response=response_data
-            )),
-            self.fixture_logger_call_debug_data(url, debug_data)
+            ))
         ]
 
     def fixture_report_item_list_send(self, url, data):
@@ -449,21 +418,7 @@ class NodeCommunicatorTest(TestCase):
             )
         ]
 
-    def fixture_report_item_list_debug(self, url, data):
-        return [
-            (
-                severity.DEBUG,
-                report_codes.NODE_COMMUNICATION_DEBUG_INFO,
-                {
-                    "target": url,
-                    "data": data,
-                }
-            )
-        ]
-
-    def fixture_report_item_list(
-        self, url, data, response_code, response_data, debug_data
-    ):
+    def fixture_report_item_list(self, url, data, response_code, response_data):
         return (
             self.fixture_report_item_list_send(url, data)
             +
@@ -478,8 +433,6 @@ class NodeCommunicatorTest(TestCase):
                     }
                 )
             ]
-            +
-            self.fixture_report_item_list_debug(url, debug_data)
         )
 
     def fixture_url(self, host, request):
@@ -487,47 +440,32 @@ class NodeCommunicatorTest(TestCase):
             host=host, request=request
         )
 
-    def test_success(self, mock_pycurl_init):
+    def test_success(self, mock_get_opener):
         host = "test_host"
         request = "test_request"
         data = '{"key1": "value1", "key2": ["value2a", "value2b"]}'
-        expected_response_data = "expected response data"
         expected_response_code = 200
-        expected_debug_data = "* text\n>> data out\n"
-        mock_pycurl_obj = MockCurl(
-            {
-                pycurl.RESPONSE_CODE: expected_response_code,
-            },
-            expected_response_data.encode("utf-8"),
-            [
-                (pycurl.DEBUG_TEXT, b"text"),
-                (pycurl.DEBUG_DATA_OUT, b"data out")
-            ]
+        expected_response_data = "expected response data"
+        mock_opener = mock.MagicMock()
+        mock_get_opener.return_value = mock_opener
+        mock_opener.open.return_value = self.fixture_response(
+            expected_response_code, expected_response_data
         )
-        mock_pycurl_init.return_value = mock_pycurl_obj
 
         comm = lib.NodeCommunicator(self.mock_logger, self.mock_reporter, {})
         real_response = comm.call_host(host, request, data)
         self.assertEqual(expected_response_data, real_response)
 
-        expected_opts = {
-            pycurl.URL: self.fixture_url(host, request).encode("utf-8"),
-            pycurl.SSL_VERIFYHOST: 0,
-            pycurl.SSL_VERIFYPEER: 0,
-            pycurl.COPYPOSTFIELDS: data.encode("utf-8"),
-            pycurl.TIMEOUT_MS: settings.default_request_timeout * 1000,
-        }
-
-        self.assertLessEqual(
-            set(expected_opts.items()), set(mock_pycurl_obj.opts.items())
+        mock_opener.addheaders.append.assert_not_called()
+        mock_opener.open.assert_called_once_with(
+            self.fixture_url(host, request),
+            data.encode("utf-8")
         )
-
         logger_calls = self.fixture_logger_calls(
             self.fixture_url(host, request),
             data,
             expected_response_code,
-            expected_response_data,
-            expected_debug_data
+            expected_response_data
         )
         self.assertEqual(self.mock_logger.debug.call_count, len(logger_calls))
         self.mock_logger.debug.assert_has_calls(logger_calls)
@@ -537,84 +475,22 @@ class NodeCommunicatorTest(TestCase):
                 self.fixture_url(host, request),
                 data,
                 expected_response_code,
-                expected_response_data,
-                expected_debug_data
+                expected_response_data
             )
         )
 
-    @mock.patch("pcs.lib.external.os")
-    def test_success_proxy_set(self, mock_os, mock_pycurl_init):
-        host = "test_host"
-        request = "test_request"
-        data = '{"key1": "value1", "key2": ["value2a", "value2b"]}'
-        expected_response_data = "expected response data"
-        expected_response_code = 200
-        mock_os.environ = {
-            "all_proxy": "proxy1",
-            "https_proxy": "proxy2",
-            "HTTPS_PROXY": "proxy3",
-        }
-        mock_pycurl_obj = MockCurl(
-            {
-                pycurl.RESPONSE_CODE: expected_response_code,
-            },
-            expected_response_data.encode("utf-8"),
-            []
-        )
-        mock_pycurl_init.return_value = mock_pycurl_obj
-
-        comm = lib.NodeCommunicator(self.mock_logger, self.mock_reporter, {})
-        real_response = comm.call_host(host, request, data)
-        self.assertEqual(expected_response_data, real_response)
-
-        expected_opts = {
-            pycurl.URL: self.fixture_url(host, request).encode("utf-8"),
-            pycurl.SSL_VERIFYHOST: 0,
-            pycurl.SSL_VERIFYPEER: 0,
-            pycurl.COPYPOSTFIELDS: data.encode("utf-8"),
-            pycurl.TIMEOUT_MS: settings.default_request_timeout * 1000,
-        }
-
-        self.assertLessEqual(
-            set(expected_opts.items()), set(mock_pycurl_obj.opts.items())
-        )
-
-        logger_calls = self.fixture_logger_calls(
-            self.fixture_url(host, request),
-            data,
-            expected_response_code,
-            expected_response_data,
-            ""
-        )
-        self.assertEqual(self.mock_logger.debug.call_count, len(logger_calls))
-        self.mock_logger.debug.assert_has_calls(logger_calls)
-        assert_report_item_list_equal(
-            self.mock_reporter.report_item_list,
-            self.fixture_report_item_list(
-                self.fixture_url(host, request),
-                data,
-                expected_response_code,
-                expected_response_data,
-                ""
-            )
-        )
-
-    def test_ipv6(self, mock_pycurl_init):
+    def test_ipv6(self, mock_get_opener):
         host = "cafe::1"
         request = "test_request"
         data = None
         token = "test_token"
         expected_response_code = 200
         expected_response_data = "expected response data"
-        expected_debug_data = ""
-        mock_pycurl_obj = MockCurl(
-            {
-                pycurl.RESPONSE_CODE: expected_response_code,
-            },
-            expected_response_data.encode("utf-8"),
-            []
+        mock_opener = mock.MagicMock()
+        mock_get_opener.return_value = mock_opener
+        mock_opener.open.return_value = self.fixture_response(
+            expected_response_code, expected_response_data
         )
-        mock_pycurl_init.return_value = mock_pycurl_obj
 
         comm = lib.NodeCommunicator(
             self.mock_logger,
@@ -623,26 +499,19 @@ class NodeCommunicatorTest(TestCase):
         )
         real_response = comm.call_host(host, request, data)
         self.assertEqual(expected_response_data, real_response)
-        expected_opts = {
-            pycurl.URL: self.fixture_url(
-                "[{0}]".format(host), request
-            ).encode("utf-8"),
-            pycurl.COOKIE: "token={0}".format(token).encode("utf-8"),
-            pycurl.SSL_VERIFYHOST: 0,
-            pycurl.SSL_VERIFYPEER: 0,
-        }
-        self.assertLessEqual(
-            set(expected_opts.items()), set(mock_pycurl_obj.opts.items())
+
+        mock_opener.addheaders.append.assert_called_once_with(
+            ("Cookie", "token={0}".format(token))
         )
-
-        self.assertTrue(pycurl.COPYPOSTFIELDS not in mock_pycurl_obj.opts)
-
+        mock_opener.open.assert_called_once_with(
+            self.fixture_url("[{0}]".format(host), request),
+            data
+        )
         logger_calls = self.fixture_logger_calls(
             self.fixture_url("[{0}]".format(host), request),
             data,
             expected_response_code,
-            expected_response_data,
-            expected_debug_data
+            expected_response_data
         )
         self.assertEqual(self.mock_logger.debug.call_count, len(logger_calls))
         self.mock_logger.debug.assert_has_calls(logger_calls)
@@ -652,48 +521,15 @@ class NodeCommunicatorTest(TestCase):
                 self.fixture_url("[{0}]".format(host), request),
                 data,
                 expected_response_code,
-                expected_response_data,
-                expected_debug_data
+                expected_response_data
             )
         )
 
-    def test_communicator_timeout(self, mock_pycurl_init):
-        host = "test_host"
-        timeout = 10
-        mock_pycurl_obj = MockCurl({pycurl.RESPONSE_CODE: 200}, b"", [])
-        mock_pycurl_init.return_value = mock_pycurl_obj
-
-        comm = lib.NodeCommunicator(
-            self.mock_logger, self.mock_reporter, {}, request_timeout=timeout
-        )
-        dummy_response = comm.call_host(host, "test_request", None)
-
-        self.assertLessEqual(
-            set([(pycurl.TIMEOUT_MS, timeout * 1000)]),
-            set(mock_pycurl_obj.opts.items())
-        )
-
-    def test_call_host_timeout(self, mock_pycurl_init):
-        host = "test_host"
-        timeout = 10
-        mock_pycurl_obj = MockCurl({pycurl.RESPONSE_CODE: 200}, b"", [])
-        mock_pycurl_init.return_value = mock_pycurl_obj
-
-        comm = lib.NodeCommunicator(
-            self.mock_logger, self.mock_reporter, {}, request_timeout=15
-        )
-        dummy_response = comm.call_host(host, "test_request", None, timeout)
-
-        self.assertLessEqual(
-            set([(pycurl.TIMEOUT_MS, timeout * 1000)]),
-            set(mock_pycurl_obj.opts.items())
-        )
-
-    def test_auth_token(self, mock_pycurl_init):
+    def test_auth_token(self, mock_get_opener):
         host = "test_host"
         token = "test_token"
-        mock_pycurl_obj = MockCurl({pycurl.RESPONSE_CODE: 200}, b"", [])
-        mock_pycurl_init.return_value = mock_pycurl_obj
+        mock_opener = mock.MagicMock()
+        mock_get_opener.return_value = mock_opener
 
         comm = lib.NodeCommunicator(
             self.mock_logger,
@@ -706,16 +542,15 @@ class NodeCommunicatorTest(TestCase):
         )
         dummy_response = comm.call_host(host, "test_request", None)
 
-        self.assertLessEqual(
-            set([(pycurl.COOKIE, "token={0}".format(token).encode("utf-8"))]),
-            set(mock_pycurl_obj.opts.items())
+        mock_opener.addheaders.append.assert_called_once_with(
+            ("Cookie", "token={0}".format(token))
         )
 
-    def test_user(self, mock_pycurl_init):
+    def test_user(self, mock_get_opener):
         host = "test_host"
         user = "test_user"
-        mock_pycurl_obj = MockCurl({pycurl.RESPONSE_CODE: 200}, b"", [])
-        mock_pycurl_init.return_value = mock_pycurl_obj
+        mock_opener = mock.MagicMock()
+        mock_get_opener.return_value = mock_opener
 
         comm = lib.NodeCommunicator(
             self.mock_logger,
@@ -725,16 +560,15 @@ class NodeCommunicatorTest(TestCase):
         )
         dummy_response = comm.call_host(host, "test_request", None)
 
-        self.assertLessEqual(
-            set([(pycurl.COOKIE, "CIB_user={0}".format(user).encode("utf-8"))]),
-            set(mock_pycurl_obj.opts.items())
+        mock_opener.addheaders.append.assert_called_once_with(
+            ("Cookie", "CIB_user={0}".format(user))
         )
 
-    def test_one_group(self, mock_pycurl_init):
+    def test_one_group(self, mock_get_opener):
         host = "test_host"
         groups = ["group1"]
-        mock_pycurl_obj = MockCurl({pycurl.RESPONSE_CODE: 200}, b"", [])
-        mock_pycurl_init.return_value = mock_pycurl_obj
+        mock_opener = mock.MagicMock()
+        mock_get_opener.return_value = mock_opener
 
         comm = lib.NodeCommunicator(
             self.mock_logger,
@@ -744,57 +578,53 @@ class NodeCommunicatorTest(TestCase):
         )
         dummy_response = comm.call_host(host, "test_request", None)
 
-        self.assertLessEqual(
-            set([(
-                pycurl.COOKIE,
-                "CIB_user_groups={0}".format("Z3JvdXAx").encode("utf-8")
-            )]),
-            set(mock_pycurl_obj.opts.items())
+        mock_opener.addheaders.append.assert_called_once_with(
+            (
+                "Cookie",
+                "CIB_user_groups={0}".format("Z3JvdXAx".encode("utf8"))
+            )
         )
 
-    def test_all_options(self, mock_pycurl_init):
+    def test_all_options(self, mock_get_opener):
         host = "test_host"
         token = "test_token"
         user = "test_user"
         groups = ["group1", "group2"]
-        mock_pycurl_obj = MockCurl({pycurl.RESPONSE_CODE: 200}, b"", [])
-        mock_pycurl_init.return_value = mock_pycurl_obj
+        mock_opener = mock.MagicMock()
+        mock_get_opener.return_value = mock_opener
 
         comm = lib.NodeCommunicator(
             self.mock_logger,
             self.mock_reporter,
             {host: token},
-            user,
-            groups
+            user, groups
         )
         dummy_response = comm.call_host(host, "test_request", None)
 
-        cookie_str = (
-            "token={token};CIB_user={user};CIB_user_groups={groups}".format(
-                token=token,
-                user=user,
-                groups="Z3JvdXAxIGdyb3VwMg=="
-            ).encode("utf-8")
+        mock_opener.addheaders.append.assert_called_once_with(
+            (
+                "Cookie",
+                "token={token};CIB_user={user};CIB_user_groups={groups}".format(
+                    token=token,
+                    user=user,
+                    groups="Z3JvdXAxIGdyb3VwMg==".encode("utf-8")
+                )
+            )
         )
-        self.assertLessEqual(
-            set([(pycurl.COOKIE, cookie_str)]),
-            set(mock_pycurl_obj.opts.items())
-        )
+        mock_opener = mock.MagicMock()
+        mock_get_opener.return_value = mock_opener
 
-    def base_test_http_error(self, mock_pycurl_init, code, exception):
+    def base_test_http_error(self, mock_get_opener, code, exception):
         host = "test_host"
         request = "test_request"
         data = None
         expected_response_code = code
         expected_response_data = "expected response data"
-        mock_pycurl_obj = MockCurl(
-            {
-                pycurl.RESPONSE_CODE: expected_response_code,
-            },
-            expected_response_data.encode("utf-8"),
-            []
+        mock_opener = mock.MagicMock()
+        mock_get_opener.return_value = mock_opener
+        mock_opener.open.side_effect = self.fixture_http_exception(
+            expected_response_code, expected_response_data
         )
-        mock_pycurl_init.return_value = mock_pycurl_obj
 
         comm = lib.NodeCommunicator(self.mock_logger, self.mock_reporter, {})
         self.assertRaises(
@@ -802,22 +632,16 @@ class NodeCommunicatorTest(TestCase):
             lambda: comm.call_host(host, request, data)
         )
 
-        self.assertTrue(pycurl.COOKIE not in mock_pycurl_obj.opts)
-        self.assertTrue(pycurl.COPYPOSTFIELDS not in mock_pycurl_obj.opts)
-        expected_opts = {
-            pycurl.URL: self.fixture_url(host, request).encode("utf-8"),
-            pycurl.SSL_VERIFYHOST: 0,
-            pycurl.SSL_VERIFYPEER: 0,
-        }
-        self.assertLessEqual(
-            set(expected_opts.items()), set(mock_pycurl_obj.opts.items())
+        mock_opener.addheaders.append.assert_not_called()
+        mock_opener.open.assert_called_once_with(
+            self.fixture_url(host, request),
+            data
         )
         logger_calls = self.fixture_logger_calls(
             self.fixture_url(host, request),
             data,
             expected_response_code,
-            expected_response_data,
-            ""
+            expected_response_data
         )
         self.assertEqual(self.mock_logger.debug.call_count, len(logger_calls))
         self.mock_logger.debug.assert_has_calls(logger_calls)
@@ -827,9 +651,8 @@ class NodeCommunicatorTest(TestCase):
                 self.fixture_url(host, request),
                 data,
                 expected_response_code,
-                expected_response_data,
-                ""
-            ),
+                expected_response_data
+            )
         )
 
     def test_no_authenticated(self, mock_get_opener):
@@ -867,16 +690,14 @@ class NodeCommunicatorTest(TestCase):
             lib.NodeCommunicationException
         )
 
-    def test_connection_error(self, mock_pycurl_init):
+    def test_connection_error(self, mock_get_opener):
         host = "test_host"
         request = "test_request"
         data = None
         expected_reason = "expected reason"
-        expected_url = self.fixture_url(host, request)
-        mock_pycurl_obj = MockCurl(
-            {}, b"", [], pycurl.error(pycurl.E_SEND_ERROR, expected_reason)
-        )
-        mock_pycurl_init.return_value = mock_pycurl_obj
+        mock_opener = mock.MagicMock()
+        mock_get_opener.return_value = mock_opener
+        mock_opener.open.side_effect = urllib_URLError(expected_reason)
 
         comm = lib.NodeCommunicator(self.mock_logger, self.mock_reporter, {})
         self.assertRaises(
@@ -884,22 +705,19 @@ class NodeCommunicatorTest(TestCase):
             lambda: comm.call_host(host, request, data)
         )
 
-        self.assertTrue(pycurl.COOKIE not in mock_pycurl_obj.opts)
-        self.assertTrue(pycurl.COPYPOSTFIELDS not in mock_pycurl_obj.opts)
-        expected_opts = {
-            pycurl.URL: expected_url.encode("utf-8"),
-            pycurl.SSL_VERIFYHOST: 0,
-            pycurl.SSL_VERIFYPEER: 0,
-        }
-        self.assertLessEqual(
-            set(expected_opts.items()), set(mock_pycurl_obj.opts.items())
+        mock_opener.addheaders.append.assert_not_called()
+        mock_opener.open.assert_called_once_with(
+            self.fixture_url(host, request),
+            data
         )
         logger_calls = [
-            self.fixture_logger_call_send(expected_url, data),
+            self.fixture_logger_call_send(
+                self.fixture_url(host, request),
+                data
+            ),
             mock.call(
                 "Unable to connect to {0} ({1})".format(host, expected_reason)
-            ),
-            self.fixture_logger_call_debug_data(expected_url, "")
+            )
         ]
         self.assertEqual(self.mock_logger.debug.call_count, len(logger_calls))
         self.mock_logger.debug.assert_has_calls(logger_calls)
@@ -918,69 +736,6 @@ class NodeCommunicatorTest(TestCase):
                     "reason": expected_reason,
                 }
             )]
-            +
-            self.fixture_report_item_list_debug(expected_url, "")
-        )
-
-    @mock.patch("pcs.lib.external.os")
-    def test_connection_error_proxy_set(self, mock_os, mock_pycurl_init):
-        host = "test_host"
-        request = "test_request"
-        data = None
-        expected_reason = "expected reason"
-        expected_url = self.fixture_url(host, request)
-        mock_os.environ = {
-            "all_proxy": "proxy1",
-            "https_proxy": "proxy2",
-            "HTTPS_PROXY": "proxy3",
-        }
-        mock_pycurl_obj = MockCurl(
-            {}, b"", [], pycurl.error(pycurl.E_SEND_ERROR, expected_reason)
-        )
-        mock_pycurl_init.return_value = mock_pycurl_obj
-
-        comm = lib.NodeCommunicator(self.mock_logger, self.mock_reporter, {})
-        self.assertRaises(
-            lib.NodeConnectionException,
-            lambda: comm.call_host(host, request, data)
-        )
-
-        self.assertTrue(pycurl.COOKIE not in mock_pycurl_obj.opts)
-        self.assertTrue(pycurl.COPYPOSTFIELDS not in mock_pycurl_obj.opts)
-        logger_calls = [
-            self.fixture_logger_call_send(expected_url, data),
-            mock.call(
-                "Unable to connect to {0} ({1})".format(host, expected_reason)
-            ),
-            self.fixture_logger_call_debug_data(expected_url, "")
-        ]
-        self.assertEqual(self.mock_logger.debug.call_count, len(logger_calls))
-        self.mock_logger.debug.assert_has_calls(logger_calls)
-        self.mock_logger.warning.assert_has_calls([mock.call("Proxy is set")])
-        assert_report_item_list_equal(
-            self.mock_reporter.report_item_list,
-            self.fixture_report_item_list_send(
-                self.fixture_url(host, request),
-                data
-            )
-            +
-            [
-                (
-                   severity.DEBUG,
-                   report_codes.NODE_COMMUNICATION_NOT_CONNECTED,
-                   {
-                       "node": host,
-                       "reason": expected_reason,
-                   }
-                ),
-                (
-                    severity.WARNING,
-                    report_codes.NODE_COMMUNICATION_PROXY_IS_SET,
-                    {}
-                )
-            ]
-            +
-            self.fixture_report_item_list_debug(expected_url, "")
         )
 
 
@@ -1116,16 +871,130 @@ class NodeCommunicatorExceptionTransformTest(TestCase):
         self.assertTrue(raised)
 
 
-class IsCmanClusterTest(TestCase):
-    def template_test(self, version_description, is_cman, corosync_retval=0):
-        mock_runner = mock.MagicMock(spec_set=lib.CommandRunner)
-        mock_runner.run.return_value = (
-            "Corosync Cluster Engine{0}\nCopyright (c) 2006-2009 Red Hat, Inc."
-                .format(version_description)
-            ,
-            "",
-            corosync_retval
+class ParallelCommunicationHelperTest(TestCase):
+    def setUp(self):
+        self.mock_reporter = MockLibraryReportProcessor()
+
+    def fixture_raiser(self):
+        def raiser(x, *args, **kwargs):
+            if x == 1:
+                raise lib.NodeConnectionException("node", "command", "reason")
+            elif x == 2:
+                raise LibraryError(
+                    reports.corosync_config_distribution_node_error("node")
+                )
+        return raiser
+
+    def test_success(self):
+        func = mock.MagicMock()
+        lib.parallel_nodes_communication_helper(
+            func,
+            [([x], {"a": x*2,}) for x in range(3)],
+            self.mock_reporter,
+            skip_offline_nodes=False
         )
+        expected_calls = [
+            mock.call(0, a=0),
+            mock.call(1, a=2),
+            mock.call(2, a=4),
+        ]
+        self.assertEqual(len(expected_calls), len(func.mock_calls))
+        func.assert_has_calls(expected_calls, any_order=True)
+        self.assertEqual(self.mock_reporter.report_item_list, [])
+
+    def test_errors(self):
+        func = self.fixture_raiser()
+        assert_raise_library_error(
+            lambda: lib.parallel_nodes_communication_helper(
+                func,
+                [([x], {"a": x*2,}) for x in range(4)],
+                self.mock_reporter,
+                skip_offline_nodes=False
+            ),
+            (
+                severity.ERROR,
+                report_codes.NODE_COMMUNICATION_ERROR_UNABLE_TO_CONNECT,
+                {
+                    "node": "node",
+                    "reason": "reason",
+                    "command": "command",
+                },
+                report_codes.SKIP_OFFLINE_NODES
+            ),
+            (
+                severity.ERROR,
+                report_codes.COROSYNC_CONFIG_DISTRIBUTION_NODE_ERROR,
+                {
+                    "node": "node",
+                }
+            )
+        )
+        assert_report_item_list_equal(
+            self.mock_reporter.report_item_list,
+            [
+                (
+                    severity.ERROR,
+                    report_codes.NODE_COMMUNICATION_ERROR_UNABLE_TO_CONNECT,
+                    {
+                        "node": "node",
+                        "reason": "reason",
+                        "command": "command",
+                    },
+                    report_codes.SKIP_OFFLINE_NODES
+                ),
+                (
+                    severity.ERROR,
+                    report_codes.COROSYNC_CONFIG_DISTRIBUTION_NODE_ERROR,
+                    {
+                        "node": "node",
+                    }
+                )
+            ]
+        )
+
+    def test_errors_skip_offline(self):
+        func = self.fixture_raiser()
+        assert_raise_library_error(
+            lambda: lib.parallel_nodes_communication_helper(
+                func,
+                [([x], {"a": x*2,}) for x in range(4)],
+                self.mock_reporter,
+                skip_offline_nodes=True
+            ),
+            (
+                severity.ERROR,
+                report_codes.COROSYNC_CONFIG_DISTRIBUTION_NODE_ERROR,
+                {
+                    "node": "node",
+                }
+            )
+        )
+        assert_report_item_list_equal(
+            self.mock_reporter.report_item_list,
+            [
+                (
+                    severity.WARNING,
+                    report_codes.NODE_COMMUNICATION_ERROR_UNABLE_TO_CONNECT,
+                    {
+                        "node": "node",
+                        "reason": "reason",
+                        "command": "command",
+                    }
+                ),
+                (
+                    severity.ERROR,
+                    report_codes.COROSYNC_CONFIG_DISTRIBUTION_NODE_ERROR,
+                    {
+                        "node": "node",
+                    }
+                )
+            ]
+        )
+
+class IsCmanClusterTest(TestCase):
+    def template_test(self, is_cman, corosync_output, corosync_retval=0):
+        mock_runner = mock.MagicMock(spec_set=lib.CommandRunner)
+        mock_runner.run.return_value = (corosync_output, "", corosync_retval)
         self.assertEqual(is_cman, lib.is_cman_cluster(mock_runner))
         mock_runner.run.assert_called_once_with([
             os.path.join(settings.corosync_binaries, "corosync"),
@@ -1133,23 +1002,51 @@ class IsCmanClusterTest(TestCase):
         ])
 
     def test_is_not_cman(self):
-        self.template_test(", version '2.3.4'", is_cman=False)
+        self.template_test(
+            False,
+            """\
+Corosync Cluster Engine, version '2.3.4'
+Copyright (c) 2006-2009 Red Hat, Inc.
+"""
+        )
 
     def test_is_cman(self):
-        self.template_test(", version '1.4.7'", is_cman=True)
+        self.template_test(
+            True,
+            """\
+Corosync Cluster Engine, version '1.4.7'
+Copyright (c) 2006-2009 Red Hat, Inc.
+"""
+        )
 
     def test_bad_version_format(self):
-        self.template_test(", nonsense '2.3.4'", is_cman=False)
+        self.template_test(
+            False,
+            """\
+Corosync Cluster Engine, nonsense '2.3.4'
+Copyright (c) 2006-2009 Red Hat, Inc.
+"""
+        )
 
     def test_no_version(self):
-        self.template_test("", is_cman=False)
+        self.template_test(
+            False,
+            """\
+Corosync Cluster Engine
+Copyright (c) 2006-2009 Red Hat, Inc.
+"""
+        )
 
     def test_corosync_error(self):
         self.template_test(
-            ", version '1.4.7'",
-            is_cman=False,
-            corosync_retval=1
+            False,
+            """\
+Corosync Cluster Engine, version '1.4.7'
+Copyright (c) 2006-2009 Red Hat, Inc.
+""",
+            1
         )
+
 
 @mock.patch("pcs.lib.external.is_systemctl")
 @mock.patch("pcs.lib.external.is_service_installed")
@@ -1163,9 +1060,6 @@ class DisableServiceTest(TestCase):
         mock_systemctl.return_value = True
         self.mock_runner.run.return_value = ("", "Removed symlink", 0)
         lib.disable_service(self.mock_runner, self.service)
-        mock_is_installed.assert_called_once_with(
-            self.mock_runner, self.service, None
-        )
         self.mock_runner.run.assert_called_once_with(
             [_systemctl, "disable", self.service + ".service"]
         )
@@ -1178,9 +1072,6 @@ class DisableServiceTest(TestCase):
             lib.DisableServiceError,
             lambda: lib.disable_service(self.mock_runner, self.service)
         )
-        mock_is_installed.assert_called_once_with(
-            self.mock_runner, self.service, None
-        )
         self.mock_runner.run.assert_called_once_with(
             [_systemctl, "disable", self.service + ".service"]
         )
@@ -1190,9 +1081,6 @@ class DisableServiceTest(TestCase):
         mock_systemctl.return_value = False
         self.mock_runner.run.return_value = ("", "", 0)
         lib.disable_service(self.mock_runner, self.service)
-        mock_is_installed.assert_called_once_with(
-            self.mock_runner, self.service, None
-        )
         self.mock_runner.run.assert_called_once_with(
             [_chkconfig, self.service, "off"]
         )
@@ -1205,9 +1093,6 @@ class DisableServiceTest(TestCase):
             lib.DisableServiceError,
             lambda: lib.disable_service(self.mock_runner, self.service)
         )
-        mock_is_installed.assert_called_once_with(
-            self.mock_runner, self.service, None
-        )
         self.mock_runner.run.assert_called_once_with(
             [_chkconfig, self.service, "off"]
         )
@@ -1219,9 +1104,6 @@ class DisableServiceTest(TestCase):
         mock_systemctl.return_value = True
         lib.disable_service(self.mock_runner, self.service)
         self.assertEqual(self.mock_runner.run.call_count, 0)
-        mock_is_installed.assert_called_once_with(
-            self.mock_runner, self.service, None
-        )
 
     def test_not_systemctl_not_installed(
             self, mock_is_installed, mock_systemctl
@@ -1230,19 +1112,12 @@ class DisableServiceTest(TestCase):
         mock_systemctl.return_value = False
         lib.disable_service(self.mock_runner, self.service)
         self.assertEqual(self.mock_runner.run.call_count, 0)
-        mock_is_installed.assert_called_once_with(
-            self.mock_runner, self.service, None
-        )
 
     def test_instance_systemctl(self, mock_is_installed, mock_systemctl):
-        instance = "test"
         mock_is_installed.return_value = True
         mock_systemctl.return_value = True
         self.mock_runner.run.return_value = ("", "Removed symlink", 0)
-        lib.disable_service(self.mock_runner, self.service, instance=instance)
-        mock_is_installed.assert_called_once_with(
-            self.mock_runner, self.service, instance
-        )
+        lib.disable_service(self.mock_runner, self.service, instance="test")
         self.mock_runner.run.assert_called_once_with([
             _systemctl,
             "disable",
@@ -1250,14 +1125,10 @@ class DisableServiceTest(TestCase):
         ])
 
     def test_instance_not_systemctl(self, mock_is_installed, mock_systemctl):
-        instance = "test"
         mock_is_installed.return_value = True
         mock_systemctl.return_value = False
         self.mock_runner.run.return_value = ("", "", 0)
-        lib.disable_service(self.mock_runner, self.service, instance=instance)
-        mock_is_installed.assert_called_once_with(
-            self.mock_runner, self.service, instance
-        )
+        lib.disable_service(self.mock_runner, self.service, instance="test")
         self.mock_runner.run.assert_called_once_with(
             [_chkconfig, self.service, "off"]
         )
@@ -1456,9 +1327,7 @@ class KillServicesTest(TestCase):
         self.mock_runner.run.return_value = ("", "", 0)
         lib.kill_services(self.mock_runner, self.services)
         self.mock_runner.run.assert_called_once_with(
-            ["/usr/bin/killall", "--quiet", "--signal", "9", "--"]
-            +
-            self.services
+            ["killall", "--quiet", "--signal", "9", "--"] + self.services
         )
 
     def test_failed(self):
@@ -1468,18 +1337,14 @@ class KillServicesTest(TestCase):
             lambda: lib.kill_services(self.mock_runner, self.services)
         )
         self.mock_runner.run.assert_called_once_with(
-            ["/usr/bin/killall", "--quiet", "--signal", "9", "--"]
-            +
-            self.services
+            ["killall", "--quiet", "--signal", "9", "--"] + self.services
         )
 
     def test_service_not_running(self):
         self.mock_runner.run.return_value = ("", "", 1)
         lib.kill_services(self.mock_runner, self.services)
         self.mock_runner.run.assert_called_once_with(
-            ["/usr/bin/killall", "--quiet", "--signal", "9", "--"]
-            +
-            self.services
+            ["killall", "--quiet", "--signal", "9", "--"] + self.services
         )
 
 
@@ -1642,45 +1507,6 @@ class IsServiceInstalledTest(TestCase):
         mock_non_systemd.assert_called_once_with(self.mock_runner)
         self.assertEqual(mock_systemd.call_count, 0)
 
-    def test_installed_systemd_instance(
-        self, mock_non_systemd, mock_systemd, mock_is_systemctl
-    ):
-        mock_is_systemctl.return_value = True
-        mock_systemd.return_value = ["service1", "service2@"]
-        mock_non_systemd.return_value = []
-        self.assertTrue(
-            lib.is_service_installed(self.mock_runner, "service2", "instance")
-        )
-        self.assertEqual(mock_is_systemctl.call_count, 1)
-        mock_systemd.assert_called_once_with(self.mock_runner)
-        self.assertEqual(mock_non_systemd.call_count, 0)
-
-    def test_not_installed_systemd_instance(
-        self, mock_non_systemd, mock_systemd, mock_is_systemctl
-    ):
-        mock_is_systemctl.return_value = True
-        mock_systemd.return_value = ["service1", "service2"]
-        mock_non_systemd.return_value = []
-        self.assertFalse(
-            lib.is_service_installed(self.mock_runner, "service2", "instance")
-        )
-        self.assertEqual(mock_is_systemctl.call_count, 1)
-        mock_systemd.assert_called_once_with(self.mock_runner)
-        self.assertEqual(mock_non_systemd.call_count, 0)
-
-    def test_installed_not_systemd_instance(
-        self, mock_non_systemd, mock_systemd, mock_is_systemctl
-    ):
-        mock_is_systemctl.return_value = False
-        mock_systemd.return_value = []
-        mock_non_systemd.return_value = ["service1", "service2"]
-        self.assertTrue(
-            lib.is_service_installed(self.mock_runner, "service2", "instance")
-        )
-        self.assertEqual(mock_is_systemctl.call_count, 1)
-        mock_non_systemd.assert_called_once_with(self.mock_runner)
-        self.assertEqual(mock_systemd.call_count, 0)
-
 
 @mock.patch("pcs.lib.external.is_systemctl")
 class GetSystemdServicesTest(TestCase):
@@ -1689,15 +1515,13 @@ class GetSystemdServicesTest(TestCase):
 
     def test_success(self, mock_is_systemctl):
         mock_is_systemctl.return_value = True
-        self.mock_runner.run.return_value = (outdent(
-            """\
-            pcsd.service                                disabled
-            sbd.service                                 enabled
-            pacemaker.service                           enabled
+        self.mock_runner.run.return_value = ("""\
+pcsd.service                                disabled
+sbd.service                                 enabled
+pacemaker.service                           enabled
 
-            3 unit files listed.
-            """
-        ), "", 0)
+3 unit files listed.
+""", "", 0)
         self.assertEqual(
             lib.get_systemd_services(self.mock_runner),
             ["pcsd", "sbd", "pacemaker"]
@@ -1730,13 +1554,11 @@ class GetNonSystemdServicesTest(TestCase):
 
     def test_success(self, mock_is_systemctl):
         mock_is_systemctl.return_value = False
-        self.mock_runner.run.return_value = (outdent(
-            """\
-            pcsd           	0:off	1:off	2:on	3:on	4:on	5:on	6:off
-            sbd            	0:off	1:on	2:on	3:on	4:on	5:on	6:off
-            pacemaker      	0:off	1:off	2:off	3:off	4:off	5:off	6:off
-            """
-        ), "", 0)
+        self.mock_runner.run.return_value = ("""\
+pcsd           	0:off	1:off	2:on	3:on	4:on	5:on	6:off
+sbd            	0:off	1:on	2:on	3:on	4:on	5:on	6:off
+pacemaker      	0:off	1:off	2:off	3:off	4:off	5:off	6:off
+""", "", 0)
         self.assertEqual(
             lib.get_non_systemd_services(self.mock_runner),
             ["pcsd", "sbd", "pacemaker"]
@@ -1775,60 +1597,3 @@ class EnsureIsSystemctlTest(TestCase):
             )
         )
 
-
-class IsProxySetTest(TestCase):
-    def test_without_proxy(self):
-        self.assertFalse(lib.is_proxy_set({
-            "var1": "value",
-            "var2": "val",
-        }))
-
-    def test_multiple(self):
-        self.assertTrue(lib.is_proxy_set({
-            "var1": "val",
-            "https_proxy": "test.proxy",
-            "var2": "val",
-            "all_proxy": "test2.proxy",
-            "var3": "val",
-        }))
-
-    def test_empty_string(self):
-        self.assertFalse(lib.is_proxy_set({
-            "all_proxy": "",
-        }))
-
-    def test_http_proxy(self):
-        self.assertFalse(lib.is_proxy_set({
-            "http_proxy": "test.proxy",
-        }))
-
-    def test_HTTP_PROXY(self):
-        self.assertFalse(lib.is_proxy_set({
-            "HTTP_PROXY": "test.proxy",
-        }))
-
-    def test_https_proxy(self):
-        self.assertTrue(lib.is_proxy_set({
-            "https_proxy": "test.proxy",
-        }))
-
-    def test_HTTPS_PROXY(self):
-        self.assertTrue(lib.is_proxy_set({
-            "HTTPS_PROXY": "test.proxy",
-        }))
-
-    def test_all_proxy(self):
-        self.assertTrue(lib.is_proxy_set({
-            "all_proxy": "test.proxy",
-        }))
-
-    def test_ALL_PROXY(self):
-        self.assertTrue(lib.is_proxy_set({
-            "ALL_PROXY": "test.proxy",
-        }))
-
-    def test_no_proxy(self):
-        self.assertTrue(lib.is_proxy_set({
-            "no_proxy": "*",
-            "all_proxy": "test.proxy",
-        }))

@@ -123,10 +123,7 @@ module Cfgsync
     def save()
       begin
         file = nil
-        # File.open(path, mode, options)
-        # File.open(path, mode, perm, options)
-        # In order to set permissions, the method must be called with 4 arguments.
-        file = File.open(self.class.file_path, 'w', self.class.file_perm, {})
+        file = File.open(self.class.file_path, 'w', self.class.file_perm)
         file.flock(File::LOCK_EX)
         file.write(self.text)
         $logger.info(
@@ -313,11 +310,8 @@ module Cfgsync
 
 
   class ConfigSyncControl
-    # intervals in seconds
-    @thread_interval_default = 600
-    @thread_interval_minimum = 60
-    @thread_interval_previous_not_connected_default = 60
-    @thread_interval_previous_not_connected_minimum = 20
+    @thread_interval_default = 60
+    @thread_interval_minimum = 20
     @file_backup_count_default = 50
     @file_backup_count_minimum = 0
 
@@ -349,20 +343,6 @@ module Cfgsync
     def self.sync_thread_interval=(seconds)
       data = self.load()
       data['thread_interval'] = seconds
-      return self.save(data)
-    end
-
-    def self.sync_thread_interval_previous_not_connected()
-      return self.get_integer_value(
-        self.load()['thread_interval_previous_not_connected'],
-        @thread_interval_previous_not_connected_default,
-        @thread_interval_previous_not_connected_minimum
-      )
-    end
-
-    def self.sync_thread_interval_previous_not_connected=(seconds)
-      data = self.load()
-      data['thread_interval_previous_not_connected'] = seconds
       return self.save(data)
     end
 
@@ -462,10 +442,7 @@ module Cfgsync
       text = JSON.pretty_generate(data)
       begin
         file = nil
-        # File.open(path, mode, options)
-        # File.open(path, mode, perm, options)
-        # In order to set permissions, the method must be called with 4 arguments.
-        file = File.open(CFG_SYNC_CONTROL, 'w', 0600, {})
+        file = File.open(CFG_SYNC_CONTROL, 'w', 0600)
         file.flock(File::LOCK_EX)
         file.write(text)
       rescue => e
@@ -483,7 +460,7 @@ module Cfgsync
 
 
   class ConfigPublisher
-    def initialize(auth_user, configs, nodes, cluster_name, tokens={}, ports={})
+    def initialize(auth_user, configs, nodes, cluster_name, tokens={})
       @configs = configs
       @nodes = nodes
       @cluster_name = cluster_name
@@ -492,7 +469,6 @@ module Cfgsync
       }
       @additional_tokens = tokens
       @auth_user = auth_user
-      @additional_ports = ports
     end
 
     def send(force=false)
@@ -511,7 +487,7 @@ module Cfgsync
         threads << Thread.new {
           code, out = send_request_with_token(
             @auth_user, node, 'set_configs', true, data, true, nil, 30,
-            @additional_tokens, @additional_ports
+            @additional_tokens
           )
           if 200 == code
             begin
@@ -602,17 +578,14 @@ module Cfgsync
     end
 
     def fetch_all()
-      node_configs, node_connected = self.get_configs_cluster(
-        @nodes, @cluster_name
+      return self.filter_configs_cluster(
+        self.get_configs_cluster(@nodes, @cluster_name),
+        @config_classes
       )
-      filtered_configs = self.filter_configs_cluster(
-        node_configs, @config_classes
-      )
-      return filtered_configs, node_connected
     end
 
     def fetch()
-      configs_cluster, node_connected = self.fetch_all()
+      configs_cluster = self.fetch_all()
 
       newest_configs_cluster = {}
       configs_cluster.each { |name, cfgs|
@@ -633,7 +606,7 @@ module Cfgsync
           end
         end
       }
-      return to_update_locally, to_update_in_cluster, node_connected
+      return to_update_locally, to_update_in_cluster
     end
 
     protected
@@ -650,15 +623,12 @@ module Cfgsync
       $logger.debug 'Fetching configs from the cluster'
       threads = []
       node_configs = {}
-      connected_to = {}
       nodes.each { |node|
         threads << Thread.new {
           code, out = send_request_with_token(
             @auth_user, node, 'get_configs', false, data
           )
-          connected_to[node] = false
           if 200 == code
-            connected_to[node] = true
             begin
               parsed = JSON::parse(out)
               if 'ok' == parsed['status'] and cluster_name == parsed['cluster_name']
@@ -670,24 +640,7 @@ module Cfgsync
         }
       }
       threads.each { |t| t.join }
-
-      node_connected = false
-      if connected_to.empty?()
-        node_connected = true # no nodes to connect to => no connection errors
-      else
-        connected_count = 0
-        connected_to.each { |node, connected|
-          if connected
-            connected_count += 1
-          end
-        }
-        # If we only connected to one node, consider it a fail and continue as
-        # if we could not connect anywhere. The one node is probably the local
-        # node.
-        node_connected = connected_count > 1
-      end
-
-      return node_configs, node_connected
+      return node_configs
     end
 
     def filter_configs_cluster(node_configs, wanted_configs_classes)
@@ -773,10 +726,8 @@ module Cfgsync
 
   # save and sync updated config
   # return true on success, false on version conflict
-  def self.save_sync_new_version(
-    config, nodes, cluster_name, fetch_on_conflict, tokens={}, ports={}
-  )
-    if not cluster_name or cluster_name.empty? or not nodes or nodes.empty?
+  def self.save_sync_new_version(config, nodes, cluster_name, fetch_on_conflict, tokens={})
+    if not cluster_name or cluster_name.empty?
       # we run on a standalone host, no config syncing
       config.version += 1
       config.save()
@@ -784,7 +735,7 @@ module Cfgsync
     else
       # we run in a cluster so we need to sync the config
       publisher = ConfigPublisher.new(
-        PCSAuth.getSuperuserAuth(), [config], nodes, cluster_name, tokens, ports
+        PCSAuth.getSuperuserAuth(), [config], nodes, cluster_name, tokens
       )
       old_configs, node_responses = publisher.publish()
       if old_configs.include?(config.class.name)
@@ -792,7 +743,7 @@ module Cfgsync
           fetcher = ConfigFetcher.new(
             PCSAuth.getSuperuserAuth(), [config.class], nodes, cluster_name
           )
-          cfgs_to_save, _, _ = fetcher.fetch()
+          cfgs_to_save, _ = fetcher.fetch()
           cfgs_to_save.each { |cfg_to_save|
             cfg_to_save.save() if cfg_to_save.class == config.class
           }
@@ -803,7 +754,7 @@ module Cfgsync
     end
   end
 
-  def self.merge_tokens_files(orig_cfg, to_merge_cfgs, new_tokens, new_ports)
+  def self.merge_tokens_files(orig_cfg, to_merge_cfgs, new_tokens)
     # Merge tokens files, use only newer tokens files, keep the most recent
     # tokens, make sure new_tokens are included.
     max_version = orig_cfg.version
@@ -813,26 +764,21 @@ module Cfgsync
       if to_merge_cfgs.length > 0
         to_merge_cfgs.sort.each { |ft|
           with_new_tokens.tokens.update(PCSTokens.new(ft.text).tokens)
-          with_new_tokens.ports.update(PCSTokens.new(ft.text).ports)
         }
         max_version = [to_merge_cfgs.max.version, max_version].max
       end
     end
     with_new_tokens.tokens.update(new_tokens)
-    with_new_tokens.ports.update(new_ports)
     config_new = PcsdTokens.from_text(with_new_tokens.text)
     config_new.version = max_version
     return config_new
   end
 
-  def self.save_sync_new_tokens(
-    config, new_tokens, nodes, cluster_name, new_ports={}
-  )
+  def self.save_sync_new_tokens(config, new_tokens, nodes, cluster_name)
     with_new_tokens = PCSTokens.new(config.text)
     with_new_tokens.tokens.update(new_tokens)
-    with_new_tokens.ports.update(new_ports)
     config_new = PcsdTokens.from_text(with_new_tokens.text)
-    if not cluster_name or cluster_name.empty? or not nodes or nodes.empty?
+    if not cluster_name or cluster_name.empty?
       # we run on a standalone host, no config syncing
       config_new.version += 1
       config_new.save()
@@ -841,7 +787,7 @@ module Cfgsync
     # we run in a cluster so we need to sync the config
     publisher = ConfigPublisher.new(
       PCSAuth.getSuperuserAuth(), [config_new], nodes, cluster_name,
-      new_tokens, new_ports
+      new_tokens
     )
     old_configs, node_responses = publisher.publish()
     if not old_configs.include?(config_new.class.name)
@@ -852,13 +798,11 @@ module Cfgsync
     fetcher = ConfigFetcher.new(
       PCSAuth.getSuperuserAuth(), [config_new.class], nodes, cluster_name
     )
-    fetched_tokens, _ = fetcher.fetch_all()[config_new.class.name]
-    config_new = Cfgsync::merge_tokens_files(
-      config, fetched_tokens, new_tokens, new_ports
-    )
+    fetched_tokens = fetcher.fetch_all()[config_new.class.name]
+    config_new = Cfgsync::merge_tokens_files(config, fetched_tokens, new_tokens)
     # and try to publish again
     return Cfgsync::save_sync_new_version(
-      config_new, nodes, cluster_name, true, new_tokens, new_ports
+      config_new, nodes, cluster_name, true, new_tokens
     )
   end
 end

@@ -1,0 +1,26 @@
+<div style="width:960px;margin-top: 25px;text-align:center;">
+  <% if session[:bad_login_name] %>
+    <span style="color:red;font-size:24px;">Bad username or password</span>
+  <% end %>
+  <form action="/login" method="post">
+    <table style="margin-left: auto; margin-right: auto;">
+      <tr>
+        <td style="text-align:right;">用户名:</td>
+        <td>
+          <input type="text" name="username" <%=
+            "value='#{h(session[:bad_login_name])}'" if session[:bad_login_name]
+          %>>
+        </td>
+      </tr>
+      <tr>
+        <td style="text-align:right;">密码:</td>
+        <td><input type="password" name="password"></td>
+      </tr>
+      <tr>
+        <td align="center" colspan="2">
+          <input type="submit" name="Login" value="登录">
+        </td>
+      </tr>
+    </table>
+  </form>
+</div>

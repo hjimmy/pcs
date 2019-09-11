@@ -3,6 +3,7 @@
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
+from __future__ import unicode_literals
 
 import sys
 import os
@@ -28,20 +29,11 @@ print(os.system("sed -i 's/"+settings.pcs_version+"/"+new_version+"/' pcs/settin
 print(os.system("sed -i 's/"+settings.pcs_version+"/"+new_version+"/' pcsd/bootstrap.rb"))
 print(os.system("sed -i 's/\#\# \[Unreleased\]/\#\# ["+new_version+"] - "+datetime.date.today().strftime('%Y-%m-%d')+"/' CHANGELOG.md"))
 
-def manpage_head(component, package="pcs"):
-    return '.TH {component} "8" "{date}" "{package} {version}" "System Administration Utilities"'.format(
-        component=component.upper(),
-        date=datetime.date.today().strftime('%B %Y'),
-        version=new_version,
-        package=package,
-    )
-print(os.system("sed -i '1c " + manpage_head("pcs") + "' pcs/pcs.8"))
-print(os.system("sed -i '1c " + manpage_head("pcsd") + "' pcsd/pcsd.8"))
-print(os.system(
-    "sed -i '1c {man_head}' pcs/snmp/pcs_snmp_agent.8".format(
-        man_head=manpage_head("pcs_snmp_agent", package="pcs-snmp"),
-    )
-))
+manpage_head = '.TH PCS "8" "{date}" "pcs {version}" "System Administration Utilities"'.format(
+    date=datetime.date.today().strftime('%B %Y'),
+    version=new_version
+)
+print(os.system("sed -i '1c " + manpage_head + "' pcs/pcs.8"))
 
 print(os.system("git diff"))
 print("Look good? (y/n)")

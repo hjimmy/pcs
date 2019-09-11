@@ -3,11 +3,10 @@ from __future__ import (
     absolute_import,
     division,
     print_function,
+    unicode_literals,
 )
-
-import importlib
-import os.path
 import sys
+import os.path
 
 PACKAGE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(
     os.path.abspath(__file__)
@@ -16,7 +15,6 @@ sys.path.insert(0, PACKAGE_DIR)
 
 from pcs.test.tools import pcs_unittest as unittest
 
-
 def prepare_test_name(test_name):
     """
     Sometimes we have test easy accessible with fs path format like:
@@ -24,20 +22,8 @@ def prepare_test_name(test_name):
     but loader need it in module path format like:
     "pcs.test.test_node"
     so is practical accept fs path format and prepare it for loader
-
-    Sometimes name could include the .py extension:
-    "pcs/test/test_node.py"
-    in such cause is extension removed
     """
-    candidate = test_name.replace("/", ".")
-    py_extension = ".py"
-    if not candidate.endswith(py_extension):
-        return candidate
-    try:
-        importlib.import_module(candidate)
-        return candidate
-    except ImportError:
-        return candidate[:-len(py_extension)]
+    return test_name.replace("/", ".")
 
 def tests_from_suite(test_candidate):
     if isinstance(test_candidate, unittest.TestCase):
@@ -74,25 +60,14 @@ def discover_tests(explicitly_enumerated_tests, exclude_enumerated_tests=False):
 explicitly_enumerated_tests = [
     prepare_test_name(arg) for arg in sys.argv[1:] if arg not in (
         "-v",
-        "--all-but",
-        "--fast-info", #show a traceback immediatelly after the test fails
-        "--last-slash",
-        "--list",
-        "--no-color", #deprecated, use --vanilla instead
-        "--traceback-highlight",
-        "--traditional-verbose",
         "--vanilla",
+        "--no-color", #deprecated, use --vanilla instead
+        "--all-but",
+        "--last-slash",
+        "--traditional-verbose",
+        "--traceback-highlight",
     )
 ]
-
-discovered_tests = discover_tests(
-    explicitly_enumerated_tests, "--all-but" in sys.argv
-)
-if "--list" in sys.argv:
-    test_list = tests_from_suite(discovered_tests)
-    print("\n".join(sorted(test_list)))
-    print("{0} tests found".format(len(test_list)))
-    sys.exit()
 
 if "--no-color" in sys.argv:
     print("DEPRECATED: --no-color is deprecated, use --vanilla instead")
@@ -115,14 +90,15 @@ if use_improved_result_class:
         slash_last_fail_in_overview=("--last-slash" in sys.argv),
         traditional_verbose=("--traditional-verbose" in sys.argv),
         traceback_highlight=("--traceback-highlight" in sys.argv),
-        fast_info=("--fast-info" in sys.argv)
     )
 
 testRunner = unittest.TextTestRunner(
     verbosity=2 if "-v" in sys.argv else 1,
     resultclass=resultclass
 )
-test_result =  testRunner.run(discovered_tests)
+test_result =  testRunner.run(
+    discover_tests(explicitly_enumerated_tests, "--all-but" in sys.argv)
+)
 if not test_result.wasSuccessful():
     sys.exit(1)
 

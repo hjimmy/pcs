@@ -2,6 +2,7 @@ from __future__ import (
     absolute_import,
     division,
     print_function,
+    unicode_literals,
 )
 
 import sys
@@ -16,7 +17,7 @@ from pcs.cli.common.console_report import indent
 from pcs.cli.common.errors import CmdLineInputError
 from pcs.lib.errors import LibraryError
 
-def quorum_cmd(lib, argv, modifiers):
+def quorum_cmd(lib, argv, modificators):
     if len(argv) < 1:
         sub_cmd, argv_next = "config", []
     else:
@@ -24,20 +25,20 @@ def quorum_cmd(lib, argv, modifiers):
 
     try:
         if sub_cmd == "help":
-            usage.quorum([" ".join(argv_next)] if argv_next else [])
+            usage.quorum(argv)
         elif sub_cmd == "config":
-            quorum_config_cmd(lib, argv_next, modifiers)
+            quorum_config_cmd(lib, argv_next, modificators)
         elif sub_cmd == "expected-votes":
-            quorum_expected_votes_cmd(lib, argv_next, modifiers)
+            quorum_expected_votes_cmd(lib, argv_next, modificators)
         elif sub_cmd == "status":
-            quorum_status_cmd(lib, argv_next, modifiers)
+            quorum_status_cmd(lib, argv_next, modificators)
         elif sub_cmd == "device":
-            quorum_device_cmd(lib, argv_next, modifiers)
+            quorum_device_cmd(lib, argv_next, modificators)
         elif sub_cmd == "unblock":
             # TODO switch to new architecture
             quorum_unblock_cmd(argv_next)
         elif sub_cmd == "update":
-            quorum_update_cmd(lib, argv_next, modifiers)
+            quorum_update_cmd(lib, argv_next, modificators)
         else:
             raise CmdLineInputError()
     except LibraryError as e:
@@ -45,48 +46,28 @@ def quorum_cmd(lib, argv, modifiers):
     except CmdLineInputError as e:
         utils.exit_on_cmdline_input_errror(e, "quorum", sub_cmd)
 
-def quorum_device_cmd(lib, argv, modifiers):
+def quorum_device_cmd(lib, argv, modificators):
     if len(argv) < 1:
         raise CmdLineInputError()
 
     sub_cmd, argv_next = argv[0], argv[1:]
     try:
         if sub_cmd == "add":
-            quorum_device_add_cmd(lib, argv_next, modifiers)
-        elif sub_cmd == "heuristics":
-            quorum_device_heuristics_cmd(lib, argv_next, modifiers)
+            quorum_device_add_cmd(lib, argv_next, modificators)
         elif sub_cmd == "remove":
-            quorum_device_remove_cmd(lib, argv_next, modifiers)
+            quorum_device_remove_cmd(lib, argv_next, modificators)
         elif sub_cmd == "status":
-            quorum_device_status_cmd(lib, argv_next, modifiers)
+            quorum_device_status_cmd(lib, argv_next, modificators)
         elif sub_cmd == "update":
-            quorum_device_update_cmd(lib, argv_next, modifiers)
+            quorum_device_update_cmd(lib, argv_next, modificators)
         else:
-            sub_cmd = ""
             raise CmdLineInputError()
     except CmdLineInputError as e:
         utils.exit_on_cmdline_input_errror(
             e, "quorum", "device {0}".format(sub_cmd)
         )
 
-def quorum_device_heuristics_cmd(lib, argv, modifiers):
-    if len(argv) < 1:
-        raise CmdLineInputError()
-
-    sub_cmd, argv_next = argv[0], argv[1:]
-    try:
-        if sub_cmd == "remove":
-            quorum_device_heuristics_remove_cmd(lib, argv_next, modifiers)
-        else:
-            sub_cmd = ""
-            raise CmdLineInputError()
-    except CmdLineInputError as e:
-        utils.exit_on_cmdline_input_errror(
-            e, "quorum", "device heuristics {0}".format(sub_cmd)
-        )
-
-
-def quorum_config_cmd(lib, argv, modifiers):
+def quorum_config_cmd(lib, argv, modificators):
     if argv:
         raise CmdLineInputError()
     config = lib.quorum.get_config()
@@ -110,7 +91,6 @@ def quorum_config_to_str(config):
                 config["device"].get("generic_options", {}).items()
             )
         ]))
-
         model_settings = [
             "Model: {m}".format(m=config["device"].get("model", ""))
         ]
@@ -122,121 +102,91 @@ def quorum_config_to_str(config):
         ]))
         lines.extend(indent(model_settings))
 
-        heuristics_options = config["device"].get("heuristics_options", {})
-        if heuristics_options:
-            heuristics_settings = ["Heuristics:"]
-            heuristics_settings.extend(indent([
-                "{n}: {v}".format(n=name, v=value)
-                for name, value in sorted(heuristics_options.items())
-            ]))
-            lines.extend(indent(heuristics_settings))
-
     return lines
 
-def quorum_expected_votes_cmd(lib, argv, modifiers):
+def quorum_expected_votes_cmd(lib, argv, modificators):
     if len(argv) != 1:
         raise CmdLineInputError()
     lib.quorum.set_expected_votes_live(argv[0])
 
-def quorum_status_cmd(lib, argv, modifiers):
+def quorum_status_cmd(lib, argv, modificators):
     if argv:
         raise CmdLineInputError()
     print(lib.quorum.status())
 
-def quorum_update_cmd(lib, argv, modifiers):
+def quorum_update_cmd(lib, argv, modificators):
     options = parse_args.prepare_options(argv)
     if not options:
         raise CmdLineInputError()
 
     lib.quorum.set_options(
         options,
-        skip_offline_nodes=modifiers["skip_offline_nodes"],
-        force=modifiers["force"]
+        skip_offline_nodes=modificators["skip_offline_nodes"],
+        force=modificators["force"]
     )
 
-def _parse_quorum_device_groups(arg_list):
-    keyword_list = ["model", "heuristics"]
-    groups = parse_args.group_by_keywords(
-        arg_list,
-        set(keyword_list),
-        implicit_first_group_key="generic",
-        keyword_repeat_allowed=False,
-        only_found_keywords=True
-    )
-    for keyword in keyword_list:
-        if keyword not in groups:
-            continue
-        if len(groups[keyword]) == 0:
-            raise CmdLineInputError(
-                "No {0} options specified".format(keyword)
-            )
-    return groups
-
-def quorum_device_add_cmd(lib, argv, modifiers):
-    groups = _parse_quorum_device_groups(argv)
-    model_and_model_options = groups.get("model", [])
+def quorum_device_add_cmd(lib, argv, modificators):
     # we expect "model" keyword once, followed by the actual model value
-    if not model_and_model_options or "=" in model_and_model_options[0]:
+    options_lists = parse_args.split_list(argv, "model")
+    if len(options_lists) != 2:
         raise CmdLineInputError()
-
-    generic_options = parse_args.prepare_options(groups.get("generic", []))
-    model = model_and_model_options[0]
-    model_options = parse_args.prepare_options(model_and_model_options[1:])
-    heuristics_options = parse_args.prepare_options(
-        groups.get("heuristics", [])
-    )
+    # check if model value was specified
+    if not options_lists[1] or "=" in options_lists[1][0]:
+        raise CmdLineInputError()
+    generic_options = parse_args.prepare_options(options_lists[0])
+    model = options_lists[1][0]
+    model_options = parse_args.prepare_options(options_lists[1][1:])
 
     if "model" in generic_options:
-        raise CmdLineInputError("Model cannot be specified in generic options")
+        raise CmdLineInputError(
+            "Model cannot be specified in generic options"
+        )
 
     lib.quorum.add_device(
         model,
         model_options,
         generic_options,
-        heuristics_options,
-        force_model=modifiers["force"],
-        force_options=modifiers["force"],
-        skip_offline_nodes=modifiers["skip_offline_nodes"]
+        force_model=modificators["force"],
+        force_options=modificators["force"],
+        skip_offline_nodes=modificators["skip_offline_nodes"]
     )
 
-def quorum_device_remove_cmd(lib, argv, modifiers):
+def quorum_device_remove_cmd(lib, argv, modificators):
     if argv:
         raise CmdLineInputError()
 
     lib.quorum.remove_device(
-        skip_offline_nodes=modifiers["skip_offline_nodes"]
+        skip_offline_nodes=modificators["skip_offline_nodes"]
     )
 
-def quorum_device_status_cmd(lib, argv, modifiers):
+def quorum_device_status_cmd(lib, argv, modificators):
     if argv:
         raise CmdLineInputError()
-    print(lib.quorum.status_device(modifiers["full"]))
+    print(lib.quorum.status_device(modificators["full"]))
 
-def quorum_device_update_cmd(lib, argv, modifiers):
-    groups = _parse_quorum_device_groups(argv)
-    if not groups:
+def quorum_device_update_cmd(lib, argv, modificators):
+    # we expect "model" keyword once
+    options_lists = parse_args.split_list(argv, "model")
+    if len(options_lists) == 1:
+        generic_options = parse_args.prepare_options(options_lists[0])
+        model_options = dict()
+    elif len(options_lists) == 2:
+        generic_options = parse_args.prepare_options(options_lists[0])
+        model_options = parse_args.prepare_options(options_lists[1])
+    else:
         raise CmdLineInputError()
-    generic_options = parse_args.prepare_options(groups.get("generic", []))
-    model_options = parse_args.prepare_options(groups.get("model", []))
-    heuristics_options = parse_args.prepare_options(
-        groups.get("heuristics", [])
-    )
 
     if "model" in generic_options:
-        raise CmdLineInputError("Model cannot be specified in generic options")
+        raise CmdLineInputError(
+            "Model cannot be specified in generic options"
+        )
 
     lib.quorum.update_device(
         model_options,
         generic_options,
-        heuristics_options,
-        force_options=modifiers["force"],
-        skip_offline_nodes=modifiers["skip_offline_nodes"]
+        force_options=modificators["force"],
+        skip_offline_nodes=modificators["skip_offline_nodes"]
     )
-
-def quorum_device_heuristics_remove_cmd(lib, argv, modifiers):
-    if argv:
-        raise CmdLineInputError()
-    lib.quorum.remove_device_heuristics()
 
 # TODO switch to new architecture, move to lib
 def quorum_unblock_cmd(argv):
@@ -245,7 +195,7 @@ def quorum_unblock_cmd(argv):
         sys.exit(1)
 
     if utils.is_rhel6():
-        utils.err("operation is not supported on CMAN clusters")
+        utils.err("operation is not supported on RHEL 6 clusters")
 
     output, retval = utils.run(
         ["corosync-cmapctl", "-g", "runtime.votequorum.wait_for_all_status"]
@@ -291,3 +241,4 @@ def quorum_unblock_cmd(argv):
     )
     utils.set_cib_property("startup-fencing", startup_fencing)
     print("Waiting for nodes canceled")
+

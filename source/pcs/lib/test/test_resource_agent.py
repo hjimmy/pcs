@@ -2,6 +2,7 @@ from __future__ import (
     absolute_import,
     division,
     print_function,
+    unicode_literals,
 )
 
 from lxml import etree
@@ -10,9 +11,7 @@ from functools import partial
 from pcs.test.tools.assertions import (
     ExtendedAssertionsMixin,
     assert_raise_library_error,
-    assert_report_item_list_equal,
     assert_xml_equal,
-    start_tag_error_text,
 )
 from pcs.test.tools.misc import create_patcher
 from pcs.test.tools.pcs_unittest import TestCase, mock
@@ -24,94 +23,6 @@ from pcs.lib.errors import ReportItemSeverity as severity, LibraryError
 from pcs.lib.external import CommandRunner
 
 patch_agent = create_patcher("pcs.lib.resource_agent")
-patch_agent_object = partial(mock.patch.object, lib_ra.Agent)
-
-
-class GetDefaultInterval(TestCase):
-    def test_return_0s_on_name_different_from_monitor(self):
-        self.assertEqual("0s", lib_ra.get_default_interval("start"))
-    def test_return_60s_on_monitor(self):
-        self.assertEqual("60s", lib_ra.get_default_interval("monitor"))
-
-
-@patch_agent("get_default_interval", mock.Mock(return_value="10s"))
-class CompleteAllIntervals(TestCase):
-    def test_add_intervals_everywhere_is_missing(self):
-        self.assertEqual(
-            [
-                {"name": "monitor", "interval": "20s"},
-                {"name": "start", "interval": "10s"},
-            ],
-            lib_ra.complete_all_intervals([
-                {"name": "monitor", "interval": "20s"},
-                {"name": "start"},
-            ])
-        )
-
-class GetResourceAgentNameFromString(TestCase):
-    def test_returns_resource_agent_name_when_is_valid(self):
-        self.assertEqual(
-            lib_ra.ResourceAgentName("ocf", "heartbeat", "Dummy"),
-            lib_ra.get_resource_agent_name_from_string("ocf:heartbeat:Dummy")
-        )
-
-    def test_refuses_string_if_is_not_valid(self):
-        self.assertRaises(
-            lib_ra.InvalidResourceAgentName,
-            lambda: lib_ra.get_resource_agent_name_from_string(
-                "invalid:resource:agent:string"
-            )
-        )
-
-    def test_refuses_with_unknown_standard(self):
-        self.assertRaises(
-            lib_ra.InvalidResourceAgentName,
-            lambda: lib_ra.get_resource_agent_name_from_string("unknown:Dummy")
-        )
-
-    def test_refuses_ocf_agent_name_without_provider(self):
-        self.assertRaises(
-            lib_ra.InvalidResourceAgentName,
-            lambda: lib_ra.get_resource_agent_name_from_string("ocf:Dummy")
-        )
-
-    def test_refuses_non_ocf_agent_name_with_provider(self):
-        self.assertRaises(
-            lib_ra.InvalidResourceAgentName,
-            lambda:
-            lib_ra.get_resource_agent_name_from_string("lsb:provider:Dummy")
-        )
-
-    def test_returns_resource_agent_containing_sytemd_instance(self):
-        self.assertEqual(
-            lib_ra.ResourceAgentName("systemd", None, "lvm2-pvscan@252:2"),
-            lib_ra.get_resource_agent_name_from_string(
-                "systemd:lvm2-pvscan@252:2"
-            )
-        )
-
-    def test_returns_resource_agent_containing_service_instance(self):
-        self.assertEqual(
-            lib_ra.ResourceAgentName("service", None, "lvm2-pvscan@252:2"),
-            lib_ra.get_resource_agent_name_from_string(
-                "service:lvm2-pvscan@252:2"
-            )
-        )
-
-    def test_returns_resource_agent_containing_systemd_instance_short(self):
-        self.assertEqual(
-            lib_ra.ResourceAgentName("service", None, "getty@tty1"),
-            lib_ra.get_resource_agent_name_from_string("service:getty@tty1")
-        )
-
-    def test_refuses_systemd_agent_name_with_provider(self):
-        self.assertRaises(
-            lib_ra.InvalidResourceAgentName,
-            lambda: lib_ra.get_resource_agent_name_from_string(
-                "sytemd:lvm2-pvscan252:@2"
-            )
-        )
-
 
 class ListResourceAgentsStandardsTest(TestCase):
     def test_success_and_filter_stonith_out(self):
@@ -145,6 +56,7 @@ class ListResourceAgentsStandardsTest(TestCase):
         mock_runner.run.assert_called_once_with([
             "/usr/sbin/crm_resource", "--list-standards"
         ])
+
 
     def test_success_filter_whitespace(self):
         mock_runner = mock.MagicMock(spec_set=CommandRunner)
@@ -181,6 +93,7 @@ class ListResourceAgentsStandardsTest(TestCase):
             "/usr/sbin/crm_resource", "--list-standards"
         ])
 
+
     def test_empty(self):
         mock_runner = mock.MagicMock(spec_set=CommandRunner)
         mock_runner.run.return_value = ("", "", 0)
@@ -193,6 +106,7 @@ class ListResourceAgentsStandardsTest(TestCase):
         mock_runner.run.assert_called_once_with([
             "/usr/sbin/crm_resource", "--list-standards"
         ])
+
 
     def test_error(self):
         mock_runner = mock.MagicMock(spec_set=CommandRunner)
@@ -238,6 +152,7 @@ class ListResourceAgentsOcfProvidersTest(TestCase):
             "/usr/sbin/crm_resource", "--list-ocf-providers"
         ])
 
+
     def test_success_filter_whitespace(self):
         mock_runner = mock.MagicMock(spec_set=CommandRunner)
         providers = [
@@ -268,6 +183,7 @@ class ListResourceAgentsOcfProvidersTest(TestCase):
             "/usr/sbin/crm_resource", "--list-ocf-providers"
         ])
 
+
     def test_empty(self):
         mock_runner = mock.MagicMock(spec_set=CommandRunner)
         mock_runner.run.return_value = ("", "", 0)
@@ -280,6 +196,7 @@ class ListResourceAgentsOcfProvidersTest(TestCase):
         mock_runner.run.assert_called_once_with([
             "/usr/sbin/crm_resource", "--list-ocf-providers"
         ])
+
 
     def test_error(self):
         mock_runner = mock.MagicMock(spec_set=CommandRunner)
@@ -377,6 +294,7 @@ class ListResourceAgentsTest(TestCase):
             "/usr/sbin/crm_resource", "--list-agents", "ocf"
         ])
 
+
     def test_success_standard_provider(self):
         mock_runner = mock.MagicMock(spec_set=CommandRunner)
         mock_runner.run.return_value = (
@@ -406,6 +324,7 @@ class ListResourceAgentsTest(TestCase):
         mock_runner.run.assert_called_once_with([
             "/usr/sbin/crm_resource", "--list-agents", "ocf:pacemaker"
         ])
+
 
     def test_bad_standard(self):
         mock_runner = mock.MagicMock(spec_set=CommandRunner)
@@ -456,6 +375,7 @@ class ListStonithAgentsTest(TestCase):
             "/usr/sbin/crm_resource", "--list-agents", "stonith"
         ])
 
+
     def test_no_agents(self):
         mock_runner = mock.MagicMock(spec_set=CommandRunner)
         mock_runner.run.return_value = (
@@ -472,6 +392,7 @@ class ListStonithAgentsTest(TestCase):
         mock_runner.run.assert_called_once_with([
             "/usr/sbin/crm_resource", "--list-agents", "stonith"
         ])
+
 
     def test_filter_hidden_agents(self):
         mock_runner = mock.MagicMock(spec_set=CommandRunner)
@@ -528,6 +449,7 @@ class GuessResourceAgentFullNameTest(TestCase):
             ("Dummy\nStateful\n", "", 0),
         ]
 
+
     def test_one_agent_list(self):
         mock_runner = mock.MagicMock(spec_set=CommandRunner)
         mock_runner.run.side_effect = (
@@ -546,6 +468,7 @@ class GuessResourceAgentFullNameTest(TestCase):
             ["ocf:heartbeat:Delay"]
         )
 
+
     def test_one_agent_exception(self):
         mock_runner = mock.MagicMock(spec_set=CommandRunner)
         mock_runner.run.side_effect = (
@@ -563,6 +486,7 @@ class GuessResourceAgentFullNameTest(TestCase):
             ).get_name(),
             "ocf:heartbeat:Delay"
         )
+
 
     def test_two_agents_list(self):
         mock_runner = mock.MagicMock(spec_set=CommandRunner)
@@ -583,6 +507,7 @@ class GuessResourceAgentFullNameTest(TestCase):
             ["ocf:heartbeat:Dummy", "ocf:pacemaker:Dummy"]
         )
 
+
     def test_two_agents_one_valid_list(self):
         mock_runner = mock.MagicMock(spec_set=CommandRunner)
         mock_runner.run.side_effect = (
@@ -601,6 +526,7 @@ class GuessResourceAgentFullNameTest(TestCase):
             ],
             ["ocf:heartbeat:Dummy"]
         )
+
 
     def test_two_agents_exception(self):
         mock_runner = mock.MagicMock(spec_set=CommandRunner)
@@ -631,6 +557,7 @@ class GuessResourceAgentFullNameTest(TestCase):
             ),
         )
 
+
     def test_no_agents_list(self):
         mock_runner = mock.MagicMock(spec_set=CommandRunner)
         mock_runner.run.side_effect = self.mock_runner_side_effect
@@ -639,6 +566,7 @@ class GuessResourceAgentFullNameTest(TestCase):
             lib_ra.guess_resource_agent_full_name(mock_runner, "missing"),
             []
         )
+
 
     def test_no_agents_exception(self):
         mock_runner = mock.MagicMock(spec_set=CommandRunner)
@@ -658,6 +586,7 @@ class GuessResourceAgentFullNameTest(TestCase):
             ),
         )
 
+
     def test_no_valids_agent_list(self):
         mock_runner = mock.MagicMock(spec_set=CommandRunner)
         mock_runner.run.side_effect = (
@@ -674,12 +603,13 @@ class GuessResourceAgentFullNameTest(TestCase):
         )
 
 
-@patch_agent_object("_get_metadata")
+@mock.patch.object(lib_ra.Agent, "_get_metadata")
 class AgentMetadataGetShortdescTest(TestCase):
     def setUp(self):
         self.agent = lib_ra.Agent(
             mock.MagicMock(spec_set=CommandRunner)
         )
+
 
     def test_no_desc(self, mock_metadata):
         xml = '<resource-agent />'
@@ -689,6 +619,7 @@ class AgentMetadataGetShortdescTest(TestCase):
             ""
         )
 
+
     def test_shortdesc_attribute(self, mock_metadata):
         xml = '<resource-agent shortdesc="short description" />'
         mock_metadata.return_value = etree.XML(xml)
@@ -696,6 +627,7 @@ class AgentMetadataGetShortdescTest(TestCase):
             self.agent.get_shortdesc(),
             "short description"
         )
+
 
     def test_shortdesc_element(self, mock_metadata):
         xml = """
@@ -710,12 +642,13 @@ class AgentMetadataGetShortdescTest(TestCase):
         )
 
 
-@patch_agent_object("_get_metadata")
+@mock.patch.object(lib_ra.Agent, "_get_metadata")
 class AgentMetadataGetLongdescTest(TestCase):
     def setUp(self):
         self.agent = lib_ra.Agent(
             mock.MagicMock(spec_set=CommandRunner)
         )
+
 
     def test_no_desc(self, mock_metadata):
         xml = '<resource-agent />'
@@ -724,6 +657,7 @@ class AgentMetadataGetLongdescTest(TestCase):
             self.agent.get_longdesc(),
             ""
         )
+
 
     def test_longesc_element(self, mock_metadata):
         xml = """
@@ -738,12 +672,13 @@ class AgentMetadataGetLongdescTest(TestCase):
         )
 
 
-@patch_agent_object("_get_metadata")
+@mock.patch.object(lib_ra.Agent, "_get_metadata")
 class AgentMetadataGetParametersTest(TestCase):
     def setUp(self):
         self.agent = lib_ra.Agent(
             mock.MagicMock(spec_set=CommandRunner)
         )
+
 
     def test_no_parameters(self, mock_metadata):
         xml = """
@@ -756,6 +691,7 @@ class AgentMetadataGetParametersTest(TestCase):
             []
         )
 
+
     def test_empty_parameters(self, mock_metadata):
         xml = """
             <resource-agent>
@@ -767,6 +703,7 @@ class AgentMetadataGetParametersTest(TestCase):
             self.agent.get_parameters(),
             []
         )
+
 
     def test_empty_parameter(self, mock_metadata):
         xml = """
@@ -788,10 +725,6 @@ class AgentMetadataGetParametersTest(TestCase):
                     "required": False,
                     "default": None,
                     "advanced": False,
-                    "deprecated": False,
-                    "obsoletes": None,
-                    "pcs_deprecated_warning": "",
-                    "unique": False,
                 }
             ]
         )
@@ -800,7 +733,7 @@ class AgentMetadataGetParametersTest(TestCase):
         xml = """
             <resource-agent>
                 <parameters>
-                    <parameter name="test_param" required="1" unique="1">
+                    <parameter name="test_param" required="1">
                         <longdesc>
                             Long description
                         </longdesc>
@@ -823,10 +756,6 @@ class AgentMetadataGetParametersTest(TestCase):
                     "required": True,
                     "default": "default_value",
                     "advanced": False,
-                    "deprecated": False,
-                    "obsoletes": None,
-                    "pcs_deprecated_warning": "",
-                    "unique": True,
                 },
                 {
                     "name": "another parameter",
@@ -836,49 +765,18 @@ class AgentMetadataGetParametersTest(TestCase):
                     "required": False,
                     "default": None,
                     "advanced": False,
-                    "deprecated": False,
-                    "obsoletes": None,
-                    "pcs_deprecated_warning": "",
-                    "unique": False,
                 }
             ]
         )
 
-    def test_remove_obsoletes_keep_deprecated(self, mock_metadata):
-        xml = """
-            <resource-agent>
-                <parameters>
-                    <parameter name="obsoletes" obsoletes="deprecated"/>
-                    <parameter name="deprecated" deprecated="1"/>
-                </parameters>
-            </resource-agent>
-        """
-        mock_metadata.return_value = etree.XML(xml)
-        self.assertEqual(
-            self.agent.get_parameters(),
-            [
-                {
-                    "name": "deprecated",
-                    "longdesc": "",
-                    "shortdesc": "",
-                    "type": "string",
-                    "required": False,
-                    "default": None,
-                    "advanced": False,
-                    "deprecated": True,
-                    "obsoletes": None,
-                    "pcs_deprecated_warning": "",
-                    "unique": False,
-                },
-            ]
-        )
 
-@patch_agent_object("_get_metadata")
+@mock.patch.object(lib_ra.Agent, "_get_metadata")
 class AgentMetadataGetActionsTest(TestCase):
     def setUp(self):
         self.agent = lib_ra.Agent(
             mock.MagicMock(spec_set=CommandRunner)
         )
+
 
     def test_no_actions(self, mock_metadata):
         xml = """
@@ -891,6 +789,7 @@ class AgentMetadataGetActionsTest(TestCase):
             []
         )
 
+
     def test_empty_actions(self, mock_metadata):
         xml = """
             <resource-agent>
@@ -902,6 +801,7 @@ class AgentMetadataGetActionsTest(TestCase):
             self.agent.get_actions(),
             []
         )
+
 
     def test_empty_action(self, mock_metadata):
         xml = """
@@ -916,6 +816,7 @@ class AgentMetadataGetActionsTest(TestCase):
             self.agent.get_actions(),
             [{}]
         )
+
 
     def test_more_actions(self, mock_metadata):
         xml = """
@@ -942,134 +843,9 @@ class AgentMetadataGetActionsTest(TestCase):
             ]
         )
 
-    def test_remove_depth_with_0(self, mock_metadata):
-        xml = """
-            <resource-agent>
-                <actions>
-                    <action name="monitor" timeout="20" depth="0"/>
-                </actions>
-            </resource-agent>
-        """
-        mock_metadata.return_value = etree.XML(xml)
-        self.assertEqual(
-            self.agent.get_actions(),
-            [
-                {
-                    "name": "monitor",
-                    "timeout": "20"
-                },
-            ]
-        )
 
-    def test_transfor_depth_to_OCF_CHECK_LEVEL(self, mock_metadata):
-        xml = """
-            <resource-agent>
-                <actions>
-                    <action name="monitor" timeout="20" depth="1"/>
-                </actions>
-            </resource-agent>
-        """
-        mock_metadata.return_value = etree.XML(xml)
-        self.assertEqual(
-            self.agent.get_actions(),
-            [
-                {
-                    "name": "monitor",
-                    "timeout": "20",
-                    "OCF_CHECK_LEVEL": "1",
-                },
-            ]
-        )
-
-
-@patch_agent_object(
-    "_is_cib_default_action",
-    lambda self, action: action.get("name") == "monitor"
-)
-@patch_agent_object("get_actions")
-class AgentMetadataGetCibDefaultActions(TestCase):
-    def setUp(self):
-        self.agent = lib_ra.Agent(
-            mock.MagicMock(spec_set=CommandRunner)
-        )
-
-    def test_complete_monitor(self, get_actions):
-        get_actions.return_value = [{"name": "meta-data"}]
-        self.assertEqual(
-            [{"name": "monitor", "interval": "60s"}],
-            self.agent.get_cib_default_actions()
-        )
-
-    def test_complete_intervals(self, get_actions):
-        get_actions.return_value = [
-            {"name": "meta-data"},
-            {"name": "monitor", "timeout": "30s"},
-        ]
-        self.assertEqual(
-            [{"name": "monitor", "interval": "60s", "timeout": "30s"}],
-            self.agent.get_cib_default_actions()
-        )
-
-
-@mock.patch.object(lib_ra.ResourceAgent, "get_actions")
-class ResourceAgentMetadataGetCibDefaultActions(TestCase):
-    fixture_actions = [
-        {"name": "custom1", "timeout": "40s"},
-        {"name": "custom2", "interval": "25s", "timeout": "60s"},
-        {"name": "meta-data"},
-        {"name": "monitor", "interval": "10s", "timeout": "30s"},
-        {"name": "start", "timeout": "40s"},
-        {"name": "status", "interval": "15s", "timeout": "20s"},
-        {"name": "validate-all"},
-    ]
-
-    def setUp(self):
-        self.agent = lib_ra.ResourceAgent(
-            mock.MagicMock(spec_set=CommandRunner),
-            "ocf:pacemaker:Dummy"
-        )
-
-    def test_select_only_actions_for_cib(self, get_actions):
-        get_actions.return_value = self.fixture_actions
-        self.assertEqual(
-            [
-                {"name": "custom1", "interval": "0s", "timeout": "40s"},
-                {"name": "custom2", "interval": "25s", "timeout": "60s"},
-                {"name": "monitor", "interval": "10s", "timeout": "30s"},
-                {"name": "start", "interval": "0s", "timeout": "40s"},
-            ],
-            self.agent.get_cib_default_actions()
-        )
-
-    def test_complete_monitor(self, get_actions):
-        get_actions.return_value = [{"name": "meta-data"}]
-        self.assertEqual(
-            [{"name": "monitor", "interval": "60s"}],
-            self.agent.get_cib_default_actions()
-        )
-
-    def test_complete_intervals(self, get_actions):
-        get_actions.return_value = [
-            {"name": "meta-data"},
-            {"name": "monitor", "timeout": "30s"},
-        ]
-        self.assertEqual(
-            [{"name": "monitor", "interval": "60s", "timeout": "30s"}],
-            self.agent.get_cib_default_actions()
-        )
-
-    def test_select_only_necessary_actions_for_cib(self, get_actions):
-        get_actions.return_value = self.fixture_actions
-        self.assertEqual(
-            [
-                {"name": "monitor", "interval": "10s", "timeout": "30s"}
-            ],
-            self.agent.get_cib_default_actions(necessary_only=True)
-        )
-
-
-@patch_agent_object("_get_metadata")
-@patch_agent_object("get_name", lambda self: "agent-name")
+@mock.patch.object(lib_ra.Agent, "_get_metadata")
+@mock.patch.object(lib_ra.Agent, "get_name", lambda self: "agent-name")
 class AgentMetadataGetInfoTest(TestCase):
     def setUp(self):
         self.agent = lib_ra.Agent(
@@ -1096,6 +872,7 @@ class AgentMetadataGetInfoTest(TestCase):
             </resource-agent>
         """)
 
+
     def test_name_info(self, mock_metadata):
         mock_metadata.return_value = self.metadata
         self.assertEqual(
@@ -1109,6 +886,7 @@ class AgentMetadataGetInfoTest(TestCase):
             }
         )
 
+
     def test_description_info(self, mock_metadata):
         mock_metadata.return_value = self.metadata
         self.assertEqual(
@@ -1121,6 +899,7 @@ class AgentMetadataGetInfoTest(TestCase):
                 "actions": [],
             }
         )
+
 
     def test_full_info(self, mock_metadata):
         mock_metadata.return_value = self.metadata
@@ -1139,10 +918,6 @@ class AgentMetadataGetInfoTest(TestCase):
                         "required": True,
                         "default": "default_value",
                         "advanced": False,
-                        "deprecated": False,
-                        "obsoletes": None,
-                        "pcs_deprecated_warning": "",
-                        "unique": False,
                     },
                     {
                         "name": "another parameter",
@@ -1152,10 +927,6 @@ class AgentMetadataGetInfoTest(TestCase):
                         "required": False,
                         "default": None,
                         "advanced": False,
-                        "deprecated": False,
-                        "obsoletes": None,
-                        "pcs_deprecated_warning": "",
-                        "unique": False,
                     }
                 ],
                 "actions": [
@@ -1165,12 +936,11 @@ class AgentMetadataGetInfoTest(TestCase):
                     },
                     {"name": "off"},
                 ],
-                "default_actions": [{"name": "monitor", "interval": "60s"}],
             }
         )
 
 
-@patch_agent_object("_get_metadata")
+@mock.patch.object(lib_ra.Agent, "_get_metadata")
 class AgentMetadataValidateParametersValuesTest(TestCase):
     def setUp(self):
         self.agent = lib_ra.Agent(
@@ -1194,6 +964,7 @@ class AgentMetadataValidateParametersValuesTest(TestCase):
             </resource-agent>
         """)
 
+
     def test_all_required(self, mock_metadata):
         mock_metadata.return_value = self.metadata
         self.assertEqual(
@@ -1203,6 +974,7 @@ class AgentMetadataValidateParametersValuesTest(TestCase):
             }),
             ([], [])
         )
+
 
     def test_all_required_and_optional(self, mock_metadata):
         mock_metadata.return_value = self.metadata
@@ -1215,6 +987,7 @@ class AgentMetadataValidateParametersValuesTest(TestCase):
             ([], [])
         )
 
+
     def test_all_required_and_invalid(self, mock_metadata):
         mock_metadata.return_value = self.metadata
         self.assertEqual(
@@ -1226,6 +999,7 @@ class AgentMetadataValidateParametersValuesTest(TestCase):
             (["invalid_param"], [])
         )
 
+
     def test_missing_required(self, mock_metadata):
         mock_metadata.return_value = self.metadata
         self.assertEqual(
@@ -1233,6 +1007,7 @@ class AgentMetadataValidateParametersValuesTest(TestCase):
             }),
             ([], ["required_param", "another_required_param"])
         )
+
 
     def test_missing_required_and_invalid(self, mock_metadata):
         mock_metadata.return_value = self.metadata
@@ -1244,253 +1019,12 @@ class AgentMetadataValidateParametersValuesTest(TestCase):
             (["invalid_param"], ["required_param"])
         )
 
-    def test_ignore_obsoletes_use_deprecated(self, mock_metadata):
-        xml = """
-            <resource-agent>
-                <parameters>
-                    <parameter name="obsoletes" obsoletes="deprecated"
-                        required="1"
-                    />
-                    <parameter name="deprecated" deprecated="1" required="1"/>
-                </parameters>
-            </resource-agent>
-        """
-        mock_metadata.return_value = etree.XML(xml)
-        self.assertEqual(
-            self.agent.validate_parameters_values({
-            }),
-            ([], ["deprecated"])
-        )
-
-    def test_dont_allow_obsoletes_use_deprecated(self, mock_metadata):
-        xml = """
-            <resource-agent>
-                <parameters>
-                    <parameter name="obsoletes" obsoletes="deprecated"
-                        required="1"
-                    />
-                    <parameter name="deprecated" deprecated="1" required="1"/>
-                </parameters>
-            </resource-agent>
-        """
-        mock_metadata.return_value = etree.XML(xml)
-        self.assertEqual(
-            self.agent.validate_parameters_values({
-                "obsoletes": "value",
-            }),
-            (["obsoletes"], ["deprecated"])
-        )
-
-    @patch_agent_object(
-        "_get_always_allowed_parameters",
-        lambda self: set(["always_allowed", "another-one", "last_one"])
-    )
-    def test_always_allowed(self, mock_metadata):
-        mock_metadata.return_value = self.metadata
-        self.assertEqual(
-            self.agent.validate_parameters_values({
-                "another_required_param": "value1",
-                "required_param": "value2",
-                "test_param": "value3",
-                "always_allowed": "value4",
-                "another-one": "value5",
-            }),
-            ([], [])
-        )
-
-
-class AgentMetadataValidateParameters(TestCase):
-    def setUp(self):
-        self.agent = lib_ra.Agent(mock.MagicMock(spec_set=CommandRunner))
-        self.metadata = etree.XML("""
-            <resource-agent>
-                <parameters>
-                    <parameter name="test_param" required="0">
-                        <longdesc>Long description</longdesc>
-                        <shortdesc>short description</shortdesc>
-                        <content type="string" default="default_value" />
-                    </parameter>
-                    <parameter name="required_param" required="1">
-                        <content type="boolean" />
-                    </parameter>
-                    <parameter name="another_required_param" required="1">
-                        <content type="string" />
-                    </parameter>
-                </parameters>
-            </resource-agent>
-        """)
-        patcher = patch_agent_object("_get_metadata")
-        self.addCleanup(patcher.stop)
-        self.get_metadata = patcher.start()
-        self.get_metadata.return_value = self.metadata
-
-    def test_returns_empty_report_when_all_required_there(self):
-        self.assertEqual(
-            [],
-            self.agent.validate_parameters({
-                "another_required_param": "value1",
-                "required_param": "value2",
-            }),
-        )
-
-    def test_returns_empty_report_when_all_required_and_optional_there(self):
-        self.assertEqual(
-            [],
-            self.agent.validate_parameters({
-                "another_required_param": "value1",
-                "required_param": "value2",
-                "test_param": "value3",
-            })
-        )
-
-    def test_report_invalid_option(self):
-        assert_report_item_list_equal(
-            self.agent.validate_parameters({
-                "another_required_param": "value1",
-                "required_param": "value2",
-                "invalid_param": "value3",
-            }),
-            [
-                (
-                    severity.ERROR,
-                    report_codes.INVALID_OPTIONS,
-                    {
-                        "option_names": ["invalid_param"],
-                        "option_type": "resource",
-                        "allowed": [
-                            "another_required_param",
-                            "required_param",
-                            "test_param",
-                        ],
-                        "allowed_patterns": [],
-                    },
-                    report_codes.FORCE_OPTIONS
-                ),
-            ],
-        )
-
-    def test_report_missing_option(self):
-        assert_report_item_list_equal(
-            self.agent.validate_parameters({}),
-            [
-                (
-                    severity.ERROR,
-                    report_codes.REQUIRED_OPTION_IS_MISSING,
-                    {
-                        "option_names": [
-                            "required_param",
-                            "another_required_param",
-                        ],
-                        "option_type": "resource",
-                    },
-                    report_codes.FORCE_OPTIONS
-                ),
-            ],
-        )
-
-    def test_warn_missing_required(self):
-        assert_report_item_list_equal(
-            self.agent.validate_parameters({}, allow_invalid=True),
-            [
-                (
-                    severity.WARNING,
-                    report_codes.REQUIRED_OPTION_IS_MISSING,
-                    {
-                        "option_names": [
-                            "required_param",
-                            "another_required_param",
-                        ],
-                        "option_type": "resource",
-                    },
-                ),
-            ]
-        )
-
-    def test_ignore_obsoletes_use_deprecated(self):
-        xml = """
-            <resource-agent>
-                <parameters>
-                    <parameter name="obsoletes" obsoletes="deprecated"
-                        required="1"
-                    />
-                    <parameter name="deprecated" deprecated="1" required="1"/>
-                </parameters>
-            </resource-agent>
-        """
-        self.get_metadata.return_value = etree.XML(xml)
-        assert_report_item_list_equal(
-            self.agent.validate_parameters({}),
-            [
-                (
-                    severity.ERROR,
-                    report_codes.REQUIRED_OPTION_IS_MISSING,
-                    {
-                        "option_names": [
-                            "deprecated",
-                        ],
-                        "option_type": "resource",
-                    },
-                    report_codes.FORCE_OPTIONS
-                ),
-            ]
-        )
-
-    def test_dont_allow_obsoletes_use_deprecated(self):
-        xml = """
-            <resource-agent>
-                <parameters>
-                    <parameter name="obsoletes" obsoletes="deprecated"
-                        required="1"
-                    />
-                    <parameter name="deprecated" deprecated="1" required="1"/>
-                </parameters>
-            </resource-agent>
-        """
-        self.get_metadata.return_value = etree.XML(xml)
-        assert_report_item_list_equal(
-            self.agent.validate_parameters({"obsoletes": "value"}),
-            [
-                (
-                    severity.ERROR,
-                    report_codes.REQUIRED_OPTION_IS_MISSING,
-                    {
-                        "option_names": [
-                            "deprecated",
-                        ],
-                        "option_type": "resource",
-                    },
-                    report_codes.FORCE_OPTIONS
-                ),
-                (
-                    severity.ERROR,
-                    report_codes.INVALID_OPTIONS,
-                    {
-                        "option_names": ["obsoletes"],
-                        "option_type": "resource",
-                        "allowed": [
-                            "deprecated",
-                        ],
-                        "allowed_patterns": [],
-                    },
-                    report_codes.FORCE_OPTIONS
-                ),
-            ]
-        )
-
-    def test_required_not_specified_on_update(self):
-        assert_report_item_list_equal(
-            self.agent.validate_parameters({
-                "test_param": "value",
-            }, update=True),
-            [
-            ],
-        )
-
 
 class StonithdMetadataGetMetadataTest(TestCase, ExtendedAssertionsMixin):
     def setUp(self):
         self.mock_runner = mock.MagicMock(spec_set=CommandRunner)
         self.agent = lib_ra.StonithdMetadata(self.mock_runner)
+
 
     def test_success(self):
         metadata = """
@@ -1509,6 +1043,7 @@ class StonithdMetadataGetMetadataTest(TestCase, ExtendedAssertionsMixin):
             ["/usr/libexec/pacemaker/stonithd", "metadata"]
         )
 
+
     def test_failed_to_get_xml(self):
         self.mock_runner.run.return_value = ("", "some error", 1)
 
@@ -1525,6 +1060,7 @@ class StonithdMetadataGetMetadataTest(TestCase, ExtendedAssertionsMixin):
             ["/usr/libexec/pacemaker/stonithd", "metadata"]
         )
 
+
     def test_invalid_xml(self):
         self.mock_runner.run.return_value = ("some garbage", "", 0)
 
@@ -1533,7 +1069,7 @@ class StonithdMetadataGetMetadataTest(TestCase, ExtendedAssertionsMixin):
             self.agent._get_metadata,
             {
                 "agent": "stonithd",
-                "message": start_tag_error_text(),
+                "message": "Start tag expected, '<' not found, line 1, column 1",
             }
         )
 
@@ -1542,12 +1078,13 @@ class StonithdMetadataGetMetadataTest(TestCase, ExtendedAssertionsMixin):
         )
 
 
-@patch_agent_object("_get_metadata")
+@mock.patch.object(lib_ra.Agent, "_get_metadata")
 class StonithdMetadataGetParametersTest(TestCase):
     def setUp(self):
         self.agent = lib_ra.StonithdMetadata(
             mock.MagicMock(spec_set=CommandRunner)
         )
+
 
     def test_success(self, mock_metadata):
         xml = """
@@ -1579,11 +1116,7 @@ class StonithdMetadataGetParametersTest(TestCase):
                     "type": "test_type",
                     "required": False,
                     "default": "default_value",
-                    "advanced": True,
-                    "deprecated": False,
-                    "obsoletes": None,
-                    "pcs_deprecated_warning": "",
-                    "unique": False,
+                    "advanced": True
                 },
                 {
                     "name": "another parameter",
@@ -1592,28 +1125,27 @@ class StonithdMetadataGetParametersTest(TestCase):
                     "type": "string",
                     "required": False,
                     "default": None,
-                    "advanced": False,
-                    "deprecated": False,
-                    "obsoletes": None,
-                    "pcs_deprecated_warning": "",
-                    "unique": False,
+                    "advanced": False
                 }
             ]
         )
 
 
-class CrmAgentDescendant(lib_ra.CrmAgent):
-    def _prepare_name_parts(self, name):
-        return lib_ra.ResourceAgentName("STANDARD", None, name)
+class CrmAgentMetadataGetNameTest(TestCase, ExtendedAssertionsMixin):
+    def test_success(self):
+        mock_runner = mock.MagicMock(spec_set=CommandRunner)
+        agent_name = "ocf:pacemaker:Dummy"
+        agent = lib_ra.CrmAgent(mock_runner, agent_name)
 
-    def get_name(self):
-        return self.get_type()
+        self.assertEqual(agent.get_name(), agent_name)
 
 
 class CrmAgentMetadataGetMetadataTest(TestCase, ExtendedAssertionsMixin):
     def setUp(self):
         self.mock_runner = mock.MagicMock(spec_set=CommandRunner)
-        self.agent = CrmAgentDescendant(self.mock_runner, "TYPE")
+        self.agent_name = "ocf:pacemaker:Dummy"
+        self.agent = lib_ra.CrmAgent(self.mock_runner, self.agent_name)
+
 
     def test_success(self):
         metadata = """
@@ -1629,15 +1161,12 @@ class CrmAgentMetadataGetMetadataTest(TestCase, ExtendedAssertionsMixin):
         )
 
         self.mock_runner.run.assert_called_once_with(
-            [
-                "/usr/sbin/crm_resource",
-                "--show-metadata",
-                self.agent._get_full_name()
-            ],
+            ["/usr/sbin/crm_resource", "--show-metadata", self.agent_name],
              env_extend={
                  "PATH": "/usr/sbin/:/bin/:/usr/bin/",
              }
         )
+
 
     def test_failed_to_get_xml(self):
         self.mock_runner.run.return_value = ("", "some error", 1)
@@ -1646,21 +1175,18 @@ class CrmAgentMetadataGetMetadataTest(TestCase, ExtendedAssertionsMixin):
             lib_ra.UnableToGetAgentMetadata,
             self.agent._get_metadata,
             {
-                "agent": self.agent.get_name(),
+                "agent": self.agent_name,
                 "message": "some error",
             }
         )
 
         self.mock_runner.run.assert_called_once_with(
-            [
-                "/usr/sbin/crm_resource",
-                "--show-metadata",
-                self.agent._get_full_name()
-            ],
+            ["/usr/sbin/crm_resource", "--show-metadata", self.agent_name],
              env_extend={
                  "PATH": "/usr/sbin/:/bin/:/usr/bin/",
              }
         )
+
 
     def test_invalid_xml(self):
         self.mock_runner.run.return_value = ("some garbage", "", 0)
@@ -1669,17 +1195,13 @@ class CrmAgentMetadataGetMetadataTest(TestCase, ExtendedAssertionsMixin):
             lib_ra.UnableToGetAgentMetadata,
             self.agent._get_metadata,
             {
-                "agent": self.agent.get_name(),
-                "message": start_tag_error_text(),
+                "agent": self.agent_name,
+                "message": "Start tag expected, '<' not found, line 1, column 1",
             }
         )
 
         self.mock_runner.run.assert_called_once_with(
-            [
-                "/usr/sbin/crm_resource",
-                "--show-metadata",
-                self.agent._get_full_name()
-            ],
+            ["/usr/sbin/crm_resource", "--show-metadata", self.agent_name],
              env_extend={
                  "PATH": "/usr/sbin/:/bin/:/usr/bin/",
              }
@@ -1689,7 +1211,9 @@ class CrmAgentMetadataGetMetadataTest(TestCase, ExtendedAssertionsMixin):
 class CrmAgentMetadataIsValidAgentTest(TestCase):
     def setUp(self):
         self.mock_runner = mock.MagicMock(spec_set=CommandRunner)
-        self.agent = CrmAgentDescendant(self.mock_runner, "TYPE")
+        self.agent_name = "ocf:pacemaker:Dummy"
+        self.agent = lib_ra.CrmAgent(self.mock_runner, self.agent_name)
+
 
     def test_success(self):
         metadata = """
@@ -1700,6 +1224,7 @@ class CrmAgentMetadataIsValidAgentTest(TestCase):
         self.mock_runner.run.return_value = (metadata, "", 0)
 
         self.assertTrue(self.agent.is_valid_metadata())
+
 
     def test_fail(self):
         self.mock_runner.run.return_value = ("", "", 1)
@@ -1727,9 +1252,14 @@ class StonithAgentMetadataGetMetadataTest(TestCase, ExtendedAssertionsMixin):
             self.agent_name
         )
 
+
     def tearDown(self):
         lib_ra.StonithAgent._stonithd_metadata = None
 
+
+    @mock.patch("os.path.abspath", lambda path: path)
+    @mock.patch("os.path.isfile", lambda path: True)
+    @mock.patch("os.access", lambda path, mode: True)
     def test_success(self):
         metadata = """
             <resource-agent>
@@ -1744,14 +1274,38 @@ class StonithAgentMetadataGetMetadataTest(TestCase, ExtendedAssertionsMixin):
         )
 
         self.mock_runner.run.assert_called_once_with(
-            [
-                "/usr/sbin/crm_resource",
-                "--show-metadata",
-                "stonith:{0}".format(self.agent_name)
-            ],
-             env_extend={
-                 "PATH": "/usr/sbin/:/bin/:/usr/bin/",
-             }
+            ["/usr/sbin/{0}".format(self.agent_name), "-o", "metadata"]
+        )
+
+
+@mock.patch.object(lib_ra.Agent, "_get_metadata")
+class StonithAgentMetadataGetActionsTest(TestCase):
+    def setUp(self):
+        self.agent = lib_ra.StonithAgent(
+            mock.MagicMock(spec_set=CommandRunner),
+            "fence_dummy"
+        )
+
+
+    def tearDown(self):
+        lib_ra.StonithAgent._stonithd_metadata = None
+
+
+    def test_more_actions(self, mock_metadata):
+        xml = """
+            <resource-agent>
+                <actions>
+                    <action name="on" automatic="0"/>
+                    <action name="off" />
+                    <action name="reboot" />
+                    <action name="status" />
+                </actions>
+            </resource-agent>
+        """
+        mock_metadata.return_value = etree.XML(xml)
+        self.assertEqual(
+            self.agent.get_actions(),
+            []
         )
 
 
@@ -1764,9 +1318,14 @@ class StonithAgentMetadataGetParametersTest(TestCase):
             self.agent_name
         )
 
+
     def tearDown(self):
         lib_ra.StonithAgent._stonithd_metadata = None
 
+
+    @mock.patch("os.path.abspath", lambda path: path)
+    @mock.patch("os.path.isfile", lambda path: True)
+    @mock.patch("os.access", lambda path, mode: True)
     def test_success(self):
         metadata = """
             <resource-agent>
@@ -1800,60 +1359,26 @@ class StonithAgentMetadataGetParametersTest(TestCase):
             self.agent.get_parameters(),
             [
                 {
-                    "name": "debug",
-                    "longdesc": "",
-                    "shortdesc": "",
-                    "type": "string",
-                    "required": False,
-                    "default": None,
-                    "advanced": False,
-                    "deprecated": False,
-                    "obsoletes": None,
-                    "pcs_deprecated_warning": "",
-                    "unique": False,
-                },
-                {
                     "name": "valid_param",
                     "longdesc": "",
                     "shortdesc": "",
                     "type": "string",
                     "required": False,
                     "default": None,
-                    "advanced": False,
-                    "deprecated": False,
-                    "obsoletes": None,
-                    "pcs_deprecated_warning": "",
-                    "unique": False,
-                },
-                {
-                    "name": "verbose",
-                    "longdesc": "",
-                    "shortdesc": "",
-                    "type": "string",
-                    "required": False,
-                    "default": None,
-                    "advanced": False,
-                    "deprecated": False,
-                    "obsoletes": None,
-                    "pcs_deprecated_warning": "",
-                    "unique": False,
+                    "advanced": False
                 },
                 {
                     "name": "action",
                     "longdesc": "",
-                    "shortdesc": "Fencing Action",
+                    "shortdesc":
+                        "Fencing Action\nWARNING: specifying 'action' is"
+                        " deprecated and not necessary with current Pacemaker"
+                        " versions."
+                    ,
                     "type": "string",
                     "required": False,
                     "default": None,
-                    "advanced": True,
-                    "deprecated": False,
-                    "obsoletes": None,
-                    "pcs_deprecated_warning": "Specifying 'action' is"
-                        " deprecated and not necessary with current Pacemaker"
-                        " versions. Use 'pcmk_off_action',"
-                        " 'pcmk_reboot_action' instead."
-                    ,
-                    "unique": False,
+                    "advanced": False
                 },
                 {
                     "name": "another_param",
@@ -1862,11 +1387,7 @@ class StonithAgentMetadataGetParametersTest(TestCase):
                     "type": "string",
                     "required": False,
                     "default": None,
-                    "advanced": False,
-                    "deprecated": False,
-                    "obsoletes": None,
-                    "pcs_deprecated_warning": "",
-                    "unique": False,
+                    "advanced": False
                 },
                 {
                     "name": "stonithd_param",
@@ -1875,11 +1396,7 @@ class StonithAgentMetadataGetParametersTest(TestCase):
                     "type": "string",
                     "required": False,
                     "default": None,
-                    "advanced": False,
-                    "deprecated": False,
-                    "obsoletes": None,
-                    "pcs_deprecated_warning": "",
-                    "unique": False,
+                    "advanced": False
                 },
             ]
         )
@@ -1887,14 +1404,7 @@ class StonithAgentMetadataGetParametersTest(TestCase):
         self.assertEqual(2, len(self.mock_runner.run.mock_calls))
         self.mock_runner.run.assert_has_calls([
             mock.call(
-                [
-                    "/usr/sbin/crm_resource",
-                    "--show-metadata",
-                    "stonith:{0}".format(self.agent_name)
-                ],
-                 env_extend={
-                     "PATH": "/usr/sbin/:/bin/:/usr/bin/",
-                 }
+                ["/usr/sbin/{0}".format(self.agent_name), "-o", "metadata"]
             ),
             mock.call(
                 ["/usr/libexec/pacemaker/stonithd", "metadata"]
@@ -1902,7 +1412,7 @@ class StonithAgentMetadataGetParametersTest(TestCase):
         ])
 
 
-@patch_agent_object("_get_metadata")
+@mock.patch.object(lib_ra.Agent, "_get_metadata")
 class StonithAgentMetadataGetProvidesUnfencingTest(TestCase):
     def setUp(self):
         self.agent = lib_ra.StonithAgent(
@@ -1910,8 +1420,10 @@ class StonithAgentMetadataGetProvidesUnfencingTest(TestCase):
             "fence_dummy"
         )
 
+
     def tearDown(self):
         lib_ra.StonithAgent._stonithd_metadata = None
+
 
     def test_true(self, mock_metadata):
         xml = """
@@ -1927,6 +1439,7 @@ class StonithAgentMetadataGetProvidesUnfencingTest(TestCase):
         mock_metadata.return_value = etree.XML(xml)
         self.assertTrue(self.agent.get_provides_unfencing())
 
+
     def test_no_action_on(self, mock_metadata):
         xml = """
             <resource-agent>
@@ -1939,6 +1452,7 @@ class StonithAgentMetadataGetProvidesUnfencingTest(TestCase):
         """
         mock_metadata.return_value = etree.XML(xml)
         self.assertFalse(self.agent.get_provides_unfencing())
+
 
     def test_no_tagret(self, mock_metadata):
         xml = """
@@ -1954,6 +1468,7 @@ class StonithAgentMetadataGetProvidesUnfencingTest(TestCase):
         mock_metadata.return_value = etree.XML(xml)
         self.assertFalse(self.agent.get_provides_unfencing())
 
+
     def test_no_automatic(self, mock_metadata):
         xml = """
             <resource-agent>
@@ -1968,7 +1483,6 @@ class StonithAgentMetadataGetProvidesUnfencingTest(TestCase):
         mock_metadata.return_value = etree.XML(xml)
         self.assertFalse(self.agent.get_provides_unfencing())
 
-
 class ResourceAgentTest(TestCase):
     def test_raises_on_invalid_name(self):
         self.assertRaises(
@@ -1977,60 +1491,7 @@ class ResourceAgentTest(TestCase):
         )
 
     def test_does_not_raise_on_valid_name(self):
-        lib_ra.ResourceAgent(mock.MagicMock(), "ocf:heardbeat:name")
-
-
-@patch_agent_object("_get_metadata")
-class ResourceAgentGetParameters(TestCase):
-    def fixture_metadata(self, params):
-        return etree.XML("""
-            <resource-agent>
-                <parameters>{0}</parameters>
-            </resource-agent>
-        """.format(['<parameter name="{0}" />'.format(name) for name in params])
-        )
-
-    def assert_param_names(self, expected_names, actual_params):
-        self.assertEqual(
-            expected_names,
-            [param["name"] for param in actual_params]
-        )
-
-    def test_add_trace_parameters_to_ocf(self, mock_metadata):
-        mock_metadata.return_value = self.fixture_metadata(["test_param"])
-        agent = lib_ra.ResourceAgent(
-            mock.MagicMock(spec_set=CommandRunner),
-            "ocf:pacemaker:test"
-        )
-        self.assert_param_names(
-            ["test_param", "trace_ra", "trace_file"],
-            agent.get_parameters()
-        )
-
-    def test_do_not_add_trace_parameters_if_present(self, mock_metadata):
-        mock_metadata.return_value = self.fixture_metadata([
-            "trace_ra", "test_param", "trace_file"
-        ])
-        agent = lib_ra.ResourceAgent(
-            mock.MagicMock(spec_set=CommandRunner),
-            "ocf:pacemaker:test"
-        )
-        self.assert_param_names(
-            ["trace_ra", "test_param", "trace_file"],
-            agent.get_parameters()
-        )
-
-    def test_do_not_add_trace_parameters_to_others(self, mock_metadata):
-        mock_metadata.return_value = self.fixture_metadata(["test_param"])
-        agent = lib_ra.ResourceAgent(
-            mock.MagicMock(spec_set=CommandRunner),
-            "service:test"
-        )
-        self.assert_param_names(
-            ["test_param"],
-            agent.get_parameters()
-        )
-
+        lib_ra.ResourceAgent(mock.MagicMock(), "formal:valid:name")
 
 class FindResourceAgentByNameTest(TestCase):
     def setUp(self):
@@ -2094,7 +1555,7 @@ class FindResourceAgentByNameTest(TestCase):
         ResourceAgent.assert_called_once_with(self.runner, name)
         AbsentResourceAgent.assert_called_once_with(self.runner, name)
         error_to_report_item.assert_called_once_with(
-            e, severity=severity.WARNING
+            e, severity=severity.WARNING, forceable=True
         )
         self.report_processor.process.assert_called_once_with(report)
 
@@ -2115,7 +1576,7 @@ class FindResourceAgentByNameTest(TestCase):
 
         self.assertEqual(report, context_manager.exception.args[0])
         ResourceAgent.assert_called_once_with(self.runner, name)
-        error_to_report_item.assert_called_once_with(e, forceable=True)
+        error_to_report_item.assert_called_once_with(e)
 
     @patch_agent("resource_agent_error_to_report_item")
     @patch_agent("ResourceAgent")
@@ -2133,52 +1594,6 @@ class FindResourceAgentByNameTest(TestCase):
         self.assertEqual(report, context_manager.exception.args[0])
         ResourceAgent.assert_called_once_with(self.runner, name)
         error_to_report_item.assert_called_once_with(e)
-
-
-class FindStonithAgentByName(TestCase):
-    # It is quite similar to find_valid_stonith_agent_by_name, so only minimum
-    # tests here:
-    # - test success
-    # - test with ":" in agent name - there was a bug
-    def setUp(self):
-        self.report_processor = mock.MagicMock()
-        self.runner = mock.MagicMock()
-        self.run = partial(
-            lib_ra.find_valid_stonith_agent_by_name,
-            self.report_processor,
-            self.runner,
-        )
-
-    @patch_agent("StonithAgent")
-    def test_returns_real_agent_when_is_there(self, StonithAgent):
-        #setup
-        name = "fence_xvm"
-
-        agent = mock.MagicMock()
-        agent.validate_metadata = mock.Mock(return_value=agent)
-        StonithAgent.return_value = agent
-
-        #test
-        self.assertEqual(agent, self.run(name))
-        StonithAgent.assert_called_once_with(self.runner, name)
-
-    @patch_agent("resource_agent_error_to_report_item")
-    @patch_agent("StonithAgent")
-    def test_raises_on_invalid_name(self, StonithAgent, error_to_report_item):
-        name = "fence_xvm:invalid"
-        report = "INVALID_STONITH_AGENT_NAME"
-        e = lib_ra.InvalidStonithAgentName(name, "invalid agent name")
-
-        StonithAgent.side_effect = e
-        error_to_report_item.return_value = report
-
-        with self.assertRaises(LibraryError) as context_manager:
-            self.run(name)
-
-        self.assertEqual(report, context_manager.exception.args[0])
-        StonithAgent.assert_called_once_with(self.runner, name)
-        error_to_report_item.assert_called_once_with(e)
-
 
 class AbsentResourceAgentTest(TestCase):
     @mock.patch.object(lib_ra.CrmAgent, "_load_metadata")
@@ -2206,36 +1621,3 @@ class AbsentResourceAgentTest(TestCase):
         self.assertEqual(([], []), absent.validate_parameters_values({
             "whatever": "anything"
         }))
-
-
-class StonithAgentAlwaysAllowedParametersTest(TestCase):
-    def setUp(self):
-        self.runner = mock.MagicMock(spec_set=CommandRunner)
-        self.always_allowed = set([
-            "project-domain", "project_domain", "user-domain", "user_domain",
-            "compute-domain", "compute_domain",
-        ])
-
-    def test_fence_compute(self):
-        self.assertEquals(
-            self.always_allowed,
-            lib_ra.StonithAgent(
-                self.runner, "fence_compute"
-            )._get_always_allowed_parameters()
-        )
-
-    def test_fence_evacuate(self):
-        self.assertEquals(
-            self.always_allowed,
-            lib_ra.StonithAgent(
-                self.runner, "fence_evacuate"
-            )._get_always_allowed_parameters()
-        )
-
-    def test_some_other_agent(self):
-        self.assertEquals(
-            set(),
-            lib_ra.StonithAgent(
-                self.runner, "fence_dummy"
-            )._get_always_allowed_parameters()
-        )

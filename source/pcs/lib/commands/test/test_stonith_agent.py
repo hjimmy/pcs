@@ -2,16 +2,13 @@ from __future__ import (
     absolute_import,
     division,
     print_function,
+    unicode_literals,
 )
 
 import logging
 from lxml import etree
 
-from pcs.test.tools.assertions import (
-    assert_raise_library_error,
-    assert_report_item_list_equal,
-    start_tag_error_text,
-)
+from pcs.test.tools.assertions import assert_raise_library_error
 from pcs.test.tools.custom_mock import MockLibraryReportProcessor
 from pcs.test.tools.pcs_unittest import mock, TestCase
 
@@ -19,7 +16,6 @@ from pcs.common import report_codes
 from pcs.lib import resource_agent as lib_ra
 from pcs.lib.env import LibraryEnvironment
 from pcs.lib.errors import ReportItemSeverity as severity
-from pcs.lib.external import CommandRunner
 
 from pcs.lib.commands import stonith_agent as lib
 
@@ -101,11 +97,10 @@ class TestListAgents(TestCase):
 
     @mock.patch.object(lib_ra.Agent, "_get_metadata", autospec=True)
     def test_describe(self, mock_metadata):
-        self.maxDiff = None
         def mock_metadata_func(self):
-            if self.get_name() == "ocf:test:Stateful":
+            if self._full_agent_name == "ocf:test:Stateful":
                 raise lib_ra.UnableToGetAgentMetadata(
-                    self.get_name(),
+                    self._full_agent_name,
                     "test exception"
                 )
             return etree.XML("""
@@ -117,7 +112,7 @@ class TestListAgents(TestCase):
                     <actions>
                     </actions>
                 </resource-agent>
-            """.format(name=self.get_name()))
+            """.format(name=self._full_agent_name))
         mock_metadata.side_effect = mock_metadata_func
 
         # Stateful is missing as it does not provide valid metadata - see above
@@ -126,22 +121,22 @@ class TestListAgents(TestCase):
             [
                 {
                     "name": "fence_apc",
-                    "shortdesc": "short fence_apc",
-                    "longdesc": "long fence_apc",
+                    "shortdesc": "short stonith:fence_apc",
+                    "longdesc": "long stonith:fence_apc",
                     "parameters": [],
                     "actions": [],
                 },
                 {
                     "name": "fence_dummy",
-                    "shortdesc": "short fence_dummy",
-                    "longdesc": "long fence_dummy",
+                    "shortdesc": "short stonith:fence_dummy",
+                    "longdesc": "long stonith:fence_dummy",
                     "parameters": [],
                     "actions": [],
                 },
                 {
                     "name": "fence_xvm",
-                    "shortdesc": "short fence_xvm",
-                    "longdesc": "long fence_xvm",
+                    "shortdesc": "short stonith:fence_xvm",
+                    "longdesc": "long stonith:fence_xvm",
                     "parameters": [],
                     "actions": [],
                 },
@@ -181,7 +176,6 @@ class TestDescribeAgent(TestCase):
             "longdesc": "long desc",
             "parameters": [],
             "actions": [],
-            "default_actions": [{"name": "monitor", "interval": "60s"}],
         }
 
 
@@ -210,152 +204,9 @@ class TestDescribeAgent(TestCase):
                 report_codes.UNABLE_TO_GET_AGENT_METADATA,
                 {
                     "agent": "fence_dummy",
-                    "reason": start_tag_error_text(),
+                    "reason": "Start tag expected, '<' not found, line 1, column 1",
                 }
             )
         )
 
         self.assertEqual(len(mock_metadata.mock_calls), 1)
-
-
-class ValidateParameters(TestCase):
-    def setUp(self):
-        self.agent = lib_ra.StonithAgent(
-            mock.MagicMock(spec_set=CommandRunner),
-            "fence_dummy"
-        )
-        self.metadata = etree.XML("""
-            <resource-agent>
-                <parameters>
-                    <parameter name="test_param" required="0">
-                        <longdesc>Long description</longdesc>
-                        <shortdesc>short description</shortdesc>
-                        <content type="string" default="default_value" />
-                    </parameter>
-                    <parameter name="required_param" required="1">
-                        <content type="boolean" />
-                    </parameter>
-                    <parameter name="action">
-                        <content type="string" default="reboot" />
-                        <shortdesc>Fencing action</shortdesc>
-                    </parameter>
-                </parameters>
-            </resource-agent>
-        """)
-        patcher = mock.patch.object(lib_ra.StonithAgent, "_get_metadata")
-        self.addCleanup(patcher.stop)
-        self.get_metadata = patcher.start()
-        self.get_metadata.return_value = self.metadata
-
-        patcher_stonithd = mock.patch.object(
-            lib_ra.StonithdMetadata, "_get_metadata"
-        )
-        self.addCleanup(patcher_stonithd.stop)
-        self.get_stonithd_metadata = patcher_stonithd.start()
-        self.get_stonithd_metadata.return_value = etree.XML("""
-            <resource-agent>
-                <parameters />
-            </resource-agent>
-        """)
-
-    def test_action_is_deprecated(self):
-        assert_report_item_list_equal(
-            self.agent.validate_parameters({
-                "action": "reboot",
-                "required_param": "value",
-            }),
-            [
-                (
-                    severity.ERROR,
-                    report_codes.DEPRECATED_OPTION,
-                    {
-                        "option_name": "action",
-                        "option_type": "stonith",
-                        "replaced_by": [
-                            "pcmk_off_action",
-                            "pcmk_reboot_action"
-                        ],
-                    },
-                    report_codes.FORCE_OPTIONS
-                ),
-            ],
-        )
-
-    def test_action_is_deprecated_forced(self):
-        assert_report_item_list_equal(
-            self.agent.validate_parameters({
-                "action": "reboot",
-                "required_param": "value",
-            }, allow_invalid=True),
-            [
-                (
-                    severity.WARNING,
-                    report_codes.DEPRECATED_OPTION,
-                    {
-                        "option_name": "action",
-                        "option_type": "stonith",
-                        "replaced_by": [
-                            "pcmk_off_action",
-                            "pcmk_reboot_action"
-                        ],
-                    },
-                    None
-                ),
-            ],
-        )
-
-    def test_action_not_reported_deprecated_when_empty(self):
-        assert_report_item_list_equal(
-            self.agent.validate_parameters({
-                "action": "",
-                "required_param": "value",
-            }),
-            [
-            ],
-        )
-
-    def test_required_not_specified_on_update(self):
-        assert_report_item_list_equal(
-            self.agent.validate_parameters({
-                "test_param": "value",
-            }, update=True),
-            [
-            ],
-        )
-
-
-@mock.patch.object(lib_ra.StonithAgent, "get_actions")
-class StonithAgentMetadataGetCibDefaultActions(TestCase):
-    fixture_actions = [
-        {"name": "custom1", "timeout": "40s"},
-        {"name": "custom2", "interval": "25s", "timeout": "60s"},
-        {"name": "meta-data"},
-        {"name": "monitor", "interval": "10s", "timeout": "30s"},
-        {"name": "start", "interval": "40s"},
-        {"name": "status", "interval": "15s", "timeout": "20s"},
-        {"name": "validate-all"},
-    ]
-
-    def setUp(self):
-        self.agent = lib_ra.StonithAgent(
-            mock.MagicMock(spec_set=CommandRunner),
-            "fence_dummy"
-        )
-
-    def test_select_only_actions_for_cib(self, get_actions):
-        get_actions.return_value = self.fixture_actions
-        self.assertEqual(
-            [
-                {"name": "monitor", "interval": "10s", "timeout": "30s"}
-            ],
-            self.agent.get_cib_default_actions()
-        )
-
-    def test_select_only_necessary_actions_for_cib(self, get_actions):
-        get_actions.return_value = self.fixture_actions
-        self.assertEqual(
-            [
-                {"name": "monitor", "interval": "10s", "timeout": "30s"}
-            ],
-            self.agent.get_cib_default_actions(necessary_only=True)
-        )

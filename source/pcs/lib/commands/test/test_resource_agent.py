@@ -1,15 +1,14 @@
-# coding=utf-8
 from __future__ import (
     absolute_import,
     division,
     print_function,
+    unicode_literals,
 )
 
 import logging
 from lxml import etree
 
-from pcs.test.tools.assertions import assert_raise_library_error, start_tag_error_text
-from pcs.test.tools.command_env import get_env_tools
+from pcs.test.tools.assertions import assert_raise_library_error
 from pcs.test.tools.custom_mock import MockLibraryReportProcessor
 from pcs.test.tools.pcs_unittest import mock, TestCase
 
@@ -239,9 +238,9 @@ class TestListAgents(TestCase):
     @mock.patch.object(lib_ra.Agent, "_get_metadata", autospec=True)
     def test_describe(self, mock_metadata):
         def mock_metadata_func(self):
-            if self.get_name() == "ocf:test:Stateful":
+            if self._full_agent_name == "ocf:test:Stateful":
                 raise lib_ra.UnableToGetAgentMetadata(
-                    self.get_name(),
+                    self._full_agent_name,
                     "test exception"
                 )
             return etree.XML("""
@@ -253,7 +252,7 @@ class TestListAgents(TestCase):
                     <actions>
                     </actions>
                 </resource-agent>
-            """.format(name=self.get_name()))
+            """.format(name=self._full_agent_name))
         mock_metadata.side_effect = mock_metadata_func
 
         # Stateful is missing as it does not provide valid metadata - see above
@@ -285,26 +284,6 @@ class TestListAgents(TestCase):
         )
 
 
-class CompleteAgentList(TestCase):
-    def test_skip_agent_name_when_InvalidResourceAgentName_raised(self):
-        invalid_agent_name =  "systemd:lvm2-pvscan@252:2"#suppose it is invalid
-        class Agent(object):
-            def __init__(self, runner, name):
-                if name == invalid_agent_name:
-                    raise lib_ra.InvalidResourceAgentName(name)
-                self.name = name
-
-            def get_name_info(self):
-                return self.name
-
-        self.assertEqual(["ocf:heartbeat:Dummy"], lib._complete_agent_list(
-            mock.MagicMock(),
-            ["ocf:heartbeat:Dummy", invalid_agent_name],
-            describe=False,
-            search=False,
-            metadata_class=Agent,
-        ))
-
 @mock.patch.object(lib_ra.ResourceAgent, "_load_metadata", autospec=True)
 @mock.patch("pcs.lib.resource_agent.guess_exactly_one_resource_agent_full_name")
 @mock.patch.object(
@@ -333,7 +312,6 @@ class TestDescribeAgent(TestCase):
             "longdesc": "long desc",
             "parameters": [],
             "actions": [],
-            "default_actions": [{"interval": "60s", "name": "monitor"}],
         }
 
 
@@ -375,95 +353,10 @@ class TestDescribeAgent(TestCase):
                 report_codes.UNABLE_TO_GET_AGENT_METADATA,
                 {
                     "agent": "ocf:test:Dummy",
-                    "reason": start_tag_error_text(),
+                    "reason": "Start tag expected, '<' not found, line 1, column 1",
                 }
             )
         )
 
         self.assertEqual(len(mock_metadata.mock_calls), 1)
         mock_guess.assert_not_called()
-
-
-class DescribeAgentUtf8(TestCase):
-    def setUp(self):
-        self.env_assist, self.config = get_env_tools(test_case=self)
-        self.config.runner.pcmk.load_agent(
-            agent_filename="resource_agent_ocf_heartbeat_dummy_utf8.xml"
-        )
-
-    def test_describe(self):
-        name = "ocf:heartbeat:Dummy"
-        self.assertEqual(
-            lib.describe_agent(self.env_assist.get_env(), name),
-            {
-                "name": name,
-                "shortdesc": u"Example stateless resource agent: ®",
-                "longdesc": u"This is a Dummy Resource Agent for testing utf-8"
-                    u" in metadata: ®"
-                ,
-                "parameters": [
-                    {
-                        "advanced": False,
-                        "default": u"/var/run/resource-agents/Dummy-®.state",
-                        "deprecated": False,
-                        "longdesc":
-                            u"Location to store the resource state in: ®",
-                        "name": u"state-®",
-                        "obsoletes": None,
-                        "pcs_deprecated_warning": "",
-                        "required": False,
-                        "shortdesc": u"State file: ®",
-                        "type": "string",
-                        "unique": True,
-                    },
-                    {
-                        "advanced": True,
-                        "default": 0,
-                        "deprecated": False,
-                        "longdesc": "Set to 1 to turn on resource agent tracing"
-                            " (expect large output) The trace output will be "
-                            "saved to trace_file, if set, or by default to "
-                            "$HA_VARRUN/ra_trace/<type>/<id>.<action>."
-                            "<timestamp> e.g. $HA_VARRUN/ra_trace/oracle/db."
-                            "start.2012-11-27.08:37:08",
-                        "name": "trace_ra",
-                        "obsoletes": None,
-                        "pcs_deprecated_warning": "",
-                        "required": False,
-                        "shortdesc": "Set to 1 to turn on resource agent "
-                            "tracing (expect large output)",
-                        "type": "integer",
-                        "unique": False,
-                    },
-                    {
-                        "advanced": True,
-                        "default": "",
-                        "deprecated": False,
-                        "longdesc": "Path to a file to store resource agent "
-                            "tracing log",
-                        "name": "trace_file",
-                        "obsoletes": None,
-                        "pcs_deprecated_warning": "",
-                        "required": False,
-                        "shortdesc": "Path to a file to store resource agent "
-                            "tracing log",
-                        "type": "string",
-                        "unique": False,
-                    }
-                ],
-                "actions": [
-                    {"name": "start", "timeout": "20"},
-                    {"name": "stop", "timeout": "20"},
-                    {"name": "monitor", "interval": "10", "timeout": "20"},
-                    {"name": "meta-data", "timeout": "5"},
-                    {"name": "validate-all", "timeout": "20"},
-                    {"name": u"custom-®", "timeout": "20"},
-                ],
-                "default_actions": [
-                    {"name": "start", "interval": "0s", "timeout": "20"},
-                    {"name": "stop", "interval": "0s", "timeout": "20"},
-                    {"name": "monitor", "interval": "10", "timeout": "20"},
-                    {"name": u"custom-®", "interval": "0s", "timeout": "20"},
-                ],
-            }
-        )

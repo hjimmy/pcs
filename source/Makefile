@@ -5,7 +5,7 @@ IS_DEBIAN=false
 DISTRO_DEBIAN_VER_8=false
 
 ifndef PYTHON
-	PYTHON := $(shell which python3 || which python2 || which python)
+	PYTHON=python
 endif
 
 ifeq ($(UNAME_OS_GNU),true)
@@ -28,18 +28,24 @@ endif
 ifeq ($(PYTHON_SITELIB), /usr/lib/python2.7/dist-packages)
   EXTRA_SETUP_OPTS="--install-layout=deb"
 endif
-ifeq ($(PYTHON_SITELIB), /usr/lib/python3/dist-packages)
-  EXTRA_SETUP_OPTS="--install-layout=deb"
-endif
 
-# Check for systemd presence
-ifeq ($(SYSTEMCTL_OVERRIDE),true)
-  IS_SYSTEMCTL=true
+# Check for systemd presence, add compatibility with Debian based distros
+IS_SYSTEMCTL=false
+
+ifeq ($(IS_DEBIAN),true)
+  IS_SYSTEMCTL = $(shell if [ -d /var/run/systemd/system ] ; then echo true ; else echo false; fi)
+  ifeq ($(IS_SYSTEMCTL),false)
+    ifeq ($(SYSTEMCTL_OVERRIDE),true)
+      IS_SYSTEMCTL=true
+    endif
+  endif
 else
-  ifeq ($(SYSTEMCTL_OVERRIDE),false)
-    IS_SYSTEMCTL=false
+  ifeq ("$(wildcard /usr/bin/systemctl)","/usr/bin/systemctl")
+    IS_SYSTEMCTL=true
   else
-    IS_SYSTEMCTL = $(shell if [ -d /run/systemd/system ] || [ -d /var/run/systemd/system ] ; then echo true ; else echo false; fi)
+    ifeq ("$(wildcard /bin/systemctl)","/usr/bin/systemctl")
+      IS_SYSTEMCTL=true
+    endif
   endif
 endif
 
@@ -75,73 +81,12 @@ ifndef BASH_COMPLETION_DIR
 	BASH_COMPLETION_DIR=${DESTDIR}/etc/bash_completion.d
 endif
 
-ifndef PCSD_PARENT_DIR
-  ifeq ($(IS_DEBIAN),true)
-    PCSD_PARENT_DIR = /usr/share
-  else
-    PCSD_PARENT_DIR = ${PREFIX}/lib
-  endif
-endif
-
-ifndef PCS_PARENT_DIR
-  PCS_PARENT_DIR=${DESTDIR}/${PREFIX}/lib/pcs
-endif
-
-BUNDLED_LIB_INSTALL_DIR=${PCS_PARENT_DIR}/bundled
-
-ifndef BUNDLED_LIB_DIR
-  BUNDLED_LIB_DIR=./pcs/bundled/
-endif
-BUNDLED_LIB_DIR_ABS=$(shell readlink -f ${BUNDLED_LIB_DIR})
-BUNDLES_TMP_DIR=${BUNDLED_LIB_DIR_ABS}/tmp
-
-ifndef SNMP_MIB_DIR
-  SNMP_MIB_DIR=/share/snmp/mibs/
-endif
-SNMP_MIB_DIR_FULL=${DESTDIR}/${PREFIX}/${SNMP_MIB_DIR}
-
-pcsd_fonts = \
-	LiberationSans-Regular.ttf;LiberationSans:style=Regular \
-	LiberationSans-Bold.ttf;LiberationSans:style=Bold \
-	LiberationSans-BoldItalic.ttf;LiberationSans:style=BoldItalic \
-	LiberationSans-Italic.ttf;LiberationSans:style=Italic \
-	Overpass-Regular.ttf;Overpass:style=Regular \
-	Overpass-Bold.ttf;Overpass:style=Bold
-
-
-install: install_bundled_libs
-	# make Python interpreter execution sane (via -Es flags)
-	printf "[build]\nexecutable = $(PYTHON) -Es\n" > setup.cfg
+install:
 	$(PYTHON) setup.py install --root=$(or ${DESTDIR}, /) ${EXTRA_SETUP_OPTS}
-	# fix excessive script interpreting "executable" quoting with old setuptools:
-	# https://github.com/pypa/setuptools/issues/188
-	# https://bugzilla.redhat.com/1353934
-	mkdir /usr/local/ha/ -p
-	cp pacemaker_lic.py  /usr/local/ha/ 
-	cp license-install /usr/bin/
-	sed -i 's/ExecStart=.*/ExecStart=\/usr\/bin\/python \/usr\/local\/ha\/pacemaker_lic.py/g' /lib/systemd/system/pacemaker.service       	
-	sed -i '$$a\ExecStopPost=\/usr\/bin\/killall -TERM pacemakerd' /lib/systemd/system/pacemaker.service
-	systemctl daemon-reload	
-	mkdir /var/log/cluster/ -p
-	sed -i '1s|^\(#!\)"\(.*\)"$$|\1\2|' ${DESTDIR}${PREFIX}/bin/pcs
-	sed -i '1s|^\(#!\)"\(.*\)"$$|\1\2|' ${DESTDIR}${PREFIX}/bin/pcs_snmp_agent
-	rm setup.cfg
 	mkdir -p ${DESTDIR}${PREFIX}/sbin/
 	mv ${DESTDIR}${PREFIX}/bin/pcs ${DESTDIR}${PREFIX}/sbin/pcs
-	install -D -m644 pcs/bash_completion ${BASH_COMPLETION_DIR}/pcs
+	install -D -m644 pcs/bash_completion.sh ${BASH_COMPLETION_DIR}/pcs
 	install -m644 -D pcs/pcs.8 ${DESTDIR}/${MANDIR}/man8/pcs.8
-	# pcs SNMP install
-	mkdir -p ${PCS_PARENT_DIR}
-	mv ${DESTDIR}${PREFIX}/bin/pcs_snmp_agent ${PCS_PARENT_DIR}/pcs_snmp_agent
-	install -d ${DESTDIR}/var/log/pcs
-	install -d ${SNMP_MIB_DIR_FULL}
-	install -m 644 pcs/snmp/mibs/PCMK-PCS*-MIB.txt ${SNMP_MIB_DIR_FULL}
-	install -m 644 -D pcs/snmp/pcs_snmp_agent.conf ${DESTDIR}/etc/sysconfig/pcs_snmp_agent
-	install -m 644 -D pcs/snmp/pcs_snmp_agent.8 ${DESTDIR}/${MANDIR}/man8/pcs_snmp_agent.8
-ifeq ($(IS_SYSTEMCTL),true)
-	install -d ${DESTDIR}/${systemddir}/system/
-	install -m 644 pcs/snmp/pcs_snmp_agent.service ${DESTDIR}/${systemddir}/system/
-endif
 ifeq ($(IS_DEBIAN),true)
   ifeq ($(install_settings),true)
 	rm -f  ${DESTDIR}${PYTHON_SITELIB}/pcs/settings.py
@@ -178,64 +123,39 @@ ifeq ($(IS_DEBIAN),true)
 	install -m 755 -D pcsd/pcsd.debian ${DESTDIR}/${initdir}/pcsd
   endif
 else
-	mkdir -p ${DESTDIR}${PCSD_PARENT_DIR}/
-	cp -r pcsd ${DESTDIR}${PCSD_PARENT_DIR}/
+	mkdir -p ${DESTDIR}${PREFIX}/lib/
+	cp -r pcsd ${DESTDIR}${PREFIX}/lib/
 	install -m 644 -D pcsd/pcsd.conf ${DESTDIR}/etc/sysconfig/pcsd
 	install -d ${DESTDIR}/etc/pam.d
-	install -m 644 pcsd/pcsd.pam ${DESTDIR}/etc/pam.d/pcsd
+	install  pcsd/pcsd.pam ${DESTDIR}/etc/pam.d/pcsd
   ifeq ($(IS_SYSTEMCTL),true)
 	install -d ${DESTDIR}/${systemddir}/system/
 	install -m 644 pcsd/pcsd.service ${DESTDIR}/${systemddir}/system/
-# ${DESTDIR}${PCSD_PARENT_DIR}/pcsd/pcsd holds the selinux context
-	install -m 755 pcsd/pcsd.service-runner ${DESTDIR}${PCSD_PARENT_DIR}/pcsd/pcsd
-	rm ${DESTDIR}${PCSD_PARENT_DIR}/pcsd/pcsd.service-runner
+# ${DESTDIR}${PREFIX}/lib/pcsd/pcsd holds the selinux context
+	install -m 755 pcsd/pcsd.service-runner ${DESTDIR}${PREFIX}/lib/pcsd/pcsd
+	rm ${DESTDIR}${PREFIX}/lib/pcsd/pcsd.service-runner
   else
 	install -m 755 -D pcsd/pcsd ${DESTDIR}/${initdir}/pcsd
   endif
 endif
 	install -m 700 -d ${DESTDIR}/var/lib/pcsd
 	install -m 644 -D pcsd/pcsd.logrotate ${DESTDIR}/etc/logrotate.d/pcsd
-	install -m644 -D pcsd/pcsd.8 ${DESTDIR}/${MANDIR}/man8/pcsd.8
-	$(foreach font,$(pcsd_fonts),\
-		$(eval font_file = $(word 1,$(subst ;, ,$(font)))) \
-		$(eval font_def = $(word 2,$(subst ;, ,$(font)))) \
-		$(eval font_path = $(shell fc-match '--format=%{file}' '$(font_def)')) \
-		$(if $(font_path),ln -s -f $(font_path) ${DESTDIR}${PCSD_PARENT_DIR}/pcsd/public/css/$(font_file);,$(error Font $(font_def) not found)) \
-	)
-
-build_bundled_libs:
-ifndef PYAGENTX_INSTALLED
-	rm -rf ${BUNDLES_TMP_DIR}
-	mkdir -p ${BUNDLES_TMP_DIR}
-	$(MAKE) -C pcs/snmp/ build_bundled_libs
-	rm -rf ${BUNDLES_TMP_DIR}
-endif
-
-install_bundled_libs: build_bundled_libs
-ifndef PYAGENTX_INSTALLED
-	install -d ${BUNDLED_LIB_INSTALL_DIR}
-	cp -r ${BUNDLED_LIB_DIR_ABS}/packages ${BUNDLED_LIB_INSTALL_DIR}
-endif
 
 uninstall:
 	rm -f ${DESTDIR}${PREFIX}/sbin/pcs
 	rm -rf ${DESTDIR}${PYTHON_SITELIB}/pcs
 ifeq ($(IS_DEBIAN),true)
 	rm -rf ${DESTDIR}/usr/share/pcsd
-	rm -rf ${DESTDIR}/usr/share/pcs
 else
 	rm -rf ${DESTDIR}${PREFIX}/lib/pcsd
-	rm -rf ${DESTDIR}${PREFIX}/lib/pcs
 endif
 ifeq ($(IS_SYSTEMCTL),true)
 	rm -f ${DESTDIR}/${systemddir}/system/pcsd.service
-	rm -f ${DESTDIR}/${systemddir}/system/pcs_snmp_agent.service
 else
 	rm -f ${DESTDIR}/${initdir}/pcsd
 endif
 	rm -f ${DESTDIR}/etc/pam.d/pcsd
 	rm -rf ${DESTDIR}/var/lib/pcsd
-	rm -f ${SNMP_MIB_DIR_FULL}/PCMK-PCS*-MIB.txt
 
 tarball:
 	$(PYTHON) setup.py sdist --formats=tar

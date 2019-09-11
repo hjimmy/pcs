@@ -2,6 +2,7 @@ from __future__ import (
     absolute_import,
     division,
     print_function,
+    unicode_literals,
 )
 
 import shutil
@@ -9,8 +10,10 @@ from pcs.test.tools import pcs_unittest as unittest
 import xml.dom.minidom
 
 from pcs import rule
-from pcs.test.tools.assertions import ac
-from pcs.test.tools.misc import get_test_resource as rc
+from pcs.test.tools.misc import (
+    ac,
+    get_test_resource as rc,
+)
 from pcs.test.tools.pcs_runner import pcs
 
 empty_cib = rc("cib-empty.xml")

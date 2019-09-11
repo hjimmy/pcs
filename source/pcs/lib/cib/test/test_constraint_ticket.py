@@ -2,6 +2,7 @@ from __future__ import (
     absolute_import,
     division,
     print_function,
+    unicode_literals,
 )
 
 from functools import partial
@@ -69,12 +70,11 @@ class PrepareOptionsPlainTest(TestCase):
             ),
             (
                 severities.ERROR,
-                report_codes.INVALID_OPTIONS,
+                report_codes.INVALID_OPTION,
                 {
-                    "option_names": ["unknown"],
+                    "option_name": "unknown",
                     "option_type": None,
                     "allowed": ["id", "loss-policy", "rsc", "rsc-role", "ticket"],
-                    "allowed_patterns": [],
                 }
             ),
         )
@@ -100,7 +100,7 @@ class PrepareOptionsPlainTest(TestCase):
                 severities.ERROR,
                 report_codes.REQUIRED_OPTION_IS_MISSING,
                 {
-                    "option_names": ["ticket"]
+                    "option_name": "ticket"
                 }
             ),
         )
@@ -114,7 +114,7 @@ class PrepareOptionsPlainTest(TestCase):
                 severities.ERROR,
                 report_codes.REQUIRED_OPTION_IS_MISSING,
                 {
-                    "option_names": ["rsc"],
+                    "option_name": "rsc",
                 }
             ),
         )
@@ -223,7 +223,7 @@ class PrepareOptionsWithSetTest(TestCase):
             (
                 severities.ERROR,
                 report_codes.REQUIRED_OPTION_IS_MISSING,
-                {"option_names": ["ticket"]}
+                {"option_name": "ticket"}
             )
         )
 
@@ -237,7 +237,7 @@ class PrepareOptionsWithSetTest(TestCase):
             (
                 severities.ERROR,
                 report_codes.REQUIRED_OPTION_IS_MISSING,
-                {"option_names": ["ticket"]}
+                {"option_name": "ticket"}
             )
         )
 
@@ -254,12 +254,12 @@ class AreDuplicatePlain(TestCase):
     def setUp(self):
         self.first = Element({
             "ticket": "ticket_key",
-            "rsc": "resourceA",
+            "rsc": "resurceA",
             "rsc-role": "Master"
         })
         self.second = Element({
             "ticket": "ticket_key",
-            "rsc": "resourceA",
+            "rsc": "resurceA",
             "rsc-role": "Master"
         })
 

@@ -1,17 +1,14 @@
 # Wrapper for PCS command
-
-require 'etc'
+#
 require 'open4'
 require 'shellwords'
 require 'cgi'
 require 'net/http'
 require 'net/https'
-require 'uri'
 require 'json'
 require 'fileutils'
 require 'backports'
 require 'base64'
-require 'ethon'
 
 require 'config.rb'
 require 'cfgsync.rb'
@@ -61,16 +58,9 @@ def add_node_attr(auth_user, node, key, value)
 end
 
 def add_meta_attr(auth_user, resource, key, value)
-  cmd = ["resource", "meta", resource, key.to_s + "=" + value.to_s]
-  if key.to_s == "remote-node"
-    # --force is a workaround for:
-    # 1) Error: this command is not sufficient for create guest node, use 'pcs
-    # cluster node add-guest', use --force to override
-    # 2) Error: this command is not sufficient for remove guest node, use 'pcs
-    # cluster node remove-guest', use --force to override
-    cmd << "--force"
-  end
-  stdout, stderr, retval = run_cmd(auth_user, PCS, *cmd)
+  stdout, stderr, retval = run_cmd(
+    auth_user, PCS, "resource", "meta", resource, key.to_s + "=" + value.to_s
+  )
   return retval
 end
 
@@ -401,29 +391,46 @@ def send_nodes_request_with_token(auth_user, nodes, request, post=false, data={}
   return code, out
 end
 
-def send_request_with_token(
-  auth_user, node, request, post=false, data={}, remote=true, raw_data=nil,
-  timeout=nil, additional_tokens={}, additional_ports={}
-)
-  token_file_data = read_token_file()
-  token = additional_tokens[node] || token_file_data.tokens[node]
+def send_request_with_token(auth_user, node, request, post=false, data={}, remote=true, raw_data=nil, timeout=30, additional_tokens={})
+  token = additional_tokens[node] || get_node_token(node)
   $logger.info "SRWT Node: #{node} Request: #{request}"
   if not token
     $logger.error "Unable to connect to node #{node}, no token available"
     return 400,'{"notoken":true}'
   end
-  port = additional_ports[node] || token_file_data.ports[node]
   cookies_data = {
     'token' => token,
   }
   return send_request(
-    auth_user, node, request, post, data, remote, raw_data, timeout,
-    cookies_data, port
+    auth_user, node, request, post, data, remote, raw_data, timeout, cookies_data
   )
 end
 
-def _get_cookie_list(auth_user, cookies_data)
-  cookie_list = []
+def send_request(auth_user, node, request, post=false, data={}, remote=true, raw_data=nil, timeout=30, cookies_data=nil)
+  cookies_data = {} if not cookies_data
+  request = "/#{request}" if not request.start_with?("/")
+
+  # fix ipv6 address for URI.parse
+  node6 = node
+  if (node.include?(":") and ! node.start_with?("["))
+    node6 = "[#{node}]"
+  end
+
+  if remote
+    uri = URI.parse("https://#{node6}:2224/remote" + request)
+  else
+    uri = URI.parse("https://#{node6}:2224" + request)
+  end
+
+  if post
+    req = Net::HTTP::Post.new(uri.path)
+    raw_data ? req.body = raw_data : req.set_form_data(data)
+  else
+    req = Net::HTTP::Get.new(uri.path)
+    req.set_form_data(data)
+  end
+
+  cookies_to_send = []
   cookies_data_default = {}
   # Let's be safe about characters in cookie variables and do base64.
   # We cannot do it for CIB_user however to be backward compatible
@@ -437,132 +444,39 @@ def _get_cookie_list(auth_user, cookies_data)
 
   cookies_data_default.update(cookies_data)
   cookies_data_default.each { |name, value|
-    cookie_list << CGI::Cookie.new('name' => name, 'value' => value).to_s
+    cookies_to_send << CGI::Cookie.new('name' => name, 'value' => value).to_s
   }
-  return cookie_list
-end
+  req.add_field('Cookie', cookies_to_send.join(';'))
 
-def _transform_data(data)
-  # Converts data in a way that URI.encode_www_form method will encode it
-  # corectly. If an arrray is passed as value to encode_www_form, then parser of
-  # webbrick will use only last value.
-  new_data = []
-  data.each { |key, val|
-    if val.kind_of?(Array)
-      val.each { |value|
-        new_data << ["#{key.to_s}[]", value]
-      }
-    else
-      new_data << [key, val]
-    end
-  }
-  return new_data
-end
-
-def send_request(
-  auth_user, node, request, post=false, data={}, remote=true, raw_data=nil,
-  timeout=nil, cookies_data=nil, port=nil
-)
-  cookies_data = {} if not cookies_data
-  if request.start_with?("/")
-    request.slice!(0)
-  end
-
-  node6 = node
-  if (node.include?(":") and ! node.start_with?("["))
-    node6 = "[#{node}]"
-  end
-
-  port ||= PCSD_DEFAULT_PORT
-
-  if remote
-    url = "https://#{node6}:#{port}/remote/#{request}"
-  else
-    url = "https://#{node6}:#{port}/#{request}"
-  end
-
-  data = _transform_data(data)
-
-  if post
-    encoded_data = (raw_data) ? raw_data : URI.encode_www_form(data)
-  else
-    url_data = (raw_data) ? raw_data : URI.encode_www_form(data)
-    prefix = request.include?('?') ? '&' : '?'
-    url += "#{prefix}#{url_data}"
-  end
-
-
-  timeout_ms = 30000
   begin
-    if timeout
-      timeout_ms = (Float(timeout) * 1000).to_i
-    elsif ENV['PCSD_NETWORK_TIMEOUT']
-       timeout_ms = (Float(ENV['PCSD_NETWORK_TIMEOUT']) * 1000).to_i
+    # uri.host returns "[addr]" for ipv6 addresses, which is wrong
+    # uri.hostname returns "addr" for ipv6 addresses, which is correct, but it
+    #   is not available in older ruby versions
+    # There is a bug in Net::HTTP.new in some versions of ruby which prevents
+    # ipv6 addresses being used here at all.
+    myhttp = Net::HTTP.new(node, uri.port)
+    myhttp.use_ssl = true
+    myhttp.verify_mode = OpenSSL::SSL::VERIFY_NONE
+    res = myhttp.start do |http|
+      http.read_timeout = timeout
+      http.request(req)
     end
-  rescue
-  end
-
-  req = Ethon::Easy.new()
-  req.set_attributes({
-    :url => url,
-    :timeout_ms => timeout_ms,
-    :cookie => _get_cookie_list(auth_user, cookies_data).join(';'),
-    :ssl_verifyhost => 0,
-    :ssl_verifypeer => 0,
-    :postfields => (encoded_data) ? encoded_data : nil,
-    :httpget => (post ? 0 : 1),
-    :nosignal => 1, # required for multi-threading
-  })
-  req.compose_header('Expect', '')
-  return_code = req.perform
-  if return_code == :ok
-    return req.response_code, req.response_body
-  else
-    if is_proxy_set(ENV)
-      $logger.warn(
-        'Proxy is set in environment variables, try disabling it'
-      )
-    end
-    $logger.info(
-      "No response from: #{node} request: #{request}, error: #{return_code}"
-    )
+    return res.code.to_i, res.body
+  rescue Exception => e
+    $logger.info "No response from: #{node} request: #{request}, exception: #{e}"
     return 400,'{"noresponse":true}'
   end
 end
 
-def is_proxy_set(env_var_hash)
-  proxy_list = ["https_proxy", "all_proxy"]
-  proxy_list += proxy_list.map {|item| item.upcase}
-  proxy_list.each { |var|
-    if env_var_hash[var] and env_var_hash[var] != ''
-      return true
-    end
-  }
-  return false
-end
-
-def add_node(
-  auth_user, new_nodename, all=false, auto_start=true, watchdog=nil,
-  device_list=nil, no_watchdog_validation=false
-)
+def add_node(auth_user, new_nodename, all=false, auto_start=true, watchdog=nil)
   if all
     command = [PCS, "cluster", "node", "add", new_nodename]
     if watchdog and not watchdog.strip.empty?
       command << "--watchdog=#{watchdog.strip}"
     end
-    if device_list
-      device_list.each { |device|
-        if device and not device.strip.empty?
-          command << "--device=#{device.strip}"
-        end
-      }
-    end
     if auto_start
       command << '--start'
       command << '--enable'
-    end
-    if no_watchdog_validation
-      command << '--no-watchdog-validation'
     end
     out, stderror, retval = run_cmd(auth_user, *command)
   else
@@ -772,16 +686,16 @@ def get_resource_agents_avail(auth_user, params)
   code, result = send_cluster_request_with_token(
     auth_user, params[:cluster], 'get_avail_resource_agents'
   )
-  return [] if 200 != code
+  return {} if 200 != code
   begin
     ra = JSON.parse(result)
     if (ra["noresponse"] == true) or (ra["notauthorized"] == "true") or (ra["notoken"] == true) or (ra["pacemaker_not_running"] == true)
-      return []
+      return {}
     else
-      return ra.keys
+      return ra
     end
   rescue JSON::ParserError
-    return []
+    return {}
   end
 end
 
@@ -901,13 +815,11 @@ def get_fence_levels(auth_user, cib_dom=nil)
     '/cib/configuration/fencing-topology/fencing-level'
   ) { |e|
     target = e.attributes['target']
-    if target
-      fence_levels[target] ||= []
-      fence_levels[target] << {
-        'level' => e.attributes['index'],
-        'devices' => e.attributes['devices']
-      }
-    end
+    fence_levels[target] ||= []
+    fence_levels[target] << {
+      'level' => e.attributes['index'],
+      'devices' => e.attributes['devices']
+    }
   }
 
   fence_levels.each { |_, val| val.sort_by! { |obj| obj['level'].to_i }}
@@ -1043,11 +955,7 @@ def get_rhel_version()
 end
 
 def pcsd_restart()
-  # restart in a separate process so we can send a response to the restart
-  # request
   fork {
-    # let us send the response to the restart request
-    # we need little bit more time to finish some things when setting up cluster
     sleep(10)
     if ISSYSTEMCTL
       exec("systemctl", "restart", "pcsd")
@@ -1115,21 +1023,13 @@ def is_cib_true(var)
   return ['true', 'on', 'yes', 'y', '1'].include?(var.downcase)
 end
 
-def read_token_file()
-  return PCSTokens.new(Cfgsync::PcsdTokens.from_file().text())
-end
-
 def read_tokens()
-  return read_token_file().tokens
-end
-
-def get_nodes_ports()
-  return read_token_file().ports
+  return PCSTokens.new(Cfgsync::PcsdTokens.from_file().text()).tokens
 end
 
 def write_tokens(tokens)
   begin
-    cfg = read_token_file()
+    cfg = PCSTokens.new(Cfgsync::PcsdTokens.from_file().text())
     cfg.tokens = tokens
     Cfgsync::PcsdTokens.from_text(cfg.text()).save()
   rescue
@@ -1169,21 +1069,16 @@ def add_prefix_to_keys(hash, prefix)
   return new_hash
 end
 
-def check_gui_status_of_nodes(auth_user, nodes, check_mutuality=false, timeout=10, ports=nil)
+def check_gui_status_of_nodes(auth_user, nodes, check_mutuality=false, timeout=10)
   options = {}
   options[:check_auth_only] = '' if not check_mutuality
   threads = []
   not_authorized_nodes = []
   online_nodes = []
   offline_nodes = []
-  token_file = read_token_file()
 
   nodes = nodes.uniq.sort
   nodes.each { |node|
-    if ports and ports[node] != token_file.ports[node]
-      not_authorized_nodes << node
-      next
-    end
     threads << Thread.new {
       code, response = send_request_with_token(
         auth_user, node, 'check_auth', false, options, true, nil, timeout
@@ -1212,7 +1107,6 @@ def check_gui_status_of_nodes(auth_user, nodes, check_mutuality=false, timeout=1
             offline_nodes << node
           end
         rescue JSON::ParserError
-          not_authorized_nodes << node
         end
       end
     }
@@ -1222,7 +1116,6 @@ def check_gui_status_of_nodes(auth_user, nodes, check_mutuality=false, timeout=1
 end
 
 def pcs_auth(auth_user, nodes, username, password, force=false, local=true)
-  # nodes is hash, (nodename -> port)
   # if no sync is needed, do not report a sync error
   sync_successful = true
   sync_failed_nodes = []
@@ -1230,7 +1123,7 @@ def pcs_auth(auth_user, nodes, username, password, force=false, local=true)
   # check for already authorized nodes
   if not force
     online, offline, not_authenticated = check_gui_status_of_nodes(
-      auth_user, nodes.keys, true, 10, nodes
+      auth_user, nodes, true
     )
     if not_authenticated.length < 1
       result = {}
@@ -1247,28 +1140,25 @@ def pcs_auth(auth_user, nodes, username, password, force=false, local=true)
 
   # get the tokens and sync them within the local cluster
   new_tokens = {}
-  ports = {}
   auth_responses.each { |node, response|
-    if 'ok' == response['status']
-      new_tokens[node] = response['token']
-      ports[node] = nodes[node] || PCSD_DEFAULT_PORT
-    end
+    new_tokens[node] = response['token'] if 'ok' == response['status']
   }
   if not new_tokens.empty?
+    cluster_nodes = get_corosync_nodes()
     tokens_cfg = Cfgsync::PcsdTokens.from_file()
     # only tokens used in pcsd-to-pcsd communication can and need to be synced
     # those are accessible only when running under root account
     if Process.uid != 0
       # other tokens just need to be stored localy for the user
       sync_successful, sync_responses = Cfgsync::save_sync_new_tokens(
-        tokens_cfg, new_tokens, [], nil, ports
+        tokens_cfg, new_tokens, [], nil
       )
       return auth_responses, sync_successful, sync_failed_nodes, sync_responses
     end
-    cluster_nodes = get_corosync_nodes()
     sync_successful, sync_responses = Cfgsync::save_sync_new_tokens(
-      tokens_cfg, new_tokens, cluster_nodes, $cluster_name, ports
+      tokens_cfg, new_tokens, cluster_nodes, $cluster_name
     )
+    sync_failed_nodes = []
     sync_not_supported_nodes = []
     sync_responses.each { |node, response|
       if 'not_supported' == response['status']
@@ -1287,10 +1177,10 @@ def pcs_auth(auth_user, nodes, username, password, force=false, local=true)
     if not local
       # authorize nodes outside of the local cluster and nodes not supporting
       # the tokens file synchronization in the other direction
-      nodes_to_auth = {}
-      nodes.each { |node, port|
-        nodes_to_auth[node] = port if sync_not_supported_nodes.include?(node)
-        nodes_to_auth[node] = port if not cluster_nodes.include?(node)
+      nodes_to_auth = []
+      nodes.each { |node|
+        nodes_to_auth << node if sync_not_supported_nodes.include?(node)
+        nodes_to_auth << node if not cluster_nodes.include?(node)
       }
       auth_responses2 = run_auth_requests(
         auth_user, nodes_to_auth, nodes, username, password, force, false
@@ -1304,11 +1194,8 @@ end
 
 def run_auth_requests(auth_user, nodes_to_send, nodes_to_auth, username, password, force=false, local=true)
   data = {}
-  index = 0
-  nodes_to_auth.each { |node, port|
+  nodes_to_auth.each_with_index { |node, index|
     data["node-#{index}"] = node
-    data["port-#{node}"] = port if port
-    index += 1
   }
   data['username'] = username
   data['password'] = password
@@ -1317,11 +1204,9 @@ def run_auth_requests(auth_user, nodes_to_send, nodes_to_auth, username, passwor
 
   auth_responses = {}
   threads = []
-  nodes_to_send.each { |node, port|
+  nodes_to_send.each { |node|
     threads << Thread.new {
-      code, response = send_request(
-        auth_user, node, 'auth', true, data, true, nil, nil, nil, port
-      )
+      code, response = send_request(auth_user, node, 'auth', true, data)
       if 200 == code
         token = response.strip
         if '' == token
@@ -1452,18 +1337,10 @@ def pcsd_restart_nodes(auth_user, nodes)
   node_status = {}
   node_response.each { |node, response|
     if response[0] == 200
-      my_status = {
+      node_status[node] = {
         'status' => 'ok',
         'text' => 'Success',
       }
-      begin
-        parsed_response = JSON.parse(response[1], {:symbolize_names => true})
-        if parsed_response[:instance_signature]
-          my_status["instance_signature"] = parsed_response[:instance_signature]
-        end
-      rescue JSON::ParserError
-      end
-      node_status[node] = my_status
     else
       text = response[1]
       if response[0] == 401
@@ -1494,25 +1371,11 @@ def pcsd_restart_nodes(auth_user, nodes)
   }
 end
 
-def get_uid(username)
-  return Etc.getpwnam(username).uid
-end
-
-def get_gid(groupname)
-  return Etc.getgrnam(groupname).gid
-end
-
-def write_file_lock(path, perm, data, binary=false, user=nil, group=nil)
+def write_file_lock(path, perm, data, binary=false)
   file = nil
   begin
-    # File.open(path, mode, options)
-    # File.open(path, mode, perm, options)
-    # In order to set permissions, the method must be called with 4 arguments.
-    file = File.open(path, binary ? 'wb' : 'w', perm, {})
+    file = File.open(path, binary ? 'wb' : 'w', perm)
     file.flock(File::LOCK_EX)
-    if user or group
-      File.chown(get_uid(user), get_gid(group), path)
-    end
     file.write(data)
   rescue => e
     $logger.error("Cannot save file '#{path}': #{e.message}")
@@ -1600,10 +1463,7 @@ def cluster_status_from_nodes(auth_user, cluster_nodes, cluster_name)
     :status => 'unknown',
     :node_list => [],
     :resource_list => [],
-    # deprecated, kept for backward compatibility
-    # use pcsd_capabilities instead
     :available_features => [],
-    :pcsd_capabilities => [],
   }
 
   threads = []
@@ -1633,7 +1493,6 @@ def cluster_status_from_nodes(auth_user, cluster_nodes, cluster_name)
       begin
         parsed_response = JSON.parse(response, {:symbolize_names => true})
         parsed_response[:available_features] ||= []
-        parsed_response[:pcsd_capabilities] ||= []
         if parsed_response[:noresponse]
           node_map[node][:node] = {}
           node_map[node][:node].update(node_status_unknown)
@@ -1724,14 +1583,10 @@ def cluster_status_from_nodes(auth_user, cluster_nodes, cluster_name)
   node_map.each { |_, cluster_status|
     node_status = cluster_status[:node][:status]
     node_name = cluster_status[:node][:name]
-    # Create a set of available features on all nodes as an intersection of
-    # available features from all nodes. Do it for both the old deprecated list
-    # (available_features) and the new one (pcsd_capabilities)
+    # create set of available features on all nodes
+    # it is intersection of available features from all nodes
     if node_status != 'unknown' and cluster_status[:available_features]
       status[:available_features] &= cluster_status[:available_features]
-    end
-    if node_status != 'unknown' and cluster_status[:pcsd_capabilities]
-      status[:pcsd_capabilities] &= cluster_status[:pcsd_capabilities]
     end
     if (
       cluster_status[:node][:services] and
@@ -1814,7 +1669,7 @@ def cluster_status_from_nodes(auth_user, cluster_nodes, cluster_name)
         :message => 'Unable to connect to the cluster.'
       }
     end
-    status[:status] = 'unknown'
+    status[:status] == 'unknown'
     return status
   end
 
@@ -1875,8 +1730,6 @@ def get_node_status(auth_user, cib_dom)
       :nodes_utilization => get_nodes_utilization(cib_dom),
       :alerts => get_alerts(auth_user),
       :known_nodes => [],
-      # deprecated, kept for backward compatibility
-      # use pcsd_capabilities instead
       :available_features => [
         'constraint_colocation_set',
         'sbd',
@@ -1884,9 +1737,7 @@ def get_node_status(auth_user, cib_dom)
         'moving_resource_in_group',
         'unmanaged_resource',
         'alerts',
-        'hardened_cluster',
-      ],
-      :pcsd_capabilities => CAPABILITIES_PCSD
+      ]
   }
 
   nodes = get_nodes_status()
@@ -2148,9 +1999,6 @@ def is_service_installed?(service)
     return false
   end
 
-  # currently we are not using systemd instances (service_name@instance) in pcsd
-  # for proper implementation of is_service_installed see
-  # pcs/lib/external.py:is_service_installed
   stdout, _, retcode = run_cmd(
     PCSAuth.getSuperuserAuth(), 'systemctl', 'list-unit-files', '--full'
   )
@@ -2247,6 +2095,13 @@ def get_sbd_service_name()
   end
 end
 
+def write_booth_config(config, data)
+  if config.include?('/')
+    raise InvalidFileNameException.new(config)
+  end
+  write_file_lock(File.join(BOOTH_CONFIG_DIR, config), nil, data)
+end
+
 def read_booth_config(config)
   if config.include?('/')
     raise InvalidFileNameException.new(config)
@@ -2256,6 +2111,15 @@ def read_booth_config(config)
     return nil
   end
   return read_file_lock(config_path)
+end
+
+def write_booth_authfile(filename, data)
+  if filename.include?('/')
+    raise InvalidFileNameException.new(filename)
+  end
+  write_file_lock(
+    File.join(BOOTH_CONFIG_DIR, filename), 0600, Base64.decode64(data), true
+  )
 end
 
 def read_booth_authfile(filename)

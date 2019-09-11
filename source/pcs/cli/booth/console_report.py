@@ -2,33 +2,17 @@ from __future__ import (
     absolute_import,
     division,
     print_function,
+    unicode_literals,
 )
 
 from pcs.common import report_codes as codes
-from pcs.cli.common.console_report import (
-    format_list,
-    format_optional,
-)
 
 def format_booth_default(value, template):
     return "" if value in ("booth", "", None) else template.format(value)
 
-def booth_config_accepted_by_node(info):
-    desc = ""
-    if info["name_list"] and info["name_list"] not in [["booth"]]:
-        desc = "{_s} {_list}".format(
-            _s=("s" if len(info["name_list"]) > 1 else ""),
-            _list=format_list(info["name_list"])
-        )
-    return "{_node_info}Booth config{_desc} saved".format(
-        _node_info=format_optional(info["node"], "{0}: "),
-        _desc=desc,
-    )
-
-#Each value (a callable taking report_item.info) returns a message.
-#Force text will be appended if necessary.
-#If it is necessary to put the force text inside the string then the callable
-#must take the force_text parameter.
+#Each value (callable taking report_item.info) returns string template.
+#Optionaly the template can contain placehodler {force} for next processing.
+#Placeholder {force} will be appended if is necessary and if is not presset
 CODE_TO_MESSAGE_BUILDER_MAP = {
     codes.BOOTH_LACK_OF_SITES: lambda info:
         "lack of sites for booth configuration (need 2 at least): sites {0}"
@@ -96,18 +80,26 @@ CODE_TO_MESSAGE_BUILDER_MAP = {
         "Sending booth configuration to cluster nodes..."
     ,
 
-    codes.BOOTH_CONFIG_ACCEPTED_BY_NODE: booth_config_accepted_by_node,
+    codes.BOOTH_CONFIG_ACCEPTED_BY_NODE: lambda info:
+        "{node_info}Booth config{desc} saved.".format(
+            desc=(
+                "" if info["name_list"] in [None, [], ["booth"]]
+                else "(s) ({0})".format(", ".join(info["name_list"]))
+            ),
+            node_info="{0}: ".format(info["node"]) if info["node"] else ""
+        )
+    ,
 
     codes.BOOTH_CONFIG_DISTRIBUTION_NODE_ERROR: lambda info:
-        "Unable to save booth config{_desc} on node '{node}': {reason}".format(
-            _desc=format_booth_default(info["name"], " '{0}'"),
+        "Unable to save booth config{desc} on node '{node}': {reason}".format(
+            desc=format_booth_default(info["name"], " ({0})"),
             **info
         )
     ,
 
     codes.BOOTH_CONFIG_READ_ERROR: lambda info:
-        "Unable to read booth config{_desc}".format(
-            _desc=format_booth_default(info["name"], " '{0}'")
+        "Unable to read booth config{desc}.".format(
+            desc=format_booth_default(info["name"], " ({0})")
         )
     ,
 
@@ -144,9 +136,5 @@ CODE_TO_MESSAGE_BUILDER_MAP = {
 
     codes.BOOTH_CANNOT_IDENTIFY_KEYFILE:
         "cannot identify authfile in booth configuration"
-    ,
-
-    codes.BOOTH_UNSUPPORTED_FILE_LOCATION: lambda info:
-        "Path '{file}' is not supported for booth config files".format(**info)
     ,
 }

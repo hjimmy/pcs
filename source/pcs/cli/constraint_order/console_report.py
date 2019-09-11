@@ -2,8 +2,9 @@ from __future__ import (
     absolute_import,
     division,
     print_function,
+    unicode_literals,
 )
-from pcs.lib.pacemaker.values import is_true
+from pcs.lib.pacemaker_values import is_true
 
 def constraint_plain(constraint_info, with_id=False):
     """

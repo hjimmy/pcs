@@ -2,24 +2,12 @@ from __future__ import (
     absolute_import,
     division,
     print_function,
+    unicode_literals,
 )
 
 
 class NodeNotFound(Exception):
     pass
-
-def node_addresses_contain_host(node_addresses_list, host):
-    return (
-        host in [node.ring0 for node in node_addresses_list]
-        or
-        host in [node.ring1 for node in node_addresses_list if node.ring1]
-    )
-
-def node_addresses_contain_name(node_addresses_list, name):
-    return name in [node.name for node in node_addresses_list]
-
-def node_addresses_contain_label(node_addresses_list, label):
-    return label in [node.label for node in node_addresses_list]
 
 
 class NodeAddresses(object):
@@ -40,20 +28,6 @@ class NodeAddresses(object):
 
     def __lt__(self, other):
         return self.label < other.label
-
-    def __repr__(self):
-        #the "dict" with name and id is "written" inside string because in
-        #python3 the order is not
-        return str("<{0}.{1} {2}, {{'name': {3}, 'id': {4}}}>").format(
-            self.__module__,
-            self.__class__.__name__,
-            repr(
-                [self.ring0] if self.ring1 is None
-                else [self.ring0, self.ring1]
-            ),
-            repr(self.name),
-            repr(self.id),
-        )
 
     @property
     def ring0(self):
@@ -96,13 +70,6 @@ class NodeAddressesList(object):
 
     def __reversed__(self):
         return self._list.__reversed__()
-
-    def __add__(self, other):
-        if isinstance(other, NodeAddressesList):
-            return NodeAddressesList(self._list + other._list)
-        #Suppose that the other is a list. If it is not a list it correctly
-        #raises.
-        return NodeAddressesList(self._list + other)
 
     def find_by_label(self, label):
         for node in self._list:

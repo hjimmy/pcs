@@ -2,6 +2,7 @@ from __future__ import (
     absolute_import,
     division,
     print_function,
+    unicode_literals,
 )
 
 import os
@@ -61,10 +62,7 @@ def set_keyfile_access(file_path):
     except EnvironmentError as e:
         raise report_keyfile_io_error(file_path, "chown", e)
     try:
-        # According to booth documentation, user and group of booth authfile
-        # should be set to hacluster/haclient (created and used by pacemaker)
-        # but mode of file doesn't need to be same as pacemaker authfile.
-        os.chmod(file_path, settings.booth_authkey_file_mode)
+        os.chmod(file_path, 0o600)
     except EnvironmentError as e:
         raise report_keyfile_io_error(file_path, "chmod", e)
 
@@ -80,8 +78,7 @@ class BoothEnv(object):
             self.__key_path = env_data["key_path"]
             self.__key = GhostFile(
                 file_role=env_file_role_codes.BOOTH_KEY,
-                content=env_data["key_file"]["content"],
-                is_binary=True
+                content=env_data["key_file"]["content"]
             )
         else:
             self.__config = RealFile(
@@ -95,14 +92,13 @@ class BoothEnv(object):
         self.__key = RealFile(
             file_role=env_file_role_codes.BOOTH_KEY,
             file_path=path,
-            is_binary=True
         )
 
     def command_expect_live_env(self):
         if not self.__config.is_live:
             raise LibraryError(common_reports.live_environment_required([
-                "BOOTH_CONF",
-                "BOOTH_KEY",
+                "--booth-conf",
+                "--booth-key",
             ]))
 
     def set_key_path(self, path):
@@ -135,7 +131,7 @@ class BoothEnv(object):
             self.__report_processor,
             can_overwrite_existing
         )
-        self.__key.write(key_content, set_keyfile_access)
+        self.__key.write(key_content, set_keyfile_access, is_binary=True)
 
     def push_config(self, content):
         self.__config.write(content)

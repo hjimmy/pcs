@@ -2,6 +2,7 @@ from __future__ import (
     absolute_import,
     division,
     print_function,
+    unicode_literals,
 )
 
 import sys
@@ -18,11 +19,8 @@ except ImportError:
 
 from pcs.test.tools.xml import dom_get_child_elements
 from pcs.test.tools.misc import get_test_resource as rc
-from pcs.test.tools.pcs_unittest import mock
 
 from pcs import utils
-from pcs.lib import reports
-from pcs.lib.errors import ReportItemSeverity
 
 cib_with_nodes = rc("cib-empty-withnodes.xml")
 empty_cib = rc("cib-empty.xml")
@@ -82,11 +80,6 @@ class UtilsTest(unittest.TestCase):
                           </primitive>
                       </group>
                   </master>
-                  <bundle id="myBundle">
-                      <primitive id="myBundledResource"
-                          class="ocf" provider="heartbeat" type="Dummy" />
-                  </bundle>
-                  <bundle id="myEmptyBundle"/>
             </resources>
         """).documentElement
         resources = cib_dom.getElementsByTagName("resources")[0]
@@ -123,11 +116,6 @@ class UtilsTest(unittest.TestCase):
         self.assertFalse(
             utils.dom_get_resource_clone_ms_parent(cib_dom, "myMasteredResource")
         )
-        self.assertIsNone(utils.dom_get_bundle(cib_dom, "myResource"))
-        self.assertIsNone(utils.dom_get_bundle(cib_dom, "notExisting"))
-        self.assertIsNone(
-            utils.dom_get_resource_bundle_parent(cib_dom, "myBundledResource")
-        )
 
         cib_dom = self.get_cib_resources()
         all_ids = set([
@@ -138,15 +126,13 @@ class UtilsTest(unittest.TestCase):
             "myGroup", "myGroupedResource",
             "myGroupClone", "myClonedGroup", "myClonedGroupedResource",
             "myGroupMaster", "myMasteredGroup", "myMasteredGroupedResource",
-            "myBundledResource", "myBundle", "myEmptyBundle",
         ])
 
         resource_ids = set([
             "myResource",
             "myClonedResource", "myUniqueClonedResource",
             "myGroupedResource", "myMasteredResource",
-            "myClonedGroupedResource", "myMasteredGroupedResource",
-            "myBundledResource",
+            "myClonedGroupedResource", "myMasteredGroupedResource"
         ])
         test_dom_get(
             utils.dom_get_resource, cib_dom,
@@ -197,11 +183,6 @@ class UtilsTest(unittest.TestCase):
             master_ids, all_ids - master_ids
         )
 
-        bundle_ids = set(["myBundle", "myEmptyBundle"])
-        test_dom_get(
-            utils.dom_get_bundle, cib_dom,
-            bundle_ids, all_ids - bundle_ids
-        )
 
         self.assert_element_id(
             utils.dom_get_clone_ms_resource(cib_dom, "myClone"),
@@ -263,54 +244,6 @@ class UtilsTest(unittest.TestCase):
         self.assertEqual(
             None,
             utils.dom_get_resource_clone_ms_parent(cib_dom, "myGroupedResource")
-        )
-
-        self.assertIsNone(utils.dom_get_resource_bundle(
-            utils.dom_get_bundle(cib_dom, "myEmptyBundle")
-        ))
-        self.assert_element_id(
-            utils.dom_get_resource_bundle(
-                utils.dom_get_bundle(cib_dom, "myBundle")
-            ),
-            "myBundledResource",
-            "primitive"
-        )
-
-        self.assert_element_id(
-            utils.dom_get_resource_bundle_parent(cib_dom, "myBundledResource"),
-            "myBundle"
-        )
-        self.assertIsNone(
-            utils.dom_get_resource_bundle_parent(cib_dom, "myResource")
-        )
-        self.assertIsNone(
-            utils.dom_get_resource_bundle_parent(cib_dom, "myClone")
-        )
-        self.assertIsNone(
-            utils.dom_get_resource_bundle_parent(cib_dom, "myClonedResource")
-        )
-        self.assertIsNone(
-            utils.dom_get_resource_bundle_parent(cib_dom, "myMaster")
-        )
-        self.assertIsNone(
-            utils.dom_get_resource_bundle_parent(cib_dom, "myMasteredGroup")
-        )
-        self.assertIsNone(
-            utils.dom_get_resource_bundle_parent(cib_dom, "myGroup")
-        )
-        self.assertIsNone(
-            utils.dom_get_resource_bundle_parent(cib_dom, "myGroupedResource")
-        )
-        self.assertIsNone(
-            utils.dom_get_resource_bundle_parent(cib_dom, "myGroupClone")
-        )
-        self.assertIsNone(
-            utils.dom_get_resource_bundle_parent(cib_dom, "myClonedGroup")
-        )
-        self.assertIsNone(
-            utils.dom_get_resource_bundle_parent(
-                cib_dom, "myClonedGroupedResource"
-            )
         )
 
     def testDomGetResourceRemoteNodeName(self):
@@ -490,21 +423,21 @@ class UtilsTest(unittest.TestCase):
         cc1 = utils.dom_get_element_with_id(dom, "cc", "cc1")
 
         self.assert_element_id(
-            utils.dom_get_parent_by_tag_names(bb1, ["aa"]),
+            utils.dom_get_parent_by_tag_name(bb1, "aa"),
             "aa1"
         )
         self.assert_element_id(
-            utils.dom_get_parent_by_tag_names(cc1, ["aa"]),
+            utils.dom_get_parent_by_tag_name(cc1, "aa"),
             "aa1"
         )
         self.assert_element_id(
-            utils.dom_get_parent_by_tag_names(cc1, ["bb"]),
+            utils.dom_get_parent_by_tag_name(cc1, "bb"),
             "bb2"
         )
 
-        self.assertEqual(None, utils.dom_get_parent_by_tag_names(bb1, ["cc"]))
-        self.assertEqual(None, utils.dom_get_parent_by_tag_names(cc1, ["dd"]))
-        self.assertEqual(None, utils.dom_get_parent_by_tag_names(cc1, ["ee"]))
+        self.assertEqual(None, utils.dom_get_parent_by_tag_name(bb1, "cc"))
+        self.assertEqual(None, utils.dom_get_parent_by_tag_name(cc1, "dd"))
+        self.assertEqual(None, utils.dom_get_parent_by_tag_name(cc1, "ee"))
 
     def testValidateConstraintResource(self):
         dom = self.get_cib_resources()
@@ -523,14 +456,6 @@ class UtilsTest(unittest.TestCase):
         self.assertEqual(
             (True, "", "myGroupMaster"),
             utils.validate_constraint_resource(dom, "myGroupMaster")
-        )
-        self.assertEqual(
-            (True, "", "myBundle"),
-            utils.validate_constraint_resource(dom, "myBundle")
-        )
-        self.assertEqual(
-            (True, "", "myEmptyBundle"),
-            utils.validate_constraint_resource(dom, "myEmptyBundle")
         )
         self.assertEqual(
             (True, "", "myResource"),
@@ -608,19 +533,6 @@ class UtilsTest(unittest.TestCase):
             utils.validate_constraint_resource(dom, "myMasteredGroupedResource")
         )
 
-        message = (
-            "%s is a bundle resource, you should use the bundle id: "
-            "%s when adding constraints. Use --force to override."
-        )
-        self.assertEqual(
-            (
-                False,
-                message % ("myBundledResource", "myBundle"),
-                "myBundle"
-            ),
-            utils.validate_constraint_resource(dom, "myBundledResource")
-        )
-
         utils.pcs_options["--force"] = True
         self.assertEqual(
             (True, "", "myClone"),
@@ -645,10 +557,6 @@ class UtilsTest(unittest.TestCase):
         self.assertEqual(
             (True, "", "myGroupMaster"),
             utils.validate_constraint_resource(dom, "myMasteredGroupedResource")
-        )
-        self.assertEqual(
-            (True, "", "myBundle"),
-            utils.validate_constraint_resource(dom, "myBundledResource")
         )
 
     def testValidateXmlId(self):
@@ -1882,14 +1790,12 @@ class UtilsTest(unittest.TestCase):
             utils.is_valid_cluster_property, definition, "unknown", "value"
         )
 
-    def assert_element_id(self, node, node_id, tag=None):
+    def assert_element_id(self, node, node_id):
         self.assertTrue(
             isinstance(node, xml.dom.minidom.Element),
             "element with id '%s' not found" % node_id
         )
         self.assertEqual(node.getAttribute("id"), node_id)
-        if tag:
-            self.assertEqual(node.tagName, tag)
 
 
 class RunParallelTest(unittest.TestCase):
@@ -1913,6 +1819,18 @@ class RunParallelTest(unittest.TestCase):
             sorted(log),
             sorted(['first', 'second'])
         )
+
+    def test_wait_for_slower_workers(self):
+        log = []
+        utils.run_parallel(
+            [
+                self.fixture_create_worker(log, 'first', .03),
+                self.fixture_create_worker(log, 'second'),
+            ],
+            wait_seconds=.01
+        )
+
+        self.assertEqual(log, ['second', 'first'])
 
 
 class PrepareNodeNamesTest(unittest.TestCase):
@@ -2673,99 +2591,4 @@ class IsNodeStopCauseQuorumLossTest(unittest.TestCase):
             utils.is_node_stop_cause_quorum_loss(
                 quorum_info, False, ["rh70-node2", "rh70-node3"]
             )
-        )
-
-class CanAddNodeToCluster(unittest.TestCase):
-    def setUp(self):
-        patcher = mock.patch("pcs.utils.run_com_cmd")
-        self.addCleanup(patcher.stop)
-        self.check_can_add = patcher.start()
-
-    def assert_report_list_cause_result(self, report_list, can_add, message):
-        def side_effect(node_communicator, com_cmd):
-            com_cmd._report_items.extend(
-                report_list if isinstance(report_list, list) else [report_list]
-            )
-        self.check_can_add.side_effect = side_effect
-
-        result_can_add, result_message = utils.canAddNodeToCluster(
-            None, "node1"
-        )
-
-        self.assertEqual((result_can_add, result_message), (can_add, message))
-
-    def assert_report_list_cause_success(self, report_list):
-        self.assert_report_list_cause_result(
-            report_list,
-            can_add=True,
-            message="",
-        )
-
-    def assert_report_list_cause_fail(self, report_list, message):
-        self.assert_report_list_cause_result(
-            report_list,
-            can_add=False,
-            message=message,
-        )
-
-    def test_sucess_on_empty_reports(self):
-        self.assert_report_list_cause_success([])
-
-    def test_sucess_when_no_error_there(self):
-        self.assert_report_list_cause_success(
-            reports.node_communication_error_not_authorized(
-                "node1", "command", "reason",
-                severity=ReportItemSeverity.WARNING
-            )
-        )
-
-    def test_deals_with_no_authorized(self):
-        self.assert_report_list_cause_fail(
-            reports.node_communication_error_not_authorized(
-                "node1", "command", "reason"
-            ),
-            "unable to authenticate to node"
-        )
-
-    def test_deals_with_running_pacemaker_remote(self):
-        self.assert_report_list_cause_fail(
-            reports.cannot_add_node_is_running_service(
-                "node1",
-                "pacemaker_remote"
-            ),
-            "node is running pacemaker_remote"
-        )
-
-    def test_deals_with_node_is_in_cluster(self):
-        self.assert_report_list_cause_fail(
-            reports.cannot_add_node_is_in_cluster("node1"),
-            "node is already in a cluster"
-        )
-
-    def test_deals_with_invalid_response(self):
-        self.assert_report_list_cause_fail(
-            reports.invalid_response_format("node1"),
-            "response parsing error"
-        )
-
-    def test_deals_with_any_other_connection_error(self):
-        self.assert_report_list_cause_fail(
-            reports.node_communication_error_timed_out(
-                "node1", "command", "reason",
-            ),
-            "error checking node availability: reason"
-        )
-
-class TouchCibFile(unittest.TestCase):
-    @mock.patch("pcs.utils.os.path.isfile", mock.Mock(return_value=False))
-    @mock.patch(
-        "pcs.utils.write_empty_cib",
-        mock.Mock(side_effect=EnvironmentError("some message"))
-    )
-    @mock.patch("pcs.utils.err")
-    def test_exception_is_transformed_correctly(self, err):
-        filename = "/fake/filename"
-        utils.touch_cib_file(filename)
-        err.assert_called_once_with(
-            "Unable to write to file: '/fake/filename': 'some message'"
         )

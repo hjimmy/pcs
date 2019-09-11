@@ -2,6 +2,7 @@ from __future__ import (
     absolute_import,
     division,
     print_function,
+    unicode_literals,
 )
 
 from functools import partial
@@ -66,7 +67,7 @@ def create(
         duplication_alowed=duplication_alowed,
     )
 
-    env.push_cib()
+    env.push_cib(cib)
 
 def remove(env, ticket_key, resource_id):
     """
@@ -74,7 +75,8 @@ def remove(env, ticket_key, resource_id):
     If resource is in resource set with another resources then only resource ref
     is removed. If resource is alone in resource set whole constraint is removed.
     """
-    constraint_section = get_constraints(env.get_cib())
+    cib = env.get_cib()
+    constraint_section = get_constraints(cib)
     any_plain_removed = ticket.remove_plain(
         constraint_section,
         ticket_key,
@@ -86,6 +88,6 @@ def remove(env, ticket_key, resource_id):
         resource_id
     )
 
-    env.push_cib()
+    env.push_cib(cib)
 
     return any_plain_removed or any_with_resource_set_removed

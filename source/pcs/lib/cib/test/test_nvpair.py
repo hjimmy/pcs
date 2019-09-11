@@ -2,42 +2,14 @@ from __future__ import (
     absolute_import,
     division,
     print_function,
+    unicode_literals,
 )
 
 from lxml import etree
 
 from pcs.lib.cib import nvpair
-from pcs.lib.cib.tools import IdProvider
 from pcs.test.tools.assertions import assert_xml_equal
 from pcs.test.tools.pcs_unittest import TestCase, mock
-from pcs.test.tools.xml import etree_to_str
-
-class AppendNewNvpair(TestCase):
-    def test_append_new_nvpair_to_given_element(self):
-        nvset_element = etree.fromstring('<nvset id="a"/>')
-        nvpair._append_new_nvpair(nvset_element, "b", "c")
-        assert_xml_equal(
-            etree_to_str(nvset_element),
-            """
-            <nvset id="a">
-                <nvpair id="a-b" name="b" value="c"></nvpair>
-            </nvset>
-            """
-        )
-
-    def test_with_id_provider(self):
-        nvset_element = etree.fromstring('<nvset id="a"/>')
-        provider = IdProvider(nvset_element)
-        provider.book_ids("a-b")
-        nvpair._append_new_nvpair(nvset_element, "b", "c", provider)
-        assert_xml_equal(
-            etree_to_str(nvset_element),
-            """
-            <nvset id="a">
-                <nvpair id="a-b-1" name="b" value="c"></nvpair>
-            </nvset>
-            """
-        )
 
 
 class UpdateNvsetTest(TestCase):
@@ -66,7 +38,7 @@ class UpdateNvsetTest(TestCase):
                 <nvpair id="4" name="g" value="h"/>
             </instance_attributes>
             """,
-            etree_to_str(nvset_element)
+            etree.tostring(nvset_element).decode()
         )
     def test_empty_value_has_no_effect(self):
         xml = """
@@ -78,26 +50,7 @@ class UpdateNvsetTest(TestCase):
         """
         nvset_element = etree.fromstring(xml)
         nvpair.update_nvset(nvset_element, {})
-        assert_xml_equal(xml, etree_to_str(nvset_element))
-
-    def test_keep_empty_nvset(self):
-        xml_pre = """
-            <resource>
-                <instance_attributes id="iattrs">
-                    <nvpair id="1" name="a" value="b"/>
-                </instance_attributes>
-            </resource>
-        """
-        xml_post = """
-            <resource>
-                <instance_attributes id="iattrs" />
-            </resource>
-        """
-        xml = etree.fromstring(xml_pre)
-        nvset_element = xml.find("instance_attributes")
-        nvpair.update_nvset(nvset_element, {"a": ""})
-        assert_xml_equal(xml_post, etree_to_str(xml))
-
+        assert_xml_equal(xml, etree.tostring(nvset_element).decode())
 
 class SetNvpairInNvsetTest(TestCase):
     def setUp(self):
@@ -122,7 +75,7 @@ class SetNvpairInNvsetTest(TestCase):
                 <notnvpair id="nvset-test" name="test" value="0"/>
             </nvset>
             """,
-            etree_to_str(self.nvset)
+            etree.tostring(self.nvset).decode()
         )
 
     def test_add(self):
@@ -136,7 +89,7 @@ class SetNvpairInNvsetTest(TestCase):
                 <nvpair id="nvset-test-1" name="test" value="0"/>
             </nvset>
             """,
-            etree_to_str(self.nvset)
+            etree.tostring(self.nvset).decode()
         )
 
     def test_remove(self):
@@ -148,7 +101,7 @@ class SetNvpairInNvsetTest(TestCase):
                 <notnvpair id="nvset-test" name="test" value="0"/>
             </nvset>
             """,
-            etree_to_str(self.nvset)
+            etree.tostring(self.nvset).decode()
         )
 
     def test_remove_not_existing(self):
@@ -161,55 +114,11 @@ class SetNvpairInNvsetTest(TestCase):
                 <notnvpair id="nvset-test" name="test" value="0"/>
             </nvset>
             """,
-            etree_to_str(self.nvset)
-        )
-
-class AppendNewNvsetTest(TestCase):
-    def test_append_new_nvset_to_given_element(self):
-        context_element = etree.fromstring('<context id="a"/>')
-        nvpair.append_new_nvset("instance_attributes", context_element, {
-            "a": "b",
-            "c": "d",
-        })
-        assert_xml_equal(
-            """
-                <context id="a">
-                    <instance_attributes id="a-instance_attributes">
-                        <nvpair id="a-instance_attributes-a" name="a" value="b"/>
-                        <nvpair id="a-instance_attributes-c" name="c" value="d"/>
-                    </instance_attributes>
-                </context>
-            """,
-            etree_to_str(context_element)
-        )
-
-    def test_with_id_provider(self):
-        context_element = etree.fromstring('<context id="a"/>')
-        provider = IdProvider(context_element)
-        provider.book_ids("a-instance_attributes", "a-instance_attributes-1-a")
-        nvpair.append_new_nvset(
-            "instance_attributes",
-            context_element,
-            {
-                "a": "b",
-                "c": "d",
-            },
-            provider
-        )
-        assert_xml_equal(
-            """
-                <context id="a">
-                    <instance_attributes id="a-instance_attributes-1">
-                        <nvpair id="a-instance_attributes-1-a-1" name="a" value="b"/>
-                        <nvpair id="a-instance_attributes-1-c" name="c" value="d"/>
-                    </instance_attributes>
-                </context>
-            """,
-            etree_to_str(context_element)
+            etree.tostring(self.nvset).decode()
         )
 
 
-class ArrangeFirstNvsetTest(TestCase):
+class ArrangeSomeNvsetTest(TestCase):
     def setUp(self):
         self.root = etree.Element("root", id="root")
         self.nvset = etree.SubElement(self.root, "nvset", id="nvset")
@@ -233,7 +142,7 @@ class ArrangeFirstNvsetTest(TestCase):
                     <notnvpair id="nvset-test" name="test" value="0"/>
                 </nvset>
             """,
-            etree_to_str(self.nvset)
+            etree.tostring(self.nvset).decode()
         )
 
     def test_update_existing_nvset(self):
@@ -252,7 +161,7 @@ class ArrangeFirstNvsetTest(TestCase):
                     <nvpair id="nvset-test-1" name="test" value="0"/>
                 </nvset>
             """,
-            etree_to_str(self.nvset)
+            etree.tostring(self.nvset).decode()
         )
 
     def test_create_new_nvset_if_does_not_exist(self):
@@ -274,7 +183,7 @@ class ArrangeFirstNvsetTest(TestCase):
                 </nvset>
             </root>
             """,
-            etree_to_str(root)
+            etree.tostring(root).decode()
         )
 
 
@@ -308,112 +217,4 @@ class GetNvsetTest(TestCase):
                 }
             ],
             nvpair.get_nvset(nvset)
-        )
-
-class GetValue(TestCase):
-    def assert_find_value(self, tag_name, name, value, xml, default=None):
-        self.assertEqual(
-            value,
-            nvpair.get_value(tag_name, etree.fromstring(xml), name, default)
-        )
-
-    def test_return_value_when_name_exists(self):
-        self.assert_find_value(
-            "meta_attributes",
-            "SOME-NAME",
-            "some-value",
-            """
-                <context>
-                    <meta_attributes>
-                        <nvpair name="SOME-NAME" value="some-value" />
-                        <nvpair name="OTHER-NAME" value="other-value" />
-                    </meta_attributes>
-                </context>
-            """,
-        )
-
-    def test_return_none_when_name_not_exists(self):
-        self.assert_find_value(
-            "instance_attributes",
-            "SOME-NAME",
-            value=None,
-            xml="""
-                <context>
-                    <instance_attributes>
-                        <nvpair name="another-name" value="some-value" />
-                    </instance_attributes>
-                </context>
-            """,
-        )
-
-    def test_return_default_when_name_not_exists(self):
-        self.assert_find_value(
-            "instance_attributes",
-            "SOME-NAME",
-            value="DEFAULT",
-            xml="""
-                <context>
-                    <instance_attributes>
-                        <nvpair name="another-name" value="some-value" />
-                    </instance_attributes>
-                </context>
-            """,
-            default="DEFAULT",
-        )
-
-    def test_return_none_when_no_nvpair(self):
-        self.assert_find_value(
-            "instance_attributes",
-            "SOME-NAME",
-            value=None,
-            xml="""
-                <context>
-                    <instance_attributes />
-                </context>
-            """,
-        )
-
-    def test_return_none_when_no_nvset(self):
-        self.assert_find_value(
-            "instance_attributes",
-            "SOME-NAME",
-            value=None,
-            xml="""
-                <context>
-                </context>
-            """,
-        )
-
-class HasMetaAttribute(TestCase):
-    def test_return_false_if_does_not_have_such_attribute(self):
-        resource_element = etree.fromstring("""<primitive/>""")
-        self.assertFalse(
-            nvpair.has_meta_attribute(resource_element, "attr_name")
-        )
-
-    def test_return_true_if_such_meta_attribute_exists(self):
-        resource_element = etree.fromstring("""
-            <primitive>
-                <meta_attributes>
-                    <nvpair id="a" name="attr_name" value="value"/>
-                    <nvpair id="b" name="other_name" value="other-value"/>
-                </meta_attributes>
-            </primitive>
-        """)
-        self.assertTrue(
-            nvpair.has_meta_attribute(resource_element, "attr_name")
-        )
-
-    def test_return_false_if_meta_attribute_exists_but_in_nested_element(self):
-        resource_element = etree.fromstring("""
-            <group>
-                <primitive>
-                    <meta_attributes>
-                        <nvpair id="a" name="attr_name" value="value"/>
-                    </meta_attributes>
-                </primitive>
-            </group>
-        """)
-        self.assertFalse(
-            nvpair.has_meta_attribute(resource_element, "attr_name")
         )

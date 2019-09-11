@@ -2,15 +2,15 @@ from __future__ import (
     absolute_import,
     division,
     print_function,
+    unicode_literals,
 )
 
-from pcs.common.tools import Version
 from pcs.lib import reports
 from pcs.lib.cib import alert
 from pcs.lib.errors import LibraryError
 
 
-REQUIRED_CIB_VERSION = Version(2, 5, 0)
+REQUIRED_CIB_VERSION = (2, 5, 0)
 
 
 def create_alert(
@@ -33,19 +33,15 @@ def create_alert(
     description -- alert description description
     """
     if not path:
-        raise LibraryError(reports.required_option_is_missing(["path"]))
+        raise LibraryError(reports.required_option_is_missing("path"))
 
+    cib = lib_env.get_cib(REQUIRED_CIB_VERSION)
 
-    alert_el = alert.create_alert(
-        lib_env.get_cib(REQUIRED_CIB_VERSION),
-        alert_id,
-        path,
-        description
-    )
+    alert_el = alert.create_alert(cib, alert_id, path, description)
     alert.update_instance_attributes(alert_el, instance_attribute_dict)
     alert.update_meta_attributes(alert_el, meta_attribute_dict)
 
-    lib_env.push_cib()
+    lib_env.push_cib(cib)
 
 
 def update_alert(
@@ -67,17 +63,13 @@ def update_alert(
     description -- new description, if empty string, old description will be
         deleted, if None old value will stay unchanged
     """
+    cib = lib_env.get_cib(REQUIRED_CIB_VERSION)
 
-    alert_el = alert.update_alert(
-        lib_env.get_cib(REQUIRED_CIB_VERSION),
-        alert_id,
-        path,
-        description
-    )
+    alert_el = alert.update_alert(cib, alert_id, path, description)
     alert.update_instance_attributes(alert_el, instance_attribute_dict)
     alert.update_meta_attributes(alert_el, meta_attribute_dict)
 
-    lib_env.push_cib()
+    lib_env.push_cib(cib)
 
 
 def remove_alert(lib_env, alert_id_list):
@@ -94,9 +86,8 @@ def remove_alert(lib_env, alert_id_list):
             alert.remove_alert(cib, alert_id)
         except LibraryError as e:
             report_list += e.args
-
     lib_env.report_processor.process_list(report_list)
-    lib_env.push_cib()
+    lib_env.push_cib(cib)
 
 
 def add_recipient(
@@ -123,12 +114,13 @@ def add_recipient(
     """
     if not recipient_value:
         raise LibraryError(
-            reports.required_option_is_missing(["value"])
+            reports.required_option_is_missing("value")
         )
 
+    cib = lib_env.get_cib(REQUIRED_CIB_VERSION)
     recipient = alert.add_recipient(
         lib_env.report_processor,
-        lib_env.get_cib(REQUIRED_CIB_VERSION),
+        cib,
         alert_id,
         recipient_value,
         recipient_id=recipient_id,
@@ -138,7 +130,7 @@ def add_recipient(
     alert.update_instance_attributes(recipient, instance_attribute_dict)
     alert.update_meta_attributes(recipient, meta_attribute_dict)
 
-    lib_env.push_cib()
+    lib_env.push_cib(cib)
 
 
 def update_recipient(
@@ -167,9 +159,10 @@ def update_recipient(
         raise LibraryError(
             reports.cib_alert_recipient_invalid_value(recipient_value)
         )
+    cib = lib_env.get_cib(REQUIRED_CIB_VERSION)
     recipient = alert.update_recipient(
         lib_env.report_processor,
-        lib_env.get_cib(REQUIRED_CIB_VERSION),
+        cib,
         recipient_id,
         recipient_value=recipient_value,
         description=description,
@@ -178,7 +171,7 @@ def update_recipient(
     alert.update_instance_attributes(recipient, instance_attribute_dict)
     alert.update_meta_attributes(recipient, meta_attribute_dict)
 
-    lib_env.push_cib()
+    lib_env.push_cib(cib)
 
 
 def remove_recipient(lib_env, recipient_id_list):
@@ -196,7 +189,7 @@ def remove_recipient(lib_env, recipient_id_list):
         except LibraryError as e:
             report_list += e.args
     lib_env.report_processor.process_list(report_list)
-    lib_env.push_cib()
+    lib_env.push_cib(cib)
 
 
 def get_all_alerts(lib_env):

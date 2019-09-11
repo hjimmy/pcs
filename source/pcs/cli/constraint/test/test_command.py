@@ -2,6 +2,7 @@ from __future__ import (
     absolute_import,
     division,
     print_function,
+    unicode_literals,
 )
 
 from pcs.test.tools.pcs_unittest import TestCase
@@ -53,7 +54,7 @@ class ShowTest(TestCase):
             "caption",
             load_constraints=lambda: {"plain": [], "with_resource_sets": []},
             format_options=lambda: None,
-            modifiers={"full": False}
+            modificators={"full": False}
         ))
 
     def test_show_constraints_full(self):

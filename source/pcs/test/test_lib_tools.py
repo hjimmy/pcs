@@ -2,6 +2,7 @@ from __future__ import (
     absolute_import,
     division,
     print_function,
+    unicode_literals,
 )
 
 from pcs.test.tools.pcs_unittest import TestCase
@@ -26,9 +27,6 @@ ANOTHER ONE="complex value"
             "ANOTHER ONE": '"complex value"'
         }
         self.assertEqual(expected, tools.environment_file_to_dict(data))
-
-    def test_empty_string(self):
-        self.assertEqual({}, tools.environment_file_to_dict(""))
 
 
 class DictToEnvironmentFileTest(TestCase):

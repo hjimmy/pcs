@@ -2,14 +2,17 @@ from __future__ import (
     absolute_import,
     division,
     print_function,
+    unicode_literals,
 )
 
 from lxml import etree
 
 from pcs.lib import reports
-from pcs.lib.cib.tools import find_unique_id
+from pcs.lib.cib.tools import (
+    find_unique_id,
+    export_attributes,
+)
 from pcs.lib.errors import LibraryError
-from pcs.lib.xml_tools import export_attributes
 
 ATTRIB = {
     "sequential": ("true", "false"),
@@ -32,7 +35,7 @@ def validate_options(options):
     for name, value in options.items():
         if name not in ATTRIB:
             raise LibraryError(
-                reports.invalid_options([name], list(ATTRIB.keys()), None)
+                reports.invalid_option(name, list(ATTRIB.keys()), None)
             )
         if value not in ATTRIB[name]:
             raise LibraryError(

@@ -2,6 +2,7 @@ from __future__ import (
     absolute_import,
     division,
     print_function,
+    unicode_literals,
 )
 
 from pcs.test.tools.pcs_unittest import TestCase
@@ -12,21 +13,21 @@ from pcs.cli.common import middleware
 class MiddlewareBuildTest(TestCase):
     def test_run_middleware_correctly_chained(self):
         log = []
-        def command(lib, argv, modifiers):
-            log.append('command: {0}, {1}, {2}'.format(lib, argv, modifiers))
+        def command(lib, argv, modificators):
+            log.append('command: {0}, {1}, {2}'.format(lib, argv, modificators))
 
-        def m1(next, lib, argv, modifiers):
+        def m1(next, lib, argv, modificators):
             log.append(
-                'm1 start: {0}, {1}, {2}'.format(lib, argv, modifiers)
+                'm1 start: {0}, {1}, {2}'.format(lib, argv, modificators)
             )
-            next(lib, argv, modifiers)
+            next(lib, argv, modificators)
             log.append('m1 done')
 
-        def m2(next, lib, argv, modifiers):
+        def m2(next, lib, argv, modificators):
             log.append(
-                'm2 start: {0}, {1}, {2}'.format(lib, argv, modifiers)
+                'm2 start: {0}, {1}, {2}'.format(lib, argv, modificators)
             )
-            next(lib, argv, modifiers)
+            next(lib, argv, modificators)
             log.append('m2 done')
 
         run_with_middleware = middleware.build(m1, m2)
@@ -38,3 +39,4 @@ class MiddlewareBuildTest(TestCase):
             'm2 done',
             'm1 done',
         ])
+

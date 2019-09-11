@@ -2,6 +2,7 @@ from __future__ import (
     absolute_import,
     division,
     print_function,
+    unicode_literals,
 )
 
 from pcs.cli.common.errors import CmdLineInputError
@@ -93,14 +94,21 @@ def ticket_revoke(lib, arg_list, modifiers):
 def ticket_grant(lib, arg_list, modifiers):
     ticket_operation(lib.booth.ticket_grant, arg_list, modifiers)
 
-def create_in_cluster(lib, arg_list, modifiers):
-    if len(arg_list) != 2 or arg_list[0] != "ip":
-        raise CmdLineInputError()
-    lib.booth.create_in_cluster(
-        __get_name(modifiers),
-        ip=arg_list[1],
-        allow_absent_resource_agent=modifiers["force"]
-    )
+def get_create_in_cluster(resource_create, resource_remove):
+    #TODO resource_remove is provisional hack until resources are not moved to
+    #lib
+    def create_in_cluster(lib, arg_list, modifiers):
+        if len(arg_list) != 2 or arg_list[0] != "ip":
+            raise CmdLineInputError()
+        ip = arg_list[1]
+
+        lib.booth.create_in_cluster(
+            __get_name(modifiers),
+            ip,
+            resource_create,
+            resource_remove,
+        )
+    return create_in_cluster
 
 def get_remove_from_cluster(resource_remove):
     #TODO resource_remove is provisional hack until resources are not moved to
@@ -184,3 +192,4 @@ def status(lib, arg_list, modifiers):
     if booth_status.get("status"):
         print("DAEMON STATUS:")
         print(booth_status["status"])
+

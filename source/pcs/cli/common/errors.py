@@ -2,13 +2,8 @@ from __future__ import (
     absolute_import,
     division,
     print_function,
+    unicode_literals,
 )
-
-
-ERR_NODE_LIST_AND_ALL_MUTUALLY_EXCLUSIVE = (
-    "Cannot specify both --all and a list of nodes."
-)
-
 
 class CmdLineInputError(Exception):
     """

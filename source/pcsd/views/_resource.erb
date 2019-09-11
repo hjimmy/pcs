@@ -1,6 +1,6 @@
 <% @pageName = @myView == "resource" ? "Resource" : "Fence Device" %>
 <tr id="<%=@myView%>_title_row" {{bind-attr style="Pcs.<%=@myView%>_page"}}><td id="page_header" colspan=3>
-<%= @myView == "resource" ? "资源" : "FENCE设备" %>
+<%= @myView == "resource" ? "资源" : "FENCE 设备" %>
     </td>
   </tr>
   <tr id="<%=@myView%>_header_row" {{bind-attr style="Pcs.<%=@myView%>_page"}}>
@@ -16,11 +16,11 @@
     <% if @myView == "resource" %>
       <a href="#" onclick="show_add_resource_dialog();return false;">
     <% else %>
-      <a href="#" onclick="$('#new_stonith_agent').dialog({title: '添加fence设备', modal:true, width: 'auto'});return false;">
+      <a href="#" onclick="$('#new_stonith_agent').dialog({title: 'Add Fence Device', modal:true, width: 'auto'});return false;">
     <% end %>
   添加资源</a>&nbsp;&nbsp;&nbsp;&nbsp;</div>
     <% if @myView == "resource" %>
-      <div class="plus sprites"></div><div class="link">&nbsp;<a href="#" onclick="create_group();return false;">添加组资源</a></div>
+      <div class="plus sprites"></div><div class="link">&nbsp;<a href="#" onclick="create_group();return false;">创建组资源</a></div>
     <% else %>
         <div class="configurelight sprites"></div>
         <div class="link"> &nbsp;
@@ -59,12 +59,19 @@
 	<tr>
 	  <td class="bold">Class/Provider</td>
 	  <td>
+	    <%
+        resources = @resource_agents.keys
+
+	      class_providers = []
+        resources.each {|k|
+		class_providers << k[0,k.rindex(':')]
+	      }
+	      class_providers.uniq!
+	      class_providers.sort!
+	    %>
 	    <select id="resource_class_provider_selector">
-        <% @resource_agent_structures.map{|a| a[:class_provider]}.uniq.sort.each{|cp| %>
-          <option
-            <%= "selected" if cp == "ocf:heartbeat" %>
-            value="<%=cp%>"
-          ><%=cp%></option>
+	      <% class_providers.each {|cp| %>
+		<option <%= "selected" if cp == "ocf:heartbeat" %> value="<%=cp%>"><%=cp%></option>
 	      <% } %>
 	    </select>
 	  </td>
@@ -73,13 +80,13 @@
 	  <td class="bold">Type</td>
 	  <td>
 	    <select id="all_ra_types" style="display:none;">
-        <% @resource_agent_structures.sort_by{|a| a[:full_name].downcase}.each{|a| %>
-          <option value="<%=a[:full_name]%>"><%=a[:type]%></option>
+	      <% resources.sort_by{|a|a.downcase}.each { |key| %>
+		<option width=250px  value="<%=key%>"><%=key[(key.rindex(':')+1)..-1]%></option>
 	      <% } %>
 	    </select>
 	    <select id="add_ra_type" onchange="load_resource_form(this.value);">
-        <% @resource_agent_structures.each{|a| %>
-          <option width=250px value="<%=a[:full_name]%>"><%=a[:type]%></option>
+	      <% resources.sort_by{|a|a.downcase}.each { |key| %>
+		<option width=250px <%= key == "ocf:heartbeat:IPaddr2" ? "selected" : "" %> value="<%=key%>"><%=key%></option>
 	      <% } %>
 	    </select>
 	  </td>

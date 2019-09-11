@@ -2,46 +2,14 @@ from __future__ import (
     absolute_import,
     division,
     print_function,
+    unicode_literals,
 )
 
-import difflib
 import doctest
 from lxml.doctestcompare import LXMLOutputChecker
-from lxml.etree import LXML_VERSION
-import re
-from pcs.lib.errors import ReportItemSeverity
 
 from pcs.lib.errors import LibraryError
-
-# cover python2 vs. python3 differences
-_re_object_type = type(re.compile(""))
-
-def prepare_diff(first, second):
-    """
-    Return a string containing a diff of first and second
-    """
-    return "".join(
-        difflib.Differ().compare(first.splitlines(1), second.splitlines(1))
-    )
-
-def ac(a,b):
-    """
-    Compare the actual output 'a' and an expected output 'b', print diff b a
-    """
-    if a != b:
-        raise AssertionError(
-            "strings not equal:\n{0}".format(prepare_diff(b, a))
-        )
-
-def start_tag_error_text():
-    """lxml 3.7+ gives a longer 'start tag expected' error message,
-    handle it here so multiple tests can just get the appropriate
-    string from this function.
-    """
-    msg = "Start tag expected, '<' not found, line 1, column 1"
-    if LXML_VERSION >= (3, 7, 0, 0):
-        msg += " (<string>, line 1)"
-    return msg
+from pcs.test.tools.misc import prepare_diff
 
 def console_report(*lines):
     #after lines append last new line
@@ -50,73 +18,31 @@ def console_report(*lines):
 class AssertPcsMixin(object):
     """Run pcs command and assert its result"""
 
-    def assert_pcs_success_all(self, command_list):
-        for command in command_list:
-            stdout, pcs_returncode = self.pcs_runner.run(command)
-            if pcs_returncode != 0:
-                raise AssertionError(
-                    (
-                        "Command '{0}' does not succeed.\n"
-                        "return_code: {1}\n"
-                        "stdout:\n{2}"
-                    ).format(command, pcs_returncode, stdout)
-                )
-
-    def assert_pcs_success(
-        self, command, stdout_full=None, stdout_start=None, stdout_regexp=None
-    ):
+    def assert_pcs_success(self, command, stdout_full=None, stdout_start=None):
         full = stdout_full
-        if (
-            stdout_start is None
-            and
-            stdout_full is None
-            and
-            stdout_regexp is None
-        ):
+        if stdout_start is None and stdout_full is None:
             full = ""
         self.assert_pcs_result(
             command,
             stdout_full=full,
-            stdout_start=stdout_start,
-            stdout_regexp=stdout_regexp,
-            returncode=0
+            stdout_start=stdout_start
         )
 
-    def assert_pcs_fail(
-        self, command, stdout_full=None, stdout_start=None, stdout_regexp=None
-    ):
+    def assert_pcs_fail(self, command, stdout_full=None, stdout_start=None):
         self.assert_pcs_result(
             command,
             stdout_full=stdout_full,
             stdout_start=stdout_start,
-            stdout_regexp=stdout_regexp,
             returncode=1
         )
 
-    def assert_pcs_fail_regardless_of_force(
-        self, command, stdout_full=None, stdout_start=None, stdout_regexp=None
-    ):
-        self.assert_pcs_fail(command, stdout_full, stdout_start, stdout_regexp)
-        self.assert_pcs_fail(
-            command + " --force", stdout_full, stdout_start, stdout_regexp
-        )
-
     def assert_pcs_result(
-        self, command, stdout_full=None, stdout_start=None, stdout_regexp=None,
-        returncode=0
+        self, command, stdout_full=None, stdout_start=None, returncode=0
     ):
-        msg = (
-            "Please specify exactly one: stdout_start or stdout_full or"
-            " stdout_regexp"
-        )
-        specified_stdout = [
-            stdout
-            for stdout in (stdout_full, stdout_start, stdout_regexp)
-            if stdout is not None
-        ]
-        if len(specified_stdout) < 1:
+        msg = "Please specify exactly one: stdout_start or stdout_full"
+        if stdout_start is None and stdout_full is None:
             raise Exception(msg + ", none specified")
-        elif len(specified_stdout) > 1:
+        if stdout_start is not None and stdout_full is not None:
             raise Exception(msg + ", both specified")
 
         stdout, pcs_returncode = self.pcs_runner.run(command)
@@ -136,7 +62,8 @@ class AssertPcsMixin(object):
         if stdout_start:
             expected_start = self.__prepare_output(stdout_start)
             if not stdout.startswith(expected_start):
-                self.fail(
+                self.assertTrue(
+                    False,
                     message_template.format(
                         reason="Stdout does not start as expected",
                         cmd=command,
@@ -144,24 +71,6 @@ class AssertPcsMixin(object):
                             stdout[:len(expected_start)], expected_start
                         ),
                         stdout=stdout
-                    )
-                )
-        elif stdout_regexp:
-            if not isinstance(stdout_regexp, _re_object_type):
-                stdout_regexp = re.compile(stdout_regexp)
-            if not stdout_regexp.search(stdout):
-                self.fail(
-                    (
-                        "Stdout does not match the expected regexp\n"
-                        "command: {cmd}\nregexp:\n{regexp} (flags: {flags})\n"
-                        "\nFull stdout:\n{stdout}"
-                    ).format(
-                        cmd=command,
-                        regexp=stdout_regexp.pattern,
-                        flags=", ".join(
-                            self.__prepare_regexp_flags(stdout_regexp.flags)
-                        ),
-                        stdout=stdout,
                     )
                 )
         else:
@@ -182,24 +91,6 @@ class AssertPcsMixin(object):
         if isinstance(output, list):
             return console_report(*output)
         return output
-
-    def __prepare_regexp_flags(self, flags):
-        # python2 has different flags than python3
-        possible_flags = [
-            "ASCII",
-            "DEBUG",
-            "IGNORECASE",
-            "LOCALE",
-            "MULTILINE",
-            "DOTALL",
-            "UNICODE",
-            "VERBOSE",
-        ]
-        used_flags = [
-            f for f in possible_flags
-            if hasattr(re, f) and (flags & getattr(re, f))
-        ]
-        return sorted(used_flags)
 
 
 class ExtendedAssertionsMixin(object):
@@ -229,52 +120,14 @@ class ExtendedAssertionsMixin(object):
                     )
 
 
-def assert_xml_equal(expected_xml, got_xml, context_explanation=""):
+def assert_xml_equal(expected_xml, got_xml):
     checker = LXMLOutputChecker()
     if not checker.check_output(expected_xml, got_xml, 0):
-        raise AssertionError(
-            "{context_explanation}{xml_diff}".format(
-                context_explanation=(
-                    "" if not context_explanation
-                    else "\n{0}\n".format(context_explanation)
-                ),
-                xml_diff=checker.output_difference(
-                    doctest.Example("", expected_xml),
-                    got_xml,
-                    0
-                )
-            )
-        )
-
-SEVERITY_SHORTCUTS = {
-    ReportItemSeverity.INFO: "I",
-    ReportItemSeverity.WARNING: "W",
-    ReportItemSeverity.ERROR: "E",
-    ReportItemSeverity.DEBUG: "D",
-}
-
-def _format_report_item_info(info):
-    return ", ".join([
-        "{0}:{1}".format(key, repr(value)) for key, value in info.items()
-    ])
-
-def _expected_report_item_format(report_item_expectation):
-    return "{0} {1} {{{2}}} ! {3}".format(
-        SEVERITY_SHORTCUTS.get(
-            report_item_expectation[0], report_item_expectation[0]
-        ),
-        report_item_expectation[1],
-        _format_report_item_info(report_item_expectation[2]),
-        report_item_expectation[3] if len(report_item_expectation) > 3 else None
-    )
-
-def _format_report_item(report_item):
-    return _expected_report_item_format((
-        report_item.severity,
-        report_item.code,
-        report_item.info,
-        report_item.forceable
-    ))
+        raise AssertionError(checker.output_difference(
+            doctest.Example("", expected_xml),
+            got_xml,
+            0
+        ))
 
 def assert_report_item_equal(real_report_item, report_item_info):
     if not __report_item_equal(real_report_item, report_item_info):
@@ -287,90 +140,58 @@ def assert_report_item_equal(real_report_item, report_item_info):
                     report_item_info[2],
                     None if len(report_item_info) < 4 else report_item_info[3]
                 )),
-                _format_report_item(real_report_item)
+                repr((
+                    real_report_item.severity,
+                    real_report_item.code,
+                    real_report_item.info,
+                    real_report_item.forceable
+                ))
             )
         )
 
-def _unexpected_report_given(
-    all_expected_report_info_list,
-    expected_report_info_list, real_report_item, real_report_item_list
-):
-    return AssertionError(
-        (
-            "\n  Unexpected real report given:"
-            "\n  =============================\n  {0}\n"
-            "\n  remaining expected reports ({1}) are:"
-            "\n  ------------------------------------\n    {2}\n"
-            "\n  all expected reports ({3}) are:"
-            "\n  ------------------------------\n    {4}\n"
-            "\n  all real reports ({5}):"
-            "\n  ---------------------\n    {6}"
+def assert_report_item_list_equal(real_report_item_list, report_info_list):
+    for report_item in real_report_item_list:
+        report_info_list.remove(
+            __find_report_info(report_info_list, report_item)
         )
-        .format(
-            _format_report_item(real_report_item),
-            len(expected_report_info_list),
-            "\n    ".join(map(
-                _expected_report_item_format, expected_report_info_list
-                )) if expected_report_info_list
-                else "No other report is expected!"
-            ,
-            len(all_expected_report_info_list),
-            "\n    ".join(map(
-                    _expected_report_item_format, all_expected_report_info_list
-                )) if all_expected_report_info_list
-                else "No report is expected!"
-            ,
-            len(real_report_item_list),
-            "\n    ".join(map(_format_report_item, real_report_item_list)),
-        )
-    )
-
-def assert_report_item_list_equal(
-    real_report_item_list, expected_report_info_list, hint=""
-):
-    all_expected_report_info_list = expected_report_info_list[:]
-    for real_report_item in real_report_item_list:
-        found_report_info = __find_report_info(
-            expected_report_info_list,
-            real_report_item
-        )
-        if found_report_info is None:
-            raise _unexpected_report_given(
-                all_expected_report_info_list,
-                expected_report_info_list,
-                real_report_item,
-                real_report_item_list,
-            )
-        expected_report_info_list.remove(found_report_info)
-    if expected_report_info_list:
-        def format_items(item_type, item_list):
-            caption = "{0} ReportItems({1})".format(item_type, len(item_list))
-            return "{0}\n{1}\n{2}".format(
-                caption,
-                "-"*len(caption),
-                "\n".join(map(repr, item_list))
-            )
-
+    if report_info_list:
         raise AssertionError(
-            "\nExpected LibraryError is missing\n{0}\n\n{1}\n\n{2}".format(
-                "{0}\n".format(hint) if hint else "",
-                format_items("expected", expected_report_info_list),
-                format_items("real", real_report_item_list),
-            )
+            "LibraryError is missing expected ReportItems ("
+            +str(len(report_info_list))+"):\n"
+            + "\n".join(map(repr, report_info_list))
+
+            + "\nreal ReportItems ("+str(len(real_report_item_list))+"):\n"
+            + "\n".join(map(repr, real_report_item_list))
         )
 
 def assert_raise_library_error(callableObj, *report_info_list):
+    if not report_info_list:
+        raise AssertionError(
+            "Raising LibraryError expected, but no report item specified."
+            + " Please specify report items, that you expect in LibraryError"
+        )
     try:
         callableObj()
         raise AssertionError("LibraryError not raised")
     except LibraryError as e:
         assert_report_item_list_equal(e.args, list(report_info_list))
 
-def __find_report_info(expected_report_info_list, real_report_item):
-    for report_info in expected_report_info_list:
-        if __report_item_equal(real_report_item, report_info):
+def __find_report_info(report_info_list, report_item):
+    for report_info in report_info_list:
+        if __report_item_equal(report_item, report_info):
             return report_info
-    return None
+    raise AssertionError(
+        "Unexpected report given: \n{0} \nexpected reports are: \n{1}"
+        .format(
+            repr((
+                report_item.severity,
+                report_item.code,
+                report_item.info,
+                report_item.forceable
+            )),
+            "\n".join(map(repr, report_info_list))
+        )
+    )
 
 def __report_item_equal(real_report_item, report_item_info):
     return (
@@ -391,3 +212,4 @@ def __report_item_equal(real_report_item, report_item_info):
             )
         )
     )
+

@@ -2,6 +2,7 @@ from __future__ import (
     absolute_import,
     division,
     print_function,
+    unicode_literals,
 )
 
 from pcs.test.tools.pcs_unittest import TestCase
@@ -1151,3 +1152,4 @@ class ClientNetDestroyTest(QdeviceTestCase):
     def test_success(self, mock_qdevice_func):
         lib.client_net_destroy(self.lib_env)
         mock_qdevice_func.assert_called_once_with()
+

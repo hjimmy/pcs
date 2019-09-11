@@ -2,6 +2,7 @@ from __future__ import (
     absolute_import,
     division,
     print_function,
+    unicode_literals,
 )
 from pcs.test.tools import pcs_unittest as unittest
 from pcs.test.tools.color_text_runner.format import (
@@ -22,7 +23,6 @@ def get_text_test_result_class(
     slash_last_fail_in_overview=False,
     traditional_verbose=False,
     traceback_highlight=False,
-    fast_info=False,
 ):
     #TextTestResult is neede here. Direct inheriting from TestResult does not
     #work in python 2.6
@@ -40,8 +40,6 @@ def get_text_test_result_class(
             self.reportWriter = self.__chooseWriter()(
                 self.stream,
                 self.descriptions,
-                traceback_highlight,
-                fast_info,
             )
             self.skip_map = {}
 
@@ -55,19 +53,11 @@ def get_text_test_result_class(
 
         def addError(self, test, err):
             super(TextTestResult, self).addError(test, err)
-            self.reportWriter.addError(
-                test,
-                err,
-                traceback=self.errors[-1][1]
-            )
+            self.reportWriter.addError(test, err)
 
         def addFailure(self, test, err):
             super(TextTestResult, self).addFailure(test, err)
-            self.reportWriter.addFailure(
-                test,
-                err,
-                traceback=self.failures[-1][1]
-            )
+            self.reportWriter.addFailure(test, err)
 
         def addSkip(self, test, reason):
             super(TextTestResult, self).addSkip(test, reason)

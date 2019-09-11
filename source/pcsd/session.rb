@@ -1,4 +1,3 @@
-gem 'rack', '< 2.0.0'
 require 'rack/session/pool'
 
 class SessionPoolLifetime < Rack::Session::Pool

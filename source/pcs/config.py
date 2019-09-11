@@ -2,6 +2,7 @@ from __future__ import (
     absolute_import,
     division,
     print_function,
+    unicode_literals,
 )
 
 import sys
@@ -16,11 +17,8 @@ from xml.dom.minidom import parse
 import logging
 import pwd
 import grp
-import tempfile
 import time
 import platform
-import shutil
-import difflib
 
 try:
     import clufter.facts
@@ -34,6 +32,7 @@ except ImportError:
 from pcs import (
     cluster,
     constraint,
+    prop,
     quorum,
     resource,
     settings,
@@ -43,16 +42,12 @@ from pcs import (
     utils,
     alert,
 )
-from pcs.cli.common import middleware
-from pcs.cli.common.console_report import indent
-from pcs.cli.constraint import command as constraint_command
-from pcs.cli.constraint_colocation import (
-    console_report as colocation_console_report,
-)
-from pcs.cli.constraint_order import console_report as order_console_report
-from pcs.cli.constraint_ticket import console_report as ticket_console_report
 from pcs.lib.errors import LibraryError
 from pcs.lib.commands import quorum as lib_quorum
+import pcs.cli.constraint_colocation.command as colocation_command
+import pcs.cli.constraint_order.command as order_command
+import pcs.cli.constraint_ticket.command as ticket_command
+from pcs.cli.common.console_report import indent
 
 
 def config_cmd(argv):
@@ -76,8 +71,6 @@ def config_cmd(argv):
             config_checkpoint_view(argv[1:])
         elif argv[0] == "restore":
             config_checkpoint_restore(argv[1:])
-        elif argv[0] == "diff":
-            config_checkpoint_diff(argv[1:])
         else:
             usage.config(["checkpoint"])
             sys.exit(1)
@@ -99,11 +92,10 @@ def config_cmd(argv):
         sys.exit(1)
 
 def config_show(argv):
-    lib = utils.get_library_wrapper()
     print("Cluster Name: %s" % utils.getClusterName())
     status.nodes_status(["config"])
     print()
-    print("\n".join(_config_show_cib_lines(lib)))
+    config_show_cib()
     if (
         utils.hasCorosyncConf()
         and
@@ -129,95 +121,36 @@ def config_show(argv):
         except LibraryError as e:
             utils.process_library_reports(e.args)
 
-def _config_show_cib_lines(lib):
-    # update of pcs_options will change output of constraint show
+def config_show_cib():
+    print("Resources:")
     utils.pcs_options["--all"] = 1
     utils.pcs_options["--full"] = 1
-    # get latest modifiers object after updating pcs_options
-    modifiers = utils.get_modifiers()
+    resource.resource_show([])
+    print()
+    print("Stonith Devices:")
+    resource.resource_show([], True)
+    print("Fencing Levels:")
+    stonith.stonith_level_show()
+    print()
 
-    cib_xml = utils.get_cib()
-    cib_etree = utils.get_cib_etree(cib_xml=cib_xml)
-    cib_dom = utils.get_cib_dom(cib_xml=cib_xml)
+    lib = utils.get_library_wrapper()
+    constraint.location_show([])
+    modificators = utils.get_modificators()
+    order_command.show(lib, [], modificators)
+    colocation_command.show(lib, [], modificators)
+    ticket_command.show(lib, [], modificators)
 
-    resource_lines = []
-    stonith_lines = []
-    for resource_el in cib_etree.find(".//resources"):
-        is_stonith = (
-            "class" in resource_el.attrib
-            and
-            resource_el.attrib["class"] == "stonith"
-        )
-        resource_el_lines = resource.resource_node_lines(resource_el)
-        if is_stonith:
-            stonith_lines += resource_el_lines
-        else:
-            resource_lines += resource_el_lines
+    print()
+    alert.print_alert_config(lib, [], modificators)
 
-    all_lines = []
-
-    all_lines.append("Resources:")
-    all_lines.extend(indent(resource_lines, indent_step=1))
-    all_lines.append("")
-    all_lines.append("Stonith Devices:")
-    all_lines.extend(indent(stonith_lines, indent_step=1))
-    all_lines.append("Fencing Levels:")
-    levels_lines = stonith.stonith_level_config_to_str(
-        lib.fencing_topology.get_config()
-             )
-    if levels_lines:
-        all_lines.extend(indent(levels_lines, indent_step=2))
-
-    all_lines.append("")
-    constraints_element = cib_dom.getElementsByTagName('constraints')[0]
-    all_lines.extend(
-        constraint.location_lines(constraints_element, showDetail=True)
-    )
-    all_lines.extend(constraint_command.show(
-        "Ordering Constraints:",
-        lib.constraint_order.show,
-        order_console_report.constraint_plain,
-        modifiers
-    ))
-    all_lines.extend(constraint_command.show(
-         "Colocation Constraints:",
-        lib.constraint_colocation.show,
-        colocation_console_report.constraint_plain,
-        modifiers
-    ))
-    all_lines.extend(constraint_command.show(
-        "Ticket Constraints:",
-        lib.constraint_ticket.show,
-        ticket_console_report.constraint_plain,
-        modifiers
-    ))
-
-    all_lines.append("")
-    all_lines.extend(alert.alert_config_lines(lib))
-
-    all_lines.append("")
-    all_lines.append("Resources Defaults:")
-    all_lines.extend(indent(
-        resource.show_defaults(cib_dom, "rsc_defaults"),
-        indent_step=1
-    ))
-    all_lines.append("Operations Defaults:")
-    all_lines.extend(indent(
-        resource.show_defaults(cib_dom, "op_defaults"),
-        indent_step=1
-    ))
-
-    all_lines.append("")
-    all_lines.append("Cluster Properties:")
-    properties = utils.get_set_properties()
-    all_lines.extend(indent(
-        [
-            "{0}: {1}".format(prop, val)
-            for prop, val in sorted(properties.items())
-        ],
-        indent_step=1
-    ))
-    return all_lines
+    print()
+    del utils.pcs_options["--all"]
+    print("Resources Defaults:")
+    resource.show_defaults("rsc_defaults", indent=" ")
+    print("Operations Defaults:")
+    resource.show_defaults("op_defaults", indent=" ")
+    print()
+    prop.list_property([])
 
 def config_backup(argv):
     if len(argv) > 1:
@@ -297,7 +230,7 @@ def config_restore(argv):
         else:
             new_stdin = infile_obj.read()
         err_msgs, exitcode, std_out, std_err = utils.call_local_pcsd(
-            new_argv, new_stdin
+            new_argv, True, new_stdin
         )
         if err_msgs:
             for msg in err_msgs:
@@ -392,13 +325,13 @@ def config_restore_remote(infile_name, infile_obj):
 
 def config_restore_local(infile_name, infile_obj):
     if (
-        utils.is_service_running(utils.cmd_runner(), "cman")
+        status.is_service_running("cman")
         or
-        utils.is_service_running(utils.cmd_runner(), "corosync")
+        status.is_service_running("corosync")
         or
-        utils.is_service_running(utils.cmd_runner(), "pacemaker")
+        status.is_service_running("pacemaker")
         or
-        utils.is_service_running(utils.cmd_runner(), "pacemaker_remote")
+        status.is_service_running("pacemaker_remote")
     ):
         utils.err(
             "Cluster is currently running on this node. You need to stop "
@@ -408,7 +341,6 @@ def config_restore_local(infile_name, infile_obj):
     file_list = config_backup_path_list(with_uid_gid=True)
     tarball_file_list = []
     version = None
-    tmp_dir = None
     try:
         tarball = tarfile.open(infile_name, "r|*", infile_obj)
         while True:
@@ -455,30 +387,15 @@ def config_restore_local(infile_name, infile_obj):
                 path = os.path.dirname(path)
             if not extract_info:
                 continue
-            path_full = None
-            if hasattr(extract_info.get("pre_store_call"), '__call__'):
-                extract_info["pre_store_call"]()
-            if "rename" in extract_info and extract_info["rename"]:
-                if tmp_dir is None:
-                    tmp_dir = tempfile.mkdtemp()
-                tarball.extractall(tmp_dir, [tar_member_info])
-                path_full = extract_info["path"]
-                os.rename(
-                    os.path.join(tmp_dir, tar_member_info.name), path_full
-                )
-            else:
-                dir_path = os.path.dirname(extract_info["path"])
-                tarball.extractall(dir_path, [tar_member_info])
-                path_full = os.path.join(dir_path, tar_member_info.name)
+            path_extract = os.path.dirname(extract_info["path"])
+            tarball.extractall(path_extract, [tar_member_info])
+            path_full = os.path.join(path_extract, tar_member_info.name)
             file_attrs = extract_info["attrs"]
             os.chmod(path_full, file_attrs["mode"])
             os.chown(path_full, file_attrs["uid"], file_attrs["gid"])
         tarball.close()
-    except (tarfile.TarError, EnvironmentError, OSError) as e:
+    except (tarfile.TarError, EnvironmentError) as e:
         utils.err("unable to restore the cluster: %s" % e)
-    finally:
-        if tmp_dir:
-            shutil.rmtree(tmp_dir, ignore_errors=True)
 
     try:
         sig_path = os.path.join(settings.cib_dir, "cib.xml.sig")
@@ -497,8 +414,6 @@ def config_backup_path_list(with_uid_gid=False, force_rhel6=None):
         "uid": 0,
         "gid": 0,
     }
-    corosync_authkey_attrs = dict(corosync_attrs)
-    corosync_authkey_attrs["mode"] = 0o400
     cib_attrs = {
         "mtime": int(time.time()),
         "mode": 0o600,
@@ -506,31 +421,24 @@ def config_backup_path_list(with_uid_gid=False, force_rhel6=None):
         "gname": settings.pacemaker_gname,
     }
     if with_uid_gid:
-        cib_attrs["uid"] = _get_uid(cib_attrs["uname"])
-        cib_attrs["gid"] = _get_gid(cib_attrs["gname"])
+        try:
+            cib_attrs["uid"] = pwd.getpwnam(cib_attrs["uname"]).pw_uid
+        except KeyError:
+            utils.err(
+                "Unable to determine uid of user '%s'" % cib_attrs["uname"]
+            )
+        try:
+            cib_attrs["gid"] = grp.getgrnam(cib_attrs["gname"]).gr_gid
+        except KeyError:
+            utils.err(
+                "Unable to determine gid of group '%s'" % cib_attrs["gname"]
+            )
 
-    pcmk_authkey_attrs = dict(cib_attrs)
-    pcmk_authkey_attrs["mode"] = 0o440
     file_list = {
         "cib.xml": {
             "path": os.path.join(settings.cib_dir, "cib.xml"),
             "required": True,
             "attrs": dict(cib_attrs),
-        },
-        "corosync_authkey": {
-            "path": settings.corosync_authkey_file,
-            "required": False,
-            "attrs": corosync_authkey_attrs,
-            "restore_procedure": None,
-            "rename": True,
-        },
-        "pacemaker_authkey": {
-            "path": settings.pacemaker_authkey_file,
-            "required": False,
-            "attrs": pcmk_authkey_attrs,
-            "restore_procedure": None,
-            "rename": True,
-            "pre_store_call": _ensure_etc_pacemaker_exists,
         },
     }
     if rhel6:
@@ -563,35 +471,6 @@ def config_backup_path_list(with_uid_gid=False, force_rhel6=None):
             },
         }
     return file_list
-
-
-def _get_uid(user_name):
-    try:
-        return pwd.getpwnam(user_name).pw_uid
-    except KeyError:
-        utils.err("Unable to determine uid of user '{0}'".format(user_name))
-
-
-def _get_gid(group_name):
-    try:
-        return grp.getgrnam(group_name).gr_gid
-    except KeyError:
-        utils.err(
-            "Unable to determine gid of group '{0}'".format(group_name)
-        )
-
-
-def _ensure_etc_pacemaker_exists():
-    dir_name = os.path.dirname(settings.pacemaker_authkey_file)
-    if not os.path.exists(dir_name):
-        os.mkdir(dir_name)
-        os.chmod(dir_name, 0o750)
-        os.chown(
-            dir_name,
-            _get_uid(settings.pacemaker_uname),
-            _get_gid(settings.pacemaker_gname)
-        )
-
 
 def config_backup_check_version(version):
     try:
@@ -648,87 +527,20 @@ def config_checkpoint_list():
             % (cib_info[1], datetime.datetime.fromtimestamp(round(cib_info[0])))
         )
 
-def _checkpoint_to_lines(lib, checkpoint_number):
-    # backup current settings
-    orig_usefile = utils.usefile
-    orig_filename = utils.filename
-    orig_middleware = lib.middleware_factory
-    # configure old code to read the CIB from a file
-    utils.usefile = True
-    utils.filename = os.path.join(
-        settings.cib_dir,
-        "cib-%s.raw" % checkpoint_number
-    )
-    # configure new code to read the CIB from a file
-    lib.middleware_factory = orig_middleware._replace(
-        cib=middleware.cib(utils.filename, utils.touch_cib_file)
-    )
-    # export the CIB to text
-    result = False, []
-    if os.path.isfile(utils.filename):
-        result = True, _config_show_cib_lines(lib)
-    # restore original settings
-    utils.usefile = orig_usefile
-    utils.filename = orig_filename
-    lib.middleware_factory = orig_middleware
-    return result
-
 def config_checkpoint_view(argv):
     if len(argv) != 1:
-        usage.config(["checkpoint view"])
+        usage.config(["checkpoint", "view"])
         sys.exit(1)
 
-    lib = utils.get_library_wrapper()
-    loaded, lines = _checkpoint_to_lines(lib, argv[0])
-    if not loaded:
+    utils.usefile = True
+    utils.filename = os.path.join(settings.cib_dir, "cib-%s.raw" % argv[0])
+    if not os.path.isfile(utils.filename):
         utils.err("unable to read the checkpoint")
-    print("\n".join(lines))
-
-def config_checkpoint_diff(argv):
-    if len(argv) != 2:
-        usage.config(["checkpoint diff"])
-        sys.exit(1)
-
-    if argv[0] == argv[1]:
-        utils.err("cannot diff a checkpoint against itself")
-
-    lib = utils.get_library_wrapper()
-    errors = []
-    checkpoints_lines = []
-    for checkpoint in argv:
-        if checkpoint == "live":
-            lines = _config_show_cib_lines(lib)
-            if not lines:
-                errors.append("unable to read live configuration")
-            else:
-                checkpoints_lines.append(lines)
-        else:
-            loaded, lines = _checkpoint_to_lines(lib, checkpoint)
-            if not loaded:
-                errors.append(
-                    "unable to read checkpoint '{0}'".format(checkpoint)
-                )
-            else:
-                checkpoints_lines.append(lines)
-
-    if errors:
-        utils.err("\n".join(errors))
-
-    print("Differences between {0} (-) and {1} (+):".format(*[
-        "live configuration" if label == "live"
-            else "checkpoint {0}".format(label)
-        for label in argv
-    ]))
-    print("\n".join([
-        line.rstrip() for line in difflib.Differ().compare(
-            checkpoints_lines[0],
-            checkpoints_lines[1]
-        )]
-    ))
+    config_show_cib()
 
 def config_checkpoint_restore(argv):
     if len(argv) != 1:
-        usage.config(["checkpoint restore"])
+        usage.config(["checkpoint", "restore"])
         sys.exit(1)
 
     cib_path = os.path.join(settings.cib_dir, "cib-%s.raw" % argv[0])
@@ -740,7 +552,7 @@ def config_checkpoint_restore(argv):
 
 def config_import_cman(argv):
     if no_clufter:
-        utils.err("Unable to perform a CMAN cluster conversion due to missing python-clufter package")
+        utils.err("Unable to perform a RHEL 6 cluster conversion due to missing python-clufter package")
     # prepare convertor options
     cluster_conf = settings.cluster_conf_file
     dry_run_output = None
@@ -809,6 +621,8 @@ def config_import_cman(argv):
         "batch": True,
         "sys": "linux",
         "dist": dist,
+        # Make it work on RHEL6 as well for sure
+        "color": "always" if sys.stdout.isatty() else "never"
     }
     if interactive:
         if "EDITOR" not in os.environ:
@@ -856,7 +670,7 @@ def config_import_cman(argv):
     if output_format in ("pcs-commands", "pcs-commands-verbose"):
         ok, message = utils.write_file(
             dry_run_output,
-            clufter_args_obj.output["passout"].decode()
+            clufter_args_obj.output["passout"]
         )
         if not ok:
             utils.err(message)
@@ -878,14 +692,14 @@ def config_import_cman(argv):
         config_backup_add_version_to_tarball(tarball)
         utils.tar_add_file_data(
             tarball,
-            clufter_args_obj.cib["passout"],
+            clufter_args_obj.cib["passout"].encode("utf-8"),
             "cib.xml",
             **file_list["cib.xml"]["attrs"]
         )
         if output_format == "cluster.conf":
             utils.tar_add_file_data(
                 tarball,
-                clufter_args_obj.ccs_pcmk["passout"],
+                clufter_args_obj.ccs_pcmk["passout"].encode("utf-8"),
                 "cluster.conf",
                 **file_list["cluster.conf"]["attrs"]
             )
@@ -906,7 +720,7 @@ def config_import_cman(argv):
             )("bytestring")
             utils.tar_add_file_data(
                 tarball,
-                corosync_conf_data,
+                corosync_conf_data.encode("utf-8"),
                 "corosync.conf",
                 **file_list["corosync.conf"]["attrs"]
             )
@@ -924,7 +738,7 @@ def config_import_cman(argv):
                 )("bytestring")
                 utils.tar_add_file_data(
                     tarball,
-                    uidgid_data,
+                    uidgid_data.encode("utf-8"),
                     "uidgid.d/" + filename,
                     **file_list["uidgid.d"]["attrs"]
                 )
@@ -970,7 +784,7 @@ def config_export_pcs_commands(argv, verbose=False):
             invalid_args = True
     # check options
     if invalid_args:
-        usage.config(["export pcs-commands"])
+        usage.config(["export", "pcs-commands"])
         sys.exit(1)
     # complete optional options
     if dist is None:
@@ -982,6 +796,8 @@ def config_export_pcs_commands(argv, verbose=False):
         "batch": True,
         "sys": "linux",
         "dist": dist,
+        # Make it work on RHEL6 as well for sure
+        "color": "always" if sys.stdout.isatty() else "never",
         "coro": settings.corosync_conf_file,
         "ccs": settings.cluster_conf_file,
         "start_wait": "60",
@@ -1023,7 +839,7 @@ def config_export_pcs_commands(argv, verbose=False):
     if output_file:
         ok, message = utils.write_file(
             output_file,
-            clufter_args_obj.output["passout"].decode()
+            clufter_args_obj.output["passout"]
         )
         if not ok:
             utils.err(message)
@@ -1053,3 +869,4 @@ def run_clufter(cmd_name, cmd_args, debug, force, err_prefix):
             + "\n"
         )
         sys.exit(1 if result is None else result)
+

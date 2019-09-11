@@ -144,29 +144,15 @@
     {{#if resource.stonith}}
       <div class="xdark sprites" style="float: left"></div>
       <div id="stonith_delete_link" class="link" onclick="verify_remove_fence_devices(curStonith());">Remove</div>
-      {{#if Pcs.is_supported_resource_refresh_one_resource}}
-        <div class="restart sprites" style="float: left"></div>
-        <div id="stonith_cleanup_link" class="link" onclick="cleanup_stonith();">Cleanup</div>
-        <div class="restart sprites" style="float: left"></div>
-        <div id="stonith_refresh_link" class="link" onclick="refresh_stonith(true);">Refresh</div>
-      {{else}}
-        <div class="restart sprites" style="float: left"></div>
-        <div id="stonith_refresh_link" class="link" onclick="refresh_stonith(false);">Refresh</div>
-      {{/if}}
+      <div class="restart sprites" style="float: left"></div>
+      <div id="stonith_cleanup_link" class="link" onclick="cleanup_stonith();">Cleanup</div>
     {{else}}
       <div class="checkdark sprites" style="float: left"></div>
       <div id="resource_start_link" class="link" onclick="enable_resource();">Enable</div>
       <div class="cancel sprites" style="float: left"></div>
       <div id="resource_stop_link" class="link" onclick="disable_resource();">Disable</div>
-      {{#if Pcs.is_supported_resource_refresh_one_resource}}
-        <div class="restart sprites" style="float: left"></div>
-        <div id="resource_cleanup_link" class="link" onclick="cleanup_resource();">Cleanup</div>
-        <div class="restart sprites" style="float: left"></div>
-        <div id="resource_refresh_link" class="link" onclick="refresh_resource(true);">Refresh</div>
-      {{else}}
-        <div class="restart sprites" style="float: left"></div>
-        <div id="resource_refresh_link" class="link" onclick="refresh_resource(false);">Refresh</div>
-      {{/if}}
+      <div class="restart sprites" style="float: left"></div>
+      <div id="resource_cleanup_link" class="link" onclick="cleanup_resource();">Cleanup</div>
       <div class="xdark sprites" style="float: left"></div>
       <div id="resource_delete_link" class="link" onclick="verify_remove_resources(curResource());">Remove</div>
       </div>
@@ -862,10 +848,6 @@ Use the 'Add' button to submit the form.">
           value=param.cur_val
           placeholder=param.default
       }}
-      {{#if param.pcs_deprecated_warning}}
-        <br />
-        <span class="status-warning">{{param.pcs_deprecated_warning}}</span>
-      {{/if}}
     </td>
   </script>
 
@@ -995,12 +977,6 @@ Use the 'Add' button to submit the form.">
             table_id_suffix=table_id_suffix
             table_name="Optional Arguments"
             parameters=agent.optional_parameters
-        }}
-        {{parameters-table
-            table_id="advanced_args"
-            table_id_suffix=table_id_suffix
-            table_name="Advanced Arguments"
-            parameters=agent.advanced_parameters
         }}
         {{#if resource}}
           <input class="apply_changes" type="button" onclick="$(this).hide();create_resource($(this)
@@ -1172,7 +1148,7 @@ Use the 'Add' button to submit the form.">
     <tr>
       <td width="170" style="vertical-align: top;">
         <div id="logo">
-          <img width="170" height="40" src="/images/HAM-logo.svg" onclick="if (Pcs) { Pcs.update(); }">
+          <img width="170" height="40" src="/images/HAM-logo.png" onclick="if (Pcs) { Pcs.update(); }">
         </div>
       </td>
       <td>

@@ -2,6 +2,7 @@ from __future__ import (
     absolute_import,
     division,
     print_function,
+    unicode_literals,
 )
 
 import xml.dom.minidom
@@ -14,12 +15,6 @@ def dom_get_child_elements(element):
         if child.nodeType == xml.dom.minidom.Node.ELEMENT_NODE
     ]
 
-def etree_to_str(tree):
-    #etree returns string in bytes: b'xml'
-    #python 3 removed .encode() from byte strings
-    #run(...) calls subprocess.Popen.communicate which calls encode...
-    #so there is bytes to str conversion
-    return etree.tostring(tree).decode()
 
 class XmlManipulation(object):
     @classmethod
@@ -44,8 +39,13 @@ class XmlManipulation(object):
         return self
 
     def __str__(self):
-        return etree_to_str(self.tree)
+        #etree returns string in bytes: b'xml'
+        #python 3 removed .encode() from byte strings
+        #run(...) calls subprocess.Popen.communicate which calls encode...
+        #so there is bytes to str conversion
+        return etree.tostring(self.tree).decode()
 
 
 def get_xml_manipulation_creator_from_file(file_name):
     return lambda: XmlManipulation.from_file(file_name)
+

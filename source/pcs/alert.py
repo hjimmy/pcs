@@ -2,6 +2,7 @@ from __future__ import (
     absolute_import,
     division,
     print_function,
+    unicode_literals,
 )
 
 import sys
@@ -17,7 +18,7 @@ from pcs.cli.common.parse_args import prepare_options, group_by_keywords
 from pcs.cli.common.console_report import indent
 from pcs.lib.errors import LibraryError
 
-parse_cmd_sections = partial(group_by_keywords, implicit_first_group_key="main")
+parse_cmd_sections = partial(group_by_keywords, implicit_first_keyword="main")
 
 def alert_cmd(*args):
     argv = args[1]
@@ -224,17 +225,15 @@ def _recipient_to_str(recipient):
 def print_alert_config(lib, argv, modifiers):
     if argv:
         raise CmdLineInputError()
-    print("\n".join(alert_config_lines(lib)))
 
-def alert_config_lines(lib):
-    lines = ["Alerts:"]
+    print("Alerts:")
     alert_list = lib.alert.get_all_alerts()
     if alert_list:
         for alert in alert_list:
-            lines.extend(indent(_alert_to_str(alert), 1))
+            print("\n".join(indent(_alert_to_str(alert), 1)))
     else:
-        lines.append(" No alerts defined")
-    return lines
+        print(" No alerts defined")
+
 
 def print_alerts_in_json(lib, argv, dummy_modifiers):
     # This is used only by pcsd, will be removed in new architecture
@@ -242,3 +241,4 @@ def print_alerts_in_json(lib, argv, dummy_modifiers):
         raise CmdLineInputError()
 
     print(json.dumps(lib.alert.get_all_alerts()))
+

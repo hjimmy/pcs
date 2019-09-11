@@ -2,88 +2,12 @@ from __future__ import (
     absolute_import,
     division,
     print_function,
+    unicode_literals,
 )
-
-from functools import partial
 
 from pcs.common import report_codes
 from pcs.lib.errors import ReportItem, ReportItemSeverity
 
-def forceable_error(force_code, report_creator, *args, **kwargs):
-    """
-    Return ReportItem created by report_creator.
-
-    This is experimental shortcut for common pattern. It is intended to
-    cooperate with functions "error" and  "warning".
-    the pair with function "warning".
-
-    string force_code is code for forcing error
-    callable report_creator is function that produce ReportItem. It must take
-        parameters forceable (None or force code) and severity
-        (from ReportItemSeverity)
-    rest of args are for the report_creator
-    """
-    return report_creator(
-        *args,
-        forceable=force_code,
-        severity=ReportItemSeverity.ERROR,
-        **kwargs
-    )
-
-def warning(report_creator, *args, **kwargs):
-    """
-    Return ReportItem created by report_creator.
-
-    This is experimental shortcut for common pattern. It is intended to
-    cooperate with functions "error" and  "forceable_error".
-
-    callable report_creator is function that produce ReportItem. It must take
-        parameters forceable (None or force code) and severity
-        (from ReportItemSeverity)
-    rest of args are for the report_creator
-    """
-    return report_creator(
-        *args,
-        forceable=None,
-        severity=ReportItemSeverity.WARNING,
-        **kwargs
-    )
-
-def error(report_creator, *args, **kwargs):
-    """
-    Return ReportItem created by report_creator.
-
-    This is experimental shortcut for common pattern. It is intended to
-    cooperate with functions "forceable_error" and "forceable_error".
-
-    callable report_creator is function that produce ReportItem. It must take
-        parameters forceable (None or force code) and severity
-        (from ReportItemSeverity)
-    rest of args are for the report_creator
-    """
-    return report_creator(
-        *args,
-        forceable=None,
-        severity=ReportItemSeverity.ERROR,
-        **kwargs
-    )
-
-def get_problem_creator(force_code=None, is_forced=False):
-    """
-    Returns report creator wraper (forceable_error or warning).
-
-    This is experimental shortcut for decision if ReportItem will be
-    either forceable_error or warning.
-
-    string force_code is code for forcing error. It could be usefull to prepare
-        it for whole module by using functools.partial.
-    bool warn_only is flag for selecting wrapper
-    """
-    if not force_code:
-        return error
-    if is_forced:
-        return warning
-    return partial(forceable_error, force_code)
 
 def common_error(text):
     # TODO replace by more specific reports
@@ -115,7 +39,7 @@ def resource_for_constraint_is_multiinstance(
     parent_type string "clone" or "master"
     parent_id clone or master resource id
     severity report item severity
-    forceable is this report item forceable? by what category?
+    forceable is this report item forceable? by what cathegory?
     """
     return ReportItem(
         report_codes.RESOURCE_FOR_CONSTRAINT_IS_MULTIINSTANCE,
@@ -137,7 +61,7 @@ def duplicate_constraints_exist(
     constraint_type string "rsc_colocation", "rsc_order", "rsc_ticket"
     constraint_info_list list of structured constraint data according to type
     severity report item severity
-    forceable is this report item forceable? by what category?
+    forceable is this report item forceable? by what cathegory?
     """
     return ReportItem(
         report_codes.DUPLICATE_CONSTRAINTS_EXIST,
@@ -157,135 +81,38 @@ def empty_resource_set_list():
         report_codes.EMPTY_RESOURCE_SET_LIST,
     )
 
-def required_option_is_missing(
-    option_names, option_type=None,
-    severity=ReportItemSeverity.ERROR, forceable=None
-):
+def required_option_is_missing(name):
     """
     required option has not been specified, command cannot continue
-    list name is/are required but was not entered
-    option_type describes the option
-    severity report item severity
-    forceable is this report item forceable? by what category?
-    """
-    return ReportItem(
-        report_codes.REQUIRED_OPTION_IS_MISSING,
-        severity,
-        forceable=forceable,
-        info={
-            "option_names": option_names,
-            "option_type": option_type,
-        }
-    )
-
-def prerequisite_option_is_missing(
-    option_name, prerequisite_name, option_type="", prerequisite_type=""
-):
-    """
-    if the option_name is specified, the prerequisite_option must be specified
-    string option_name -- an option which depends on the prerequisite_option
-    string prerequisite_name -- the prerequisite option
-    string option_type -- describes the option
-    string prerequisite_type -- describes the prerequisite_option
     """
     return ReportItem.error(
-        report_codes.PREREQUISITE_OPTION_IS_MISSING,
+        report_codes.REQUIRED_OPTION_IS_MISSING,
         info={
-            "option_name": option_name,
-            "option_type": option_type,
-            "prerequisite_name": prerequisite_name,
-            "prerequisite_type": prerequisite_type,
+            "option_name": name
         }
     )
 
-def required_option_of_alternatives_is_missing(
-    option_names, option_type=None
-):
-    """
-    at least one option has to be specified
-    iterable option_names -- options from which at least one has to be specified
-    string option_type -- describes the option
-    """
-    severity = ReportItemSeverity.ERROR
-    forceable = None
-    return ReportItem(
-        report_codes.REQUIRED_OPTION_OF_ALTERNATIVES_IS_MISSING,
-        severity,
-        forceable=forceable,
-        info={
-            "option_names": option_names,
-            "option_type": option_type,
-        }
-    )
-
-def invalid_options(
-    option_names, allowed_options, option_type, allowed_option_patterns=None,
+def invalid_option(
+    option_name, allowed_options, option_type,
     severity=ReportItemSeverity.ERROR, forceable=None
 ):
     """
-    specified option names are not valid, usualy an error or a warning
-
-    list option_names -- specified invalid option names
-    list allowed_options -- possible allowed option names
-    string option_type -- describes the option
-    list allowed_option_patterns -- allowed user defind options patterns
-    string severity -- report item severity
-    mixed forceable -- is this report item forceable? by what category?
+    specified option name is not valid, usualy an error or a warning
+    option_name specified invalid option name
+    allowed_options iterable of possible allowed option names
+    option_type decsribes the option
+    severity report item severity
+    forceable is this report item forceable? by what cathegory?
     """
     return ReportItem(
-        report_codes.INVALID_OPTIONS,
+        report_codes.INVALID_OPTION,
         severity,
         forceable,
         info={
-            "option_names": option_names,
+            "option_name": option_name,
             "option_type": option_type,
             "allowed": sorted(allowed_options),
-            "allowed_patterns": sorted(allowed_option_patterns or []),
         }
-    )
-
-def invalid_userdefined_options(
-    option_names, allowed_description, option_type,
-    severity=ReportItemSeverity.ERROR, forceable=None
-):
-    """
-    specified option names defined by a user are not valid
-
-    This is different than invalid_options. In this case, the options are
-    supposed to be defined by a user. This report carries information that the
-    option names do not meet requirements, i.e. contain not allowed characters.
-    Invalid_options is used when the options are predefined by pcs (or
-    underlying tools).
-
-    list option_names -- specified invalid option names
-    string allowed_description -- describes what option names should look like
-    string option_type -- describes the option
-    string severity -- report item severity
-    mixed forceable -- is this report item forceable? by what category?
-    """
-    return ReportItem(
-        report_codes.INVALID_USERDEFINED_OPTIONS,
-        severity,
-        forceable,
-        info={
-            "option_names": sorted(option_names),
-            "option_type": option_type,
-            "allowed_description": allowed_description,
-        }
-    )
-
-def invalid_option_type(option_name, allowed_types):
-    """
-    specified value is not of a valid type for the option
-    string option_name -- option name whose value is not of a valid type
-    list|string allowed_types -- list of allowed types or string description
-    """
-    return ReportItem.error(
-        report_codes.INVALID_OPTION_TYPE,
-        info={
-            "option_name": option_name,
-            "allowed_types": allowed_types,
-        },
     )
 
 def invalid_option_value(
@@ -298,7 +125,7 @@ def invalid_option_value(
     option_value specified value which is not valid
     allowed_options list of allowed values or string description
     severity report item severity
-    forceable is this report item forceable? by what category?
+    forceable is this report item forceable? by what cathegory?
     """
     return ReportItem(
         report_codes.INVALID_OPTION_VALUE,
@@ -310,59 +137,6 @@ def invalid_option_value(
         },
         forceable=forceable
     )
-
-def deprecated_option(
-    option_name, replaced_by_options, option_type,
-    severity=ReportItemSeverity.ERROR, forceable=None
-):
-    """
-    Specified option name is deprecated and has been replaced by other option(s)
-
-    string option_name -- the deprecated option
-    iterable or string replaced_by_options -- new option(s) to be used instead
-    string option_type -- option description
-    string severity -- report item severity
-    string forceable -- a category by which the report is forceable
-    """
-    return ReportItem(
-        report_codes.DEPRECATED_OPTION,
-        severity,
-        info={
-            "option_name": option_name,
-            "option_type": option_type,
-            "replaced_by": sorted(replaced_by_options),
-        },
-        forceable=forceable
-    )
-
-def mutually_exclusive_options(option_names, option_type):
-    """
-    entered options can not coexist
-    set option_names contain entered mutually exclusive options
-    string option_type describes the option
-    """
-    return ReportItem.error(
-        report_codes.MUTUALLY_EXCLUSIVE_OPTIONS,
-        info={
-            "option_names": option_names,
-            "option_type": option_type,
-        },
-    )
-
-def invalid_cib_content(report):
-    """
-    Given cib content is not valid.
-    string report -- is human readable explanation of a cib invalidity. For
-        example a stderr of `crm_verify`.
-    """
-    return ReportItem.error(
-        report_codes.INVALID_CIB_CONTENT,
-        info={
-            "report": report,
-        }
-    )
-
-
 
 def invalid_id_is_empty(id, id_description):
     """
@@ -427,7 +201,7 @@ def multiple_score_options():
         report_codes.MULTIPLE_SCORE_OPTIONS,
     )
 
-def run_external_process_started(command, stdin, environment):
+def run_external_process_started(command, stdin):
     """
     information about running an external process
     command string the external process command
@@ -438,7 +212,6 @@ def run_external_process_started(command, stdin, environment):
         info={
             "command": command,
             "stdin": stdin,
-            "environment": environment,
         }
     )
 
@@ -504,20 +277,6 @@ def node_communication_finished(target, retval, data):
         }
     )
 
-
-def node_communication_debug_info(target, data):
-    """
-    Node communication debug info from pycurl
-    """
-    return ReportItem.debug(
-        report_codes.NODE_COMMUNICATION_DEBUG_INFO,
-        info={
-            "target": target,
-            "data": data,
-        }
-    )
-
-
 def node_communication_not_connected(node, reason):
     """
     an error occured when connecting to a remote node, debug info
@@ -531,20 +290,6 @@ def node_communication_not_connected(node, reason):
             "reason": reason,
         }
     )
-
-
-def node_communication_no_more_addresses(node, request):
-    """
-    request failed and there are no more addresses to try it again
-    """
-    return ReportItem.warning(
-        report_codes.NODE_COMMUNICATION_NO_MORE_ADDRESSES,
-        info={
-            "node": node,
-            "request": request,
-        }
-    )
-
 
 def node_communication_error_not_authorized(
     node, command, reason,
@@ -606,25 +351,20 @@ def node_communication_error_unsupported_command(
         forceable=forceable
     )
 
-def node_communication_command_unsuccessful(
-    node, command, reason, severity=ReportItemSeverity.ERROR, forceable=None
-):
+def node_communication_command_unsuccessful(node, command, reason):
     """
     node rejected a request for another reason with a plain text explanation
     node string node address / name
     reason string decription of the error
     """
-    return ReportItem(
+    return ReportItem.error(
         report_codes.NODE_COMMUNICATION_COMMAND_UNSUCCESSFUL,
-        severity,
         info={
             "node": node,
             "command": command,
             "reason": reason,
-        },
-        forceable=forceable
+        }
     )
-
 
 def node_communication_error_other_error(
     node, command, reason,
@@ -665,84 +405,6 @@ def node_communication_error_unable_to_connect(
         },
         forceable=forceable
     )
-
-
-def node_communication_error_timed_out(
-    node, command, reason,
-    severity=ReportItemSeverity.ERROR, forceable=None
-):
-    """
-    Communication with node timed out.
-    """
-    return ReportItem(
-        report_codes.NODE_COMMUNICATION_ERROR_TIMED_OUT,
-        severity,
-        info={
-            "node": node,
-            "command": command,
-            "reason": reason,
-        },
-        forceable=forceable
-    )
-
-def node_communication_proxy_is_set(node=None, address=None):
-    """
-    Warning when connection failed and there is proxy set in environment
-    variables
-    """
-    return ReportItem.warning(
-        report_codes.NODE_COMMUNICATION_PROXY_IS_SET,
-        info={
-            "node": node,
-            "address": address,
-        }
-    )
-
-
-def node_communication_retrying(node, failed_address, next_address, request):
-    """
-    Request failed due communication error connecting via specified address,
-    therefore trying another address if there is any.
-    """
-    return ReportItem.warning(
-        report_codes.NODE_COMMUNICATION_RETRYING,
-        info={
-            "node": node,
-            "failed_address": failed_address,
-            "next_address": next_address,
-            "request": request,
-        }
-    )
-
-
-def cannot_add_node_is_in_cluster(node):
-    """
-    Node is in cluster. It is not possible to add it as a new cluster node.
-    """
-    return ReportItem.error(
-        report_codes.CANNOT_ADD_NODE_IS_IN_CLUSTER,
-        info={"node": node}
-    )
-
-def cannot_add_node_is_running_service(node, service):
-    """
-    Node is running service. It is not possible to add it as a new cluster node.
-    string node address of desired node
-    string service name of service (pacemaker, pacemaker_remote)
-    """
-    return ReportItem.error(
-        report_codes.CANNOT_ADD_NODE_IS_RUNNING_SERVICE,
-        info={
-            "node": node,
-            "service": service,
-        }
-    )
-
-def defaults_can_be_overriden():
-    """
-    Warning when settings defaults (op_defaults, rsc_defaults...)
-    """
-    return ReportItem.warning(report_codes.DEFAULTS_CAN_BE_OVERRIDEN)
 
 def corosync_config_distribution_started():
     """
@@ -830,14 +492,6 @@ def corosync_quorum_get_status_error(reason):
         info={
             "reason": reason,
         }
-    )
-
-def corosync_quorum_heuristics_enabled_with_no_exec():
-    """
-    no exec_ is specified, therefore heuristics are effectively disabled
-    """
-    return ReportItem.warning(
-        report_codes.COROSYNC_QUORUM_HEURISTICS_ENABLED_WITH_NO_EXEC
     )
 
 def corosync_quorum_set_expected_votes_error(reason):
@@ -1147,169 +801,28 @@ def id_already_exists(id):
         info={"id": id}
     )
 
-def id_belongs_to_unexpected_type(id, expected_types, current_type):
-    """
-    Specified id exists but for another element than expected.
-    For example user wants to create resource in group that is specifies by id.
-    But id does not belong to group.
-    """
-    return ReportItem.error(
-        report_codes.ID_BELONGS_TO_UNEXPECTED_TYPE,
-        info={
-            "id": id,
-            "expected_types": expected_types,
-            "current_type": current_type,
-        }
-    )
-
-def object_with_id_in_unexpected_context(
-    object_type, object_id, expected_context_type, expected_context_id
-):
-    """
-    Object specified by object_type (tag) and object_id exists but not inside
-    given context (expected_context_type, expected_context_id).
-    """
-    return ReportItem.error(
-        report_codes.OBJECT_WITH_ID_IN_UNEXPECTED_CONTEXT,
-        info={
-            "type": object_type,
-            "id": object_id,
-            "expected_context_type": expected_context_type,
-            "expected_context_id": expected_context_id,
-        }
-    )
-
-
-def id_not_found(id, expected_types, context_type="", context_id=""):
+def id_not_found(id, id_description):
     """
     specified id does not exist in CIB, user referenced a nonexisting id
-
-    string id -- specified id
-    list expected_types -- list of id's roles - expected types with the id
-    string context_type -- context_id's role / type
-    string context_id -- specifies the search area
+    use "resource_does_not_exist" if id is a resource id
+    id string specified id
+    id_description string decribe id's role
     """
     return ReportItem.error(
         report_codes.ID_NOT_FOUND,
         info={
             "id": id,
-            "expected_types": sorted(expected_types),
-            "context_type": context_type,
-            "context_id": context_id,
+            "id_description": id_description,
         }
     )
 
-def resource_bundle_already_contains_a_resource(bundle_id, resource_id):
+def resource_does_not_exist(resource_id):
     """
-    The bundle already contains a resource, another one caanot be added
-
-    string bundle_id -- id of the bundle
-    string resource_id -- id of the resource already contained in the bundle
+    specified resource does not exist (e.g. when creating in constraints)
+    resource_id string specified resource id
     """
     return ReportItem.error(
-        report_codes.RESOURCE_BUNDLE_ALREADY_CONTAINS_A_RESOURCE,
-        info={
-            "bundle_id": bundle_id,
-            "resource_id": resource_id,
-        }
-    )
-
-def cannot_group_resource_next_to_itself(resource_id, group_id):
-    """
-    Cannot put resource(id=resource_id) into group(id=group_id) next to itself:
-        resource(id=resource_id).
-    """
-    return ReportItem.error(
-        report_codes.CANNOT_GROUP_RESOURCE_NEXT_TO_ITSELF,
-        info={
-            "resource_id": resource_id,
-            "group_id": group_id,
-        }
-    )
-
-def stonith_resources_do_not_exist(
-    stonith_ids, severity=ReportItemSeverity.ERROR, forceable=None
-):
-    """
-    specified stonith resource doesn't exist (e.g. when creating in constraints)
-    iterable stoniths -- list of specified stonith id
-    """
-    return ReportItem(
-        report_codes.STONITH_RESOURCES_DO_NOT_EXIST,
-        severity,
-        info={
-            "stonith_ids": stonith_ids,
-        },
-        forceable=forceable
-    )
-
-def resource_running_on_nodes(
-    resource_id, roles_with_nodes, severity=ReportItemSeverity.INFO
-):
-    """
-    Resource is running on some nodes. Taken from cluster state.
-
-    string resource_id represent the resource
-    list of tuple roles_with_nodes contain pairs (role, node)
-    """
-    return ReportItem(
-        report_codes.RESOURCE_RUNNING_ON_NODES,
-        severity,
-        info={
-            "resource_id": resource_id,
-            "roles_with_nodes": roles_with_nodes,
-        }
-    )
-
-def resource_does_not_run(resource_id, severity=ReportItemSeverity.INFO):
-    """
-    Resource is not running on any node. Taken from cluster state.
-
-    string resource_id represent the resource
-    """
-    return ReportItem(
-        report_codes.RESOURCE_DOES_NOT_RUN,
-        severity,
-        info={
-            "resource_id": resource_id,
-        }
-    )
-
-def resource_is_guest_node_already(resource_id):
-    """
-    The resource is already used as guest node (i.e. has meta attribute
-    remote-node).
-
-    string resource_id -- id of the resource that is guest node
-    """
-    return ReportItem.error(
-        report_codes.RESOURCE_IS_GUEST_NODE_ALREADY,
-        info={
-            "resource_id": resource_id,
-        }
-    )
-
-def resource_is_unmanaged(resource_id):
-    """
-    The resource the user works with is unmanaged (e.g. in enable/disable)
-
-    string resource_id -- id of the unmanaged resource
-    """
-    return ReportItem.warning(
-        report_codes.RESOURCE_IS_UNMANAGED,
-        info={
-            "resource_id": resource_id,
-        }
-    )
-
-def resource_managed_no_monitor_enabled(resource_id):
-    """
-    The resource which was set to managed mode has no monitor operations enabled
-
-    string resource_id -- id of the resource
-    """
-    return ReportItem.warning(
-        report_codes.RESOURCE_MANAGED_NO_MONITOR_ENABLED,
+        report_codes.RESOURCE_DOES_NOT_EXIST,
         info={
             "resource_id": resource_id,
         }
@@ -1341,15 +854,12 @@ def cib_load_error_scope_missing(scope, reason):
         }
     )
 
-def cib_load_error_invalid_format(reason):
+def cib_load_error_invalid_format():
     """
     cib does not conform to the schema
     """
     return ReportItem.error(
         report_codes.CIB_LOAD_ERROR_BAD_FORMAT,
-        info={
-            "reason": reason,
-        }
     )
 
 def cib_missing_mandatory_section(section_name):
@@ -1378,49 +888,6 @@ def cib_push_error(reason, pushed_cib):
         }
     )
 
-def cib_save_tmp_error(reason):
-    """
-    cannot save CIB into a temporary file
-    string reason error description
-    """
-    return ReportItem.error(
-        report_codes.CIB_SAVE_TMP_ERROR,
-        info={
-            "reason": reason,
-        }
-    )
-
-def cib_diff_error(reason, cib_old, cib_new):
-    """
-    cannot obtain a diff of CIBs
-    string reason -- error description
-    string cib_old -- the CIB to be diffed against
-    string cib_new -- the CIB diffed against the old cib
-    """
-    return ReportItem.error(
-        report_codes.CIB_DIFF_ERROR,
-        info={
-            "reason": reason,
-            "cib_old": cib_old,
-            "cib_new": cib_new,
-        }
-    )
-
-def cib_push_forced_full_due_to_crm_feature_set(required_set, current_set):
-    """
-    Pcs uses the "push full CIB" approach so race conditions may occur.
-
-    pcs.common.tools.Version required_set -- crm_feature_set required for diff
-    pcs.common.tools.Version current_set -- actual CIB crm_feature_set
-    """
-    return ReportItem.warning(
-        report_codes.CIB_PUSH_FORCED_FULL_DUE_TO_CRM_FEATURE_SET,
-        info={
-            "required_set": str(required_set),
-            "current_set": str(current_set),
-        }
-    )
-
 def cluster_state_cannot_load(reason):
     """
     cannot load cluster status from crm_mon, crm_mon exited with non-zero code
@@ -1441,53 +908,44 @@ def cluster_state_invalid_format():
         report_codes.BAD_CLUSTER_STATE_FORMAT,
     )
 
-def wait_for_idle_not_supported():
+def resource_wait_not_supported():
     """
     crm_resource does not support --wait
     """
     return ReportItem.error(
-        report_codes.WAIT_FOR_IDLE_NOT_SUPPORTED,
+        report_codes.RESOURCE_WAIT_NOT_SUPPORTED,
     )
 
-def wait_for_idle_timed_out(reason):
+def resource_wait_timed_out(reason):
     """
     waiting for resources (crm_resource --wait) failed, timeout expired
     string reason error description
     """
     return ReportItem.error(
-        report_codes.WAIT_FOR_IDLE_TIMED_OUT,
+        report_codes.RESOURCE_WAIT_TIMED_OUT,
         info={
             "reason": reason,
         }
     )
 
-def wait_for_idle_error(reason):
+def resource_wait_error(reason):
     """
     waiting for resources (crm_resource --wait) failed
     string reason error description
     """
     return ReportItem.error(
-        report_codes.WAIT_FOR_IDLE_ERROR,
+        report_codes.RESOURCE_WAIT_ERROR,
         info={
             "reason": reason,
         }
     )
 
-def wait_for_idle_not_live_cluster():
-    """
-    cannot wait for the cluster if not running with a live cluster
-    """
-    return ReportItem.error(
-        report_codes.WAIT_FOR_IDLE_NOT_LIVE_CLUSTER,
-    )
-
 def resource_cleanup_error(reason, resource=None, node=None):
     """
-    An error occured when deleting resource failed operations in pacemaker
-
-    string reason -- error description
-    string resource -- resource which has been cleaned up
-    string node -- node which has been cleaned up
+    an error occured when deleting resource history in pacemaker
+    string reason error description
+    string resource resource which has been cleaned up
+    string node node which has been cleaned up
     """
     return ReportItem.error(
         report_codes.RESOURCE_CLEANUP_ERROR,
@@ -1498,142 +956,26 @@ def resource_cleanup_error(reason, resource=None, node=None):
         }
     )
 
-def resource_refresh_error(reason, resource=None, node=None):
+def resource_cleanup_too_time_consuming(threshold):
     """
-    An error occured when deleting resource history in pacemaker
-
-    string reason -- error description
-    string resource -- resource which has been cleaned up
-    string node -- node which has been cleaned up
+    resource cleanup will execute more than threshold operations in a cluster
+    threshold current threshold for trigerring this error
     """
     return ReportItem.error(
-        report_codes.RESOURCE_REFRESH_ERROR,
-        info={
-            "reason": reason,
-            "resource": resource,
-            "node": node,
-        }
-    )
-
-def resource_refresh_too_time_consuming(threshold):
-    """
-    Resource refresh would execute more than threshold operations in a cluster
-
-    int threshold -- current threshold for trigerring this error
-    """
-    return ReportItem.error(
-        report_codes.RESOURCE_REFRESH_TOO_TIME_CONSUMING,
+        report_codes.RESOURCE_CLEANUP_TOO_TIME_CONSUMING,
         info={"threshold": threshold},
         forceable=report_codes.FORCE_LOAD_THRESHOLD
     )
 
-def resource_operation_interval_duplication(duplications):
-    """
-    More operations with same name and same interval apeared.
-    Each operation with the same name (e.g. monitoring) need to have unique
-    interval.
-    dict duplications see resource operation interval duplication
-        in pcs/lib/exchange_formats.md
-    """
-    return ReportItem.error(
-        report_codes.RESOURCE_OPERATION_INTERVAL_DUPLICATION,
-        info={
-            "duplications": duplications,
-        }
-    )
-
-def resource_operation_interval_adapted(
-    operation_name, original_interval, adapted_interval
-):
-    """
-    Interval of resource operation was adopted to operation (with the same name)
-        intervals were unique.
-    Each operation with the same name (e.g. monitoring) need to have unique
-    interval.
-
-    """
-    return ReportItem.warning(
-        report_codes.RESOURCE_OPERATION_INTERVAL_ADAPTED,
-        info={
-            "operation_name": operation_name,
-            "original_interval": original_interval,
-            "adapted_interval": adapted_interval,
-        }
-    )
-
-def node_not_found(
-    node, searched_types=None, severity=ReportItemSeverity.ERROR, forceable=None
-):
+def node_not_found(node):
     """
     specified node does not exist
     node string specified node
-    searched_types list|string
-    """
-    return ReportItem(
-        report_codes.NODE_NOT_FOUND,
-        severity,
-        info={
-            "node": node,
-            "searched_types": searched_types if searched_types else []
-        },
-        forceable=forceable
-    )
-
-def node_to_clear_is_still_in_cluster(
-    node, severity=ReportItemSeverity.ERROR, forceable=None
-):
-    """
-    specified node is still in cluster and `crm_node --remove` should be not
-    used
-
-    node string specified node
-    """
-    return ReportItem(
-        report_codes.NODE_TO_CLEAR_IS_STILL_IN_CLUSTER,
-        severity,
-        info={
-            "node": node,
-        },
-        forceable=forceable
-    )
-
-def node_remove_in_pacemaker_failed(node_name, reason):
-    """
-    calling of crm_node --remove failed
-    string reason is caught reason
     """
     return ReportItem.error(
-        report_codes.NODE_REMOVE_IN_PACEMAKER_FAILED,
-        info={
-            "node_name": node_name,
-            "reason": reason,
-        }
+        report_codes.NODE_NOT_FOUND,
+        info={"node": node}
     )
-
-def multiple_result_found(
-    result_type, result_identifier_list, search_description="",
-    severity=ReportItemSeverity.ERROR, forceable=None
-):
-    """
-    Multiple result was found when something was looked for. E.g. resource for
-    remote node.
-
-    string result_type specifies what was looked for, e.g. "resource"
-    list result_identifier_list contains identifiers of results
-        e.g. resource ids
-    string search_description e.g. name of remote_node
-    """
-    return ReportItem(
-        report_codes.MULTIPLE_RESULTS_FOUND,
-        severity,
-        info={
-            "result_type": result_type,
-            "result_identifier_list": result_identifier_list,
-            "search_description": search_description,
-        },
-        forceable=forceable
-    )
-
 
 def pacemaker_local_node_name_not_found(reason):
     """
@@ -1813,7 +1155,7 @@ def service_kill_error(services, reason):
     return ReportItem.error(
         report_codes.SERVICE_KILL_ERROR,
         info={
-            "services": sorted(services),
+            "services": services,
             "reason": reason,
         }
     )
@@ -1826,7 +1168,7 @@ def service_kill_success(services):
     return ReportItem.info(
         report_codes.SERVICE_KILL_SUCCESS,
         info={
-            "services": sorted(services),
+            "services": services,
         }
     )
 
@@ -1979,18 +1321,6 @@ def invalid_resource_agent_name(name):
         }
     )
 
-def invalid_stonith_agent_name(name):
-    """
-    The entered stonith agent name is not valid.
-    string name -- entered stonith agent name
-    """
-    return ReportItem.error(
-        report_codes.INVALID_STONITH_AGENT_NAME,
-        info={
-            "name": name,
-        }
-    )
-
 def agent_name_guessed(entered_name, guessed_name):
     """
     Resource agent name was deduced from the entered name.
@@ -2125,242 +1455,6 @@ def sbd_disabling_started():
     )
 
 
-def sbd_device_initialization_started(device_list):
-    """
-    initialization of SBD device(s) started
-    """
-    return ReportItem.info(
-        report_codes.SBD_DEVICE_INITIALIZATION_STARTED,
-        info={
-            "device_list": device_list,
-        }
-    )
-
-
-def sbd_device_initialization_success(device_list):
-    """
-    initialization of SBD device(s) successed
-    """
-    return ReportItem.info(
-        report_codes.SBD_DEVICE_INITIALIZATION_SUCCESS,
-        info={
-            "device_list": device_list,
-        }
-    )
-
-
-def sbd_device_initialization_error(device_list, reason):
-    """
-    initialization of SBD device failed
-    """
-    return ReportItem.error(
-        report_codes.SBD_DEVICE_INITIALIZATION_ERROR,
-        info={
-            "device_list": device_list,
-            "reason": reason,
-        }
-    )
-
-
-def sbd_device_list_error(device, reason):
-    """
-    command 'sbd list' failed
-    """
-    return ReportItem.error(
-        report_codes.SBD_DEVICE_LIST_ERROR,
-        info={
-            "device": device,
-            "reason": reason,
-        }
-    )
-
-
-def sbd_device_message_error(device, node, message, reason):
-    """
-    unable to set message 'message' on shared block device 'device'
-    for node 'node'.
-    """
-    return ReportItem.error(
-        report_codes.SBD_DEVICE_MESSAGE_ERROR,
-        info={
-            "device": device,
-            "node": node,
-            "message": message,
-            "reason": reason,
-        }
-    )
-
-
-def sbd_device_dump_error(device, reason):
-    """
-    command 'sbd dump' failed
-    """
-    return ReportItem.error(
-        report_codes.SBD_DEVICE_DUMP_ERROR,
-        info={
-            "device": device,
-            "reason": reason,
-        }
-    )
-
-def files_distribution_started(file_list, node_list=None, description=None):
-    """
-    files is about to be sent to nodes
-    """
-    file_list = file_list if file_list else []
-    return ReportItem.info(
-        report_codes.FILES_DISTRIBUTION_STARTED,
-        info={
-            "file_list": file_list,
-            "node_list": node_list,
-            "description": description,
-        }
-    )
-
-def file_distribution_success(node=None, file_description=None):
-    """
-    files was successfuly distributed on nodes
-
-    string node -- name of destination node
-    string file_description -- name (code) of sucessfully put files
-    """
-    return ReportItem.info(
-        report_codes.FILE_DISTRIBUTION_SUCCESS,
-        info={
-            "node": node,
-            "file_description": file_description,
-        },
-    )
-
-def file_distribution_error(
-    node=None, file_description=None, reason=None,
-    severity=ReportItemSeverity.ERROR, forceable=None
-):
-    """
-    cannot put files to specific nodes
-
-    string node -- name of destination node
-    string file_description -- is file code
-    string reason -- is error message
-    """
-    return ReportItem(
-        report_codes.FILE_DISTRIBUTION_ERROR,
-        severity,
-        info={
-            "node": node,
-            "file_description": file_description,
-            "reason": reason,
-        },
-        forceable=forceable
-    )
-
-def files_remove_from_node_started(file_list, node_list=None, description=None):
-    """
-    files is about to be removed from nodes
-    """
-    file_list = file_list if file_list else []
-    return ReportItem.info(
-        report_codes.FILES_REMOVE_FROM_NODE_STARTED,
-        info={
-            "file_list": file_list,
-            "node_list": node_list,
-            "description": description,
-        }
-    )
-
-def file_remove_from_node_success(node=None, file_description=None):
-    """
-    files was successfuly removed nodes
-
-    string node -- name of destination node
-    string file_description -- name (code) of sucessfully put files
-    """
-    return ReportItem.info(
-        report_codes.FILE_REMOVE_FROM_NODE_SUCCESS,
-        info={
-            "node": node,
-            "file_description": file_description,
-        },
-    )
-
-def file_remove_from_node_error(
-    node=None, file_description=None, reason=None,
-    severity=ReportItemSeverity.ERROR, forceable=None
-):
-    """
-    cannot remove files from specific nodes
-
-    string node -- name of destination node
-    string file_description -- is file code
-    string reason -- is error message
-    """
-    return ReportItem(
-        report_codes.FILE_REMOVE_FROM_NODE_ERROR,
-        severity,
-        info={
-            "node": node,
-            "file_description": file_description,
-            "reason": reason,
-        },
-        forceable=forceable
-    )
-
-def service_commands_on_nodes_started(
-    action_list, node_list=None, description=None
-):
-    """
-    node was requested for actions
-    """
-    action_list = action_list if action_list else []
-    return ReportItem.info(
-        report_codes.SERVICE_COMMANDS_ON_NODES_STARTED,
-        info={
-            "action_list": action_list,
-            "node_list": node_list,
-            "description": description,
-        }
-    )
-
-def service_command_on_node_success(
-    node=None, service_command_description=None
-):
-    """
-    files was successfuly distributed on nodes
-
-    string service_command_description -- name (code) of sucessfully service
-        command
-    """
-    return ReportItem.info(
-        report_codes.SERVICE_COMMAND_ON_NODE_SUCCESS,
-        info={
-            "node": node,
-            "service_command_description": service_command_description,
-        },
-    )
-
-def service_command_on_node_error(
-    node=None, service_command_description=None, reason=None,
-    severity=ReportItemSeverity.ERROR, forceable=None
-):
-    """
-    action on nodes failed
-
-    string service_command_description -- name (code) of sucessfully service
-        command
-    string reason -- is error message
-    """
-    return ReportItem(
-        report_codes.SERVICE_COMMAND_ON_NODE_ERROR,
-        severity,
-        info={
-            "node": node,
-            "service_command_description": service_command_description,
-            "reason": reason,
-        },
-        forceable=forceable
-    )
-
-
 def invalid_response_format(node):
     """
     error message that response in invalid format has been received from
@@ -2371,69 +1465,6 @@ def invalid_response_format(node):
     return ReportItem.error(
         report_codes.INVALID_RESPONSE_FORMAT,
         info={"node": node}
-    )
-
-
-def sbd_no_device_for_node(node):
-    """
-    there is no device defined for node when enabling sbd with device
-    """
-    return ReportItem.error(
-        report_codes.SBD_NO_DEVICE_FOR_NODE,
-        info={"node": node}
-    )
-
-
-def sbd_too_many_devices_for_node(node, device_list, max_devices):
-    """
-    More than 3 devices defined for node
-    """
-    return ReportItem.error(
-        report_codes.SBD_TOO_MANY_DEVICES_FOR_NODE,
-        info={
-            "node": node,
-            "device_list": device_list,
-            "max_devices": max_devices,
-        }
-    )
-
-
-def sbd_device_path_not_absolute(device, node=None):
-    """
-    path of SBD device is not absolute
-    """
-    return ReportItem.error(
-        report_codes.SBD_DEVICE_PATH_NOT_ABSOLUTE,
-        info={
-            "device": device,
-            "node": node,
-        }
-    )
-
-
-def sbd_device_does_not_exist(device, node):
-    """
-    specified device on node doesn't exist
-    """
-    return ReportItem.error(
-        report_codes.SBD_DEVICE_DOES_NOT_EXIST,
-        info={
-            "device": device,
-            "node": node,
-        }
-    )
-
-
-def sbd_device_is_not_block_device(device, node):
-    """
-    specified device on node is not block device
-    """
-    return ReportItem.error(
-        report_codes.SBD_DEVICE_IS_NOT_BLOCK_DEVICE,
-        info={
-            "device": device,
-            "node": node,
-        }
     )
 
 
@@ -2461,8 +1492,7 @@ def watchdog_not_found(node, watchdog):
         info={
             "node": node,
             "watchdog": watchdog
-        },
-        forceable=report_codes.SKIP_WATCHDOG_VALIDATION,
+        }
     )
 
 
@@ -2534,6 +1564,18 @@ def cib_alert_recipient_invalid_value(recipient_value):
         info={"recipient": recipient_value}
     )
 
+def cib_alert_not_found(alert_id):
+    """
+    Alert with specified id doesn't exist.
+
+    alert_id -- id of alert
+    """
+    return ReportItem.error(
+        report_codes.CIB_ALERT_NOT_FOUND,
+        info={"alert": alert_id}
+    )
+
+
 def cib_upgrade_successful():
     """
     Upgrade of CIB schema was successful.
@@ -2561,14 +1603,14 @@ def unable_to_upgrade_cib_to_required_version(
     """
     Unable to upgrade CIB to minimal required schema version.
 
-    pcs.common.tools.Version current_version -- current version of CIB schema
-    pcs.common.tools.Version required_version -- required version of CIB schema
+    current_version -- current version of CIB schema
+    required_version -- required version of CIB schema
     """
     return ReportItem.error(
         report_codes.CIB_UPGRADE_FAILED_TO_MINIMAL_REQUIRED_VERSION,
         info={
-            "required_version": str(required_version),
-            "current_version": str(current_version)
+            "required_version": "{0}.{1}.{2}".format(*required_version),
+            "current_version": "{0}.{1}.{2}".format(*current_version)
         }
     )
 
@@ -2640,58 +1682,6 @@ def live_environment_required(forbidden_options):
         }
     )
 
-def live_environment_required_for_local_node():
-    """
-    The operation cannot be performed on CIB in file (not live cluster) if no
-        node name is specified i.e. working with the local node
-    """
-    return ReportItem.error(
-        report_codes.LIVE_ENVIRONMENT_REQUIRED_FOR_LOCAL_NODE,
-    )
-
-def nolive_skip_files_distribution(files_description, nodes):
-    """
-    When running action with e.g. -f the files was not distributed to nodes.
-    list files_description -- contains description of files
-    list nodes -- destinations where should be files distributed
-    """
-    return ReportItem.info(
-        report_codes.NOLIVE_SKIP_FILES_DISTRIBUTION,
-        info={
-            "files_description": files_description,
-            "nodes": nodes,
-        }
-    )
-
-def nolive_skip_files_remove(files_description, nodes):
-    """
-    When running action with e.g. -f the files was not removed from nodes.
-    list files_description -- contains description of files
-    list nodes -- destinations from where should be files removed
-    """
-    return ReportItem.info(
-        report_codes.NOLIVE_SKIP_FILES_REMOVE,
-        info={
-            "files_description": files_description,
-            "nodes": nodes,
-        }
-    )
-
-def nolive_skip_service_command_on_nodes(service, command, nodes):
-    """
-    When running action with e.g. -f the service command is not run on nodes.
-    string service -- e.g. pacemaker, pacemaker_remote, corosync
-    string command -- e.g. start, enable, stop, disable
-    list nodes -- destinations where should be commad run
-    """
-    return ReportItem.info(
-        report_codes.NOLIVE_SKIP_SERVICE_COMMAND_ON_NODES,
-        info={
-            "service": service,
-            "command": command,
-            "nodes": nodes,
-        }
-    )
 
 def quorum_cannot_disable_atb_due_to_sbd(
     severity=ReportItemSeverity.ERROR, forceable=None
@@ -2775,217 +1765,4 @@ def cluster_conf_read_error(path, reason):
             "path": path,
             "reason": reason,
         }
-    )
-
-def fencing_level_already_exists(level, target_type, target_value, devices):
-    """
-    Fencing level already exists, it cannot be created
-    """
-    return ReportItem.error(
-        report_codes.CIB_FENCING_LEVEL_ALREADY_EXISTS,
-        info={
-            "level": level,
-            "target_type": target_type,
-            "target_value": target_value,
-            "devices": devices,
-        }
-    )
-
-def fencing_level_does_not_exist(level, target_type, target_value, devices):
-    """
-    Fencing level does not exist, it cannot be updated or deleted
-    """
-    return ReportItem.error(
-        report_codes.CIB_FENCING_LEVEL_DOES_NOT_EXIST,
-        info={
-            "level": level,
-            "target_type": target_type,
-            "target_value": target_value,
-            "devices": devices,
-        }
-    )
-
-def use_command_node_add_remote(
-    severity=ReportItemSeverity.ERROR, forceable=None
-):
-    """
-    Advise the user for more appropriate command.
-    """
-    return ReportItem(
-        report_codes.USE_COMMAND_NODE_ADD_REMOTE,
-        severity,
-        info={},
-        forceable=forceable
-    )
-
-def use_command_node_add_guest(
-    severity=ReportItemSeverity.ERROR, forceable=None
-):
-    """
-    Advise the user for more appropriate command.
-    """
-    return ReportItem(
-        report_codes.USE_COMMAND_NODE_ADD_GUEST,
-        severity,
-        info={},
-        forceable=forceable
-    )
-
-def use_command_node_remove_guest(
-    severity=ReportItemSeverity.ERROR, forceable=None
-):
-    """
-    Advise the user for more appropriate command.
-    """
-    return ReportItem(
-        report_codes.USE_COMMAND_NODE_REMOVE_GUEST,
-        severity,
-        info={},
-        forceable=forceable
-    )
-
-def tmp_file_write(file_path, content):
-    """
-    It has been written into a temporary file
-    string file_path -- the file path
-    string content -- content which has been written
-    """
-    return ReportItem.debug(
-        report_codes.TMP_FILE_WRITE,
-        info={
-            "file_path": file_path,
-            "content": content,
-        }
-    )
-
-
-def unable_to_perform_operation_on_any_node():
-    """
-    This report is raised whenever
-    pcs.lib.communication.tools.OneByOneStrategyMixin strategy mixin is used
-    for network communication and operation failed on all available hosts and
-    because of this it is not possible to continue.
-    """
-    return ReportItem.error(
-        report_codes.UNABLE_TO_PERFORM_OPERATION_ON_ANY_NODE,
-    )
-
-
-def sbd_list_watchdog_error(reason):
-    """
-    Unable to get list of available watchdogs from sbd. Sbd cmd reutrned non 0.
-
-    string reason -- stderr of command
-    """
-    return ReportItem.error(
-        report_codes.SBD_LIST_WATCHDOG_ERROR,
-        info=dict(
-            reason=reason,
-        )
-    )
-
-
-def sbd_watchdog_not_supported(node, watchdog):
-    """
-    Specified watchdog is not supported in sbd (softdog?).
-
-    string node -- node name
-    string watchdog -- watchdog path
-    """
-    return ReportItem.error(
-        report_codes.SBD_WATCHDOG_NOT_SUPPORTED,
-        info=dict(
-            node=node,
-            watchdog=watchdog,
-        ),
-        forceable=report_codes.SKIP_WATCHDOG_VALIDATION,
-    )
-
-
-def sbd_watchdog_validation_inactive():
-    """
-    Warning message about not validating watchdog.
-    """
-    return ReportItem.warning(
-        report_codes.SBD_WATCHDOG_VALIDATION_INACTIVE,
-    )
-
-
-def sbd_watchdog_test_error(reason):
-    """
-    Sbd test watchdog exited with an error.
-    """
-    return ReportItem.error(
-        report_codes.SBD_WATCHDOG_TEST_ERROR,
-        info=dict(
-            reason=reason,
-        )
-    )
-
-
-def sbd_watchdog_test_multiple_devices():
-    """
-    No watchdog device has been specified for test. Because of multiple
-    available watchdogs, watchdog device to test has to be specified.
-    """
-    return ReportItem.error(
-        report_codes.SBD_WATCHDOG_TEST_MULTUPLE_DEVICES,
-    )
-
-
-def sbd_watchdog_test_failed():
-    """
-    System has not been reset.
-    """
-    return ReportItem.error(
-        report_codes.SBD_WATCHDOG_TEST_FAILED,
-    )
-
-
-def system_will_reset():
-    return ReportItem.info(
-        report_codes.SYSTEM_WILL_RESET,
-    )
-
-
-def resource_in_bundle_not_accessible(
-    bundle_id, inner_resource_id,
-    severity=ReportItemSeverity.ERROR, forceable=report_codes.FORCE_OPTIONS,
-):
-    return ReportItem(
-        report_codes.RESOURCE_IN_BUNDLE_NOT_ACCESSIBLE,
-        severity,
-        info=dict(
-            bundle_id=bundle_id,
-            inner_resource_id=inner_resource_id,
-        ),
-        forceable=forceable,
-    )
-
-def resource_instance_attr_value_not_unique(
-    instance_attr_name, instance_attr_value, agent_name, resource_id_list,
-    severity=ReportItemSeverity.ERROR, forceable=None
-):
-    """
-    Value of a resource instance attribute is not unique in the configuration
-    when creating/updating a resource
-
-    instance_attr_name string -- name of attr which should be unique
-    instance_attr_value string -- value which is already used by some resources
-    agent_name string -- resource agent name of resource
-    resource_id_list list of string -- resource ids which already have the
-        instance_attr_name set to instance_attr_value
-    severity string -- report item severity
-    forceable mixed
-    """
-    return ReportItem(
-        report_codes.RESOURCE_INSTANCE_ATTR_VALUE_NOT_UNIQUE,
-        severity,
-        info=dict(
-            instance_attr_name=instance_attr_name,
-            instance_attr_value=instance_attr_value,
-            agent_name=agent_name,
-            resource_id_list=resource_id_list,
-        ),
-        forceable=forceable,
     )

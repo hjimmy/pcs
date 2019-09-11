@@ -1,9 +1,7 @@
 from pcs.settings_default import *
-service_binary = "/usr/sbin/service"
-pengine_binary = "/usr/lib/pacemaker/pengine"
-crmd_binary = "/usr/lib/pacemaker/crmd"
-cib_binary = "/usr/lib/pacemaker/cib"
-stonithd_binary = "/usr/lib/pacemaker/stonithd"
+pengine_binary = "/usr/lib/DEB_HOST_MULTIARCH/pacemaker/pengine"
+crmd_binary = "/usr/lib/DEB_HOST_MULTIARCH/pacemaker/crmd"
+cib_binary = "/usr/lib/DEB_HOST_MULTIARCH/pacemaker/cib"
+stonithd_binary = "/usr/lib/DEB_HOST_MULTIARCH/pacemaker/stonithd"
 pcsd_exec_location = "/usr/share/pcsd/"
-pcsd_config = "/etc/default/pcsd"
 sbd_config = "/etc/default/sbd"

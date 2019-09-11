@@ -2,53 +2,12 @@ from __future__ import (
     absolute_import,
     division,
     print_function,
+    unicode_literals,
 )
 
 from pcs.test.tools.pcs_unittest import TestCase
 
 import pcs.lib.node as lib
-
-class NodeAddressesContainHost(TestCase):
-    def test_return_true_if_is_as_ring0(self):
-        self.assertTrue(
-            lib.node_addresses_contain_host(
-                [lib.NodeAddresses("HOST")],
-                "HOST"
-            )
-        )
-
-    def test_return_true_if_is_as_ring1(self):
-        self.assertTrue(
-            lib.node_addresses_contain_host(
-                [lib.NodeAddresses("SOME", ring1="HOST")],
-                "HOST"
-            )
-        )
-
-    def test_return_false_if_not_match(self):
-        self.assertFalse(
-            lib.node_addresses_contain_host(
-                [lib.NodeAddresses("SOME", ring1="ANOTHER")],
-                "HOST"
-            )
-        )
-
-class NodeAddressesContainName(TestCase):
-    def test_return_true_if_is_as_name(self):
-        self.assertTrue(
-            lib.node_addresses_contain_name(
-                [lib.NodeAddresses("HOST", name="NAME")],
-                "NAME"
-            )
-        )
-
-    def test_return_false_if_not_match(self):
-        self.assertFalse(
-            lib.node_addresses_contain_name(
-                [lib.NodeAddresses(ring0="NAME")],
-                "NAME"
-            )
-        )
 
 class NodeAddressesTest(TestCase):
     def test_properties_all(self):
@@ -106,37 +65,7 @@ class NodeAddressesTest(TestCase):
         self.assertFalse(another_node0 < node0)
         self.assertFalse(node1 < node1)
         self.assertTrue(node0 < node1)
-        self.assertFalse(node1 < node0)
-
-class NodeAddressesRepr(TestCase):
-    def test_host_only_specified(self):
-        self.assertEqual(repr(lib.NodeAddresses("node0")), str(
-            "<pcs.lib.node.NodeAddresses ['node0'], {'name': None, 'id': None}>"
-        ))
-
-    def test_host_and_name_specified(self):
-        self.assertEqual(repr(lib.NodeAddresses("node0", name="name0")), str(
-            "<pcs.lib.node.NodeAddresses ['node0'],"
-            " {'name': 'name0', 'id': None}>"
-        ))
-
-    def test_host_name_and_id_specified(self):
-        self.assertEqual(
-            repr(lib.NodeAddresses("node0", name="name0", id="id0")),
-            str(
-                "<pcs.lib.node.NodeAddresses ['node0'],"
-                " {'name': 'name0', 'id': 'id0'}>"
-            )
-        )
-
-    def test_host_ring1_name_and_id_specified(self):
-        self.assertEqual(
-            repr(lib.NodeAddresses("node0", "node0-1", name="name0", id="id0")),
-            str(
-                "<pcs.lib.node.NodeAddresses ['node0', 'node0-1'],"
-                " {'name': 'name0', 'id': 'id0'}>"
-            )
-        )
+        self.assertFalse(node1 < node1)
 
 
 class NodeAddressesListTest(TestCase):
@@ -198,31 +127,4 @@ class NodeAddressesListTest(TestCase):
         self.assertEqual(node0, node_list.find_by_label("node0"))
         self.assertRaises(
             lib.NodeNotFound, lambda: node_list.find_by_label("node2")
-        )
-
-class NodeAddressesList__add__(TestCase):
-    def test_can_add_node_addresses_list(self):
-        node0 = lib.NodeAddresses("node0")
-        node1 = lib.NodeAddresses("node1")
-        node2 = lib.NodeAddresses("node2")
-        self.assertEqual(lib.NodeAddressesList(
-            [node0, node1, node2])._list,
-            (
-                lib.NodeAddressesList([node0, node1])
-                +
-                lib.NodeAddressesList([node2])
-            )._list
-        )
-
-    def test_can_add_list(self):
-        node0 = lib.NodeAddresses("node0")
-        node1 = lib.NodeAddresses("node1")
-        node2 = lib.NodeAddresses("node2")
-        self.assertEqual(lib.NodeAddressesList(
-            [node0, node1, node2])._list,
-            (
-                lib.NodeAddressesList([node0, node1])
-                +
-                [node2]
-            )._list
         )

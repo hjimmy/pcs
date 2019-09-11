@@ -2,13 +2,13 @@ from __future__ import (
     absolute_import,
     division,
     print_function,
+    unicode_literals,
 )
 
 import base64
-import io
+import inspect
 import json
 import os
-
 try:
     # python 2
     from pipes import quote as shell_quote
@@ -17,8 +17,15 @@ except ImportError:
     from shlex import quote as shell_quote
 import re
 import signal
+import ssl
 import subprocess
 import sys
+try:
+    # python2
+    from httplib import HTTPException
+except ImportError:
+    # python3
+    from http.client import HTTPException
 try:
     # python2
     from urllib import urlencode as urllib_urlencode
@@ -26,17 +33,32 @@ except ImportError:
     # python3
     from urllib.parse import urlencode as urllib_urlencode
 try:
-    # python 3
-    from subprocess import DEVNULL
+    # python2
+    from urllib2 import (
+        build_opener as urllib_build_opener,
+        HTTPCookieProcessor as urllib_HTTPCookieProcessor,
+        HTTPSHandler as urllib_HTTPSHandler,
+        HTTPError as urllib_HTTPError,
+        URLError as urllib_URLError
+    )
 except ImportError:
-    # python 2
-    DEVNULL = open(os.devnull, "r")
+    # python3
+    from urllib.request import (
+        build_opener as urllib_build_opener,
+        HTTPCookieProcessor as urllib_HTTPCookieProcessor,
+        HTTPSHandler as urllib_HTTPSHandler
+    )
+    from urllib.error import (
+        HTTPError as urllib_HTTPError,
+        URLError as urllib_URLError
+    )
 
 from pcs import settings
-from pcs.common import pcs_pycurl as pycurl
+from pcs.common import report_codes
 from pcs.common.tools import (
     join_multilines,
     simple_cache,
+    run_parallel as tools_run_parallel,
 )
 from pcs.lib import reports
 from pcs.lib.errors import LibraryError, ReportItemSeverity
@@ -100,12 +122,14 @@ def is_systemctl():
     Check whenever is local system running on systemd.
     Returns True if current system is systemctl compatible, False otherwise.
     """
-    systemd_paths = [
-        '/run/systemd/system',
+    systemctl_paths = [
+        '/usr/bin/systemctl',
+        '/bin/systemctl',
         '/var/run/systemd/system',
+        '/run/systemd/system',
     ]
-    for path in systemd_paths:
-        if os.path.isdir(path):
+    for path in systemctl_paths:
+        if os.path.exists(path):
             return True
     return False
 
@@ -120,7 +144,7 @@ def disable_service(runner, service, instance=None):
     instance -- instance name, it ha no effect on not systemd systems.
         If None no instance name will be used.
     """
-    if not is_service_installed(runner, service, instance):
+    if not is_service_installed(runner, service):
         return
     if is_systemctl():
         stdout, stderr, retval = runner.run([
@@ -212,7 +236,7 @@ def kill_services(runner, services):
     """
     # make killall not report that a process is not running
     stdout, stderr, retval = runner.run(
-        ["/usr/bin/killall", "--quiet", "--signal", "9", "--"] + list(services)
+        ["killall", "--quiet", "--signal", "9", "--"] + list(services)
     )
     # If a process isn't running, killall will still return 1 even with --quiet.
     # We don't consider that an error, so we check for output string as well.
@@ -261,18 +285,17 @@ def is_service_running(runner, service, instance=None):
     return retval == 0
 
 
-def is_service_installed(runner, service, instance=None):
+def is_service_installed(runner, service):
     """
     Check if specified service is installed on local system.
 
     runner -- CommandRunner
     service -- name of service
-    instance -- systemd service instance
     """
-    if not is_systemctl():
+    if is_systemctl():
+        return service in get_systemd_services(runner)
+    else:
         return service in get_non_systemd_services(runner)
-    service_name = "{0}{1}".format(service, "" if instance is None else "@")
-    return service_name in get_systemd_services(runner)
 
 
 def get_non_systemd_services(runner):
@@ -339,20 +362,6 @@ def is_cman_cluster(runner):
     return match is not None and match.group(1) == "1"
 
 
-def is_proxy_set(env_dict):
-    """
-    Returns True whenever any of proxy environment variables (https_proxy,
-    HTTPS_PROXY, all_proxy, ALL_PROXY) are set in env_dict. False otherwise.
-
-    env_dict -- environment variables in dict
-    """
-    proxy_list = ["https_proxy", "all_proxy"]
-    for var in proxy_list + [v.upper() for v in proxy_list]:
-        if env_dict.get(var, "") != "":
-            return True
-    return False
-
-
 class CommandRunner(object):
     def __init__(self, logger, reporter, env_vars=None):
         self._logger = logger
@@ -363,11 +372,7 @@ class CommandRunner(object):
         # executables must be specified with full path unless the PATH variable
         # is set from outside.
         self._env_vars = env_vars if env_vars else dict()
-        self._python2 = (sys.version_info.major == 2)
-
-    @property
-    def env_vars(self):
-        return self._env_vars.copy()
+        self._python2 = sys.version[0] == "2"
 
     def run(
         self, args, stdin_string=None, env_extend=None, binary_output=False
@@ -376,40 +381,25 @@ class CommandRunner(object):
         # set own PATH or CIB_file, we must allow it. I.e. it wants to run
         # a pacemaker tool on a CIB in a file but cannot afford the risk of
         # changing the CIB in the file specified by the user.
-        env_vars = self._env_vars.copy()
+        env_vars = self._env_vars
         env_vars.update(
             dict(env_extend) if env_extend else dict()
         )
 
         log_args = " ".join([shell_quote(x) for x in args])
-        self._logger.debug(
-            "Running: {args}\nEnvironment:{env_vars}{stdin_string}".format(
-                args=log_args,
-                stdin_string=("" if not stdin_string else (
-                    "\n--Debug Input Start--\n{0}\n--Debug Input End--"
-                    .format(stdin_string)
-                )),
-                env_vars=("" if not env_vars else (
-                    "\n" + "\n".join([
-                        "  {0}={1}".format(key, val)
-                        for key, val in sorted(env_vars.items())
-                    ])
-                ))
-            )
-        )
+        msg = "Running: {args}"
+        if stdin_string:
+            msg += "\n--Debug Input Start--\n{stdin}\n--Debug Input End--"
+        self._logger.debug(msg.format(args=log_args, stdin=stdin_string))
         self._reporter.process(
-            reports.run_external_process_started(
-                log_args, stdin_string, env_vars
-            )
+            reports.run_external_process_started(log_args, stdin_string)
         )
 
         try:
             process = subprocess.Popen(
                 args,
                 # Some commands react differently if they get anything via stdin
-                stdin=(
-                    subprocess.PIPE if stdin_string is not None else DEVNULL
-                ),
+                stdin=(subprocess.PIPE if stdin_string is not None else None),
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 preexec_fn=(
@@ -446,7 +436,6 @@ class CommandRunner(object):
         return out_std, out_err, retval
 
 
-# deprecated
 class NodeCommunicationException(Exception):
     # pylint: disable=super-init-not-called
     def __init__(self, node, command, reason):
@@ -455,35 +444,24 @@ class NodeCommunicationException(Exception):
         self.reason = reason
 
 
-# deprecated
 class NodeConnectionException(NodeCommunicationException):
     pass
 
 
-# deprecated
 class NodeAuthenticationException(NodeCommunicationException):
     pass
 
 
-# deprecated
 class NodePermissionDeniedException(NodeCommunicationException):
     pass
 
-# deprecated
 class NodeCommandUnsuccessfulException(NodeCommunicationException):
     pass
 
-# deprecated
 class NodeUnsupportedCommandException(NodeCommunicationException):
     pass
 
 
-# deprecated
-class NodeConnectionTimedOutException(NodeCommunicationException):
-    pass
-
-
-# deprecated
 def node_communicator_exception_to_report_item(
     e, severity=ReportItemSeverity.ERROR, forceable=None
 ):
@@ -507,8 +485,6 @@ def node_communicator_exception_to_report_item(
             reports.node_communication_error_other_error,
         NodeConnectionException:
             reports.node_communication_error_unable_to_connect,
-        NodeConnectionTimedOutException:
-            reports.node_communication_error_timed_out,
     }
     if e.__class__ in exception_to_report:
         return exception_to_report[e.__class__](
@@ -520,7 +496,6 @@ def node_communicator_exception_to_report_item(
         )
     raise e
 
-# deprecated, use pcs.common.node_communicator.Communicator
 class NodeCommunicator(object):
     """
     Sends requests to nodes
@@ -540,91 +515,42 @@ class NodeCommunicator(object):
         """
         return json.dumps(data)
 
-    def __init__(
-        self, logger, reporter, auth_tokens, user=None, groups=None,
-        request_timeout=None
-    ):
+    def __init__(self, logger, reporter, auth_tokens, user=None, groups=None):
         """
         auth_tokens authorization tokens for nodes: {node: token}
         user username
         groups groups the user is member of
-        request_timeout -- positive integer, time for one reqest in seconds
         """
         self._logger = logger
         self._reporter = reporter
         self._auth_tokens = auth_tokens
         self._user = user
         self._groups = groups
-        self._request_timeout = request_timeout
 
-    @property
-    def request_timeout(self):
-        return (
-            settings.default_request_timeout
-                if self._request_timeout is None
-                else self._request_timeout
-        )
-
-    def call_node(self, node_addr, request, data, request_timeout=None):
+    def call_node(self, node_addr, request, data):
         """
         Send a request to a node
         node_addr destination node, instance of NodeAddresses
         request command to be run on the node
         data command parameters, encoded by format_data_* method
         """
-        return self.call_host(node_addr.ring0, request, data, request_timeout)
+        return self.call_host(node_addr.ring0, request, data)
 
-    def call_host(self, host, request, data, request_timeout=None):
+    def call_host(self, host, request, data):
         """
         Send a request to a host
         host host address
         request command to be run on the host
         data command parameters, encoded by format_data_* method
-        request timeout float timeout for request, if not set object property
-            will be used
         """
-        def __debug_callback(data_type, debug_data):
-            prefixes = {
-                pycurl.DEBUG_TEXT: b"* ",
-                pycurl.DEBUG_HEADER_IN: b"< ",
-                pycurl.DEBUG_HEADER_OUT: b"> ",
-                pycurl.DEBUG_DATA_IN: b"<< ",
-                pycurl.DEBUG_DATA_OUT: b">> ",
-            }
-            if data_type in prefixes:
-                debug_output.write(prefixes[data_type])
-                debug_output.write(debug_data)
-                if not debug_data.endswith(b"\n"):
-                    debug_output.write(b"\n")
-
-        output = io.BytesIO()
-        debug_output = io.BytesIO()
-        cookies = self.__prepare_cookies(host)
-        timeout = (
-            request_timeout
-            if request_timeout is not None
-            else self.request_timeout
-        )
+        opener = self.__get_opener()
         url = "https://{host}:2224/{request}".format(
             host=("[{0}]".format(host) if ":" in host else host),
             request=request
         )
-
-        handler = pycurl.Curl()
-        handler.setopt(pycurl.PROTOCOLS, pycurl.PROTO_HTTPS)
-        handler.setopt(pycurl.TIMEOUT_MS, int(timeout * 1000))
-        handler.setopt(pycurl.URL, url.encode("utf-8"))
-        handler.setopt(pycurl.WRITEFUNCTION, output.write)
-        handler.setopt(pycurl.VERBOSE, 1)
-        handler.setopt(pycurl.DEBUGFUNCTION, __debug_callback)
-        handler.setopt(pycurl.SSL_VERIFYHOST, 0)
-        handler.setopt(pycurl.SSL_VERIFYPEER, 0)
-        handler.setopt(pycurl.NOSIGNAL, 1) # required for multi-threading
-        handler.setopt(pycurl.HTTPHEADER, ["Expect: "])
+        cookies = self.__prepare_cookies(host)
         if cookies:
-            handler.setopt(pycurl.COOKIE, ";".join(cookies).encode("utf-8"))
-        if data:
-            handler.setopt(pycurl.COPYPOSTFIELDS, data.encode("utf-8"))
+            opener.addheaders.append(("Cookie", ";".join(cookies)))
 
         msg = "Sending HTTP Request to: {url}"
         if data:
@@ -639,73 +565,86 @@ class NodeCommunicator(object):
         )
 
         try:
-            handler.perform()
-            response_data = output.getvalue().decode("utf-8")
-            response_code = handler.getinfo(pycurl.RESPONSE_CODE)
+            # python3 requires data to be bytes not str
+            if data:
+                data = data.encode("utf-8")
+            result = opener.open(url, data)
+            # python3 returns bytes not str
+            response_data = result.read().decode("utf-8")
             self._logger.debug(result_msg.format(
                 url=url,
-                code=response_code,
+                code=result.getcode(),
                 response=response_data
             ))
-            self._reporter.process(reports.node_communication_finished(
-                url, response_code, response_data
+            self._reporter.process(
+                reports.node_communication_finished(
+                    url, result.getcode(), response_data
+                )
+            )
+            return response_data
+        except urllib_HTTPError as e:
+            # python3 returns bytes not str
+            response_data = e.read().decode("utf-8")
+            self._logger.debug(result_msg.format(
+                url=url,
+                code=e.code,
+                response=response_data
             ))
-            if response_code == 400:
+            self._reporter.process(
+                reports.node_communication_finished(url, e.code, response_data)
+            )
+            if e.code == 400:
                 # old pcsd protocol: error messages are commonly passed in plain
                 # text in response body with HTTP code 400
                 # we need to be backward compatible with that
                 raise NodeCommandUnsuccessfulException(
                     host, request, response_data.rstrip()
                 )
-            elif response_code == 401:
+            elif e.code == 401:
                 raise NodeAuthenticationException(
-                    host, request, "HTTP error: {0}".format(response_code)
+                    host, request, "HTTP error: {0}".format(e.code)
                 )
-            elif response_code == 403:
+            elif e.code == 403:
                 raise NodePermissionDeniedException(
-                    host, request, "HTTP error: {0}".format(response_code)
+                    host, request, "HTTP error: {0}".format(e.code)
                 )
-            elif response_code == 404:
+            elif e.code == 404:
                 raise NodeUnsupportedCommandException(
-                    host, request, "HTTP error: {0}".format(response_code)
+                    host, request, "HTTP error: {0}".format(e.code)
                 )
-            elif response_code >= 400:
-                raise NodeCommunicationException(
-                    host, request, "HTTP error: {0}".format(response_code)
-                )
-            return response_data
-        except pycurl.error as e:
-            # In pycurl versions lower then 7.19.3 it is not possible to set
-            # NOPROXY option. Therefore for the proper support of proxy settings
-            # we have to use environment variables.
-            if is_proxy_set(os.environ):
-                self._logger.warning("Proxy is set")
-                self._reporter.process(
-                    reports.node_communication_proxy_is_set()
-                )
-            errno, reason = e.args
-            msg = "Unable to connect to {node} ({reason})"
-            self._logger.debug(msg.format(node=host, reason=reason))
-            self._reporter.process(
-                reports.node_communication_not_connected(host, reason)
-            )
-            if errno == pycurl.E_OPERATION_TIMEDOUT:
-                raise NodeConnectionTimedOutException(host, request, reason)
             else:
-                raise NodeConnectionException(host, request, reason)
-        finally:
-            debug_data = debug_output.getvalue().decode("utf-8", "ignore")
-            self._logger.debug(
-                (
-                    "Communication debug info for calling: {url}\n"
-                    "--Debug Communication Info Start--\n"
-                    "{data}\n"
-                    "--Debug Communication Info End--"
-                ).format(url=url, data=debug_data)
+                raise NodeCommunicationException(
+                    host, request, "HTTP error: {0}".format(e.code)
+                )
+        except urllib_URLError as e:
+            self.__handle_connection_error(host, request, e.reason)
+        except HTTPException:
+            self.__handle_connection_error(host, request, "Connection error")
+
+    def __handle_connection_error(self, host, request, reason):
+        msg = "Unable to connect to {node} ({reason})"
+        self._logger.debug(msg.format(node=host, reason=reason))
+        self._reporter.process(
+            reports.node_communication_not_connected(host, reason)
+        )
+        raise NodeConnectionException(host, request, reason)
+
+    def __get_opener(self):
+        # enable self-signed certificates
+        # https://www.python.org/dev/peps/pep-0476/
+        # http://bugs.python.org/issue21308
+        if (
+            hasattr(ssl, "_create_unverified_context")
+            and
+            "context" in inspect.getargspec(urllib_HTTPSHandler.__init__).args
+        ):
+            opener = urllib_build_opener(
+                urllib_HTTPSHandler(context=ssl._create_unverified_context()),
+                urllib_HTTPCookieProcessor()
             )
-            self._reporter.process(
-                reports.node_communication_debug_info(url, debug_data)
-            )
+        else:
+            opener = urllib_build_opener(urllib_HTTPCookieProcessor())
+        return opener
 
     def __prepare_cookies(self, host):
         # Let's be safe about characters in variables (they can come from env)
@@ -721,8 +660,42 @@ class NodeCommunicator(object):
         if self._groups:
             cookies.append("CIB_user_groups={0}".format(
                 # python3 requires the value to be bytes not str
-                base64.b64encode(
-                    " ".join(self._groups).encode("utf-8")
-                ).decode("utf-8")
+                base64.b64encode(" ".join(self._groups).encode("utf-8"))
             ))
         return cookies
+
+
+def parallel_nodes_communication_helper(
+    func, func_args_kwargs, reporter, skip_offline_nodes=False
+):
+    """
+    Help running node calls in parallel and handle communication exceptions.
+    Raise LibraryError on any failure.
+
+    function func function to be run, should be a function calling a node
+    iterable func_args_kwargs list of tuples: (*args, **kwargs)
+    bool skip_offline_nodes do not raise LibraryError if a node is unreachable
+    """
+    failure_severity = ReportItemSeverity.ERROR
+    failure_forceable = report_codes.SKIP_OFFLINE_NODES
+    if skip_offline_nodes:
+        failure_severity = ReportItemSeverity.WARNING
+        failure_forceable = None
+    report_items = []
+
+    def _parallel(*args, **kwargs):
+        try:
+            func(*args, **kwargs)
+        except NodeCommunicationException as e:
+            report_items.append(
+                node_communicator_exception_to_report_item(
+                    e,
+                    failure_severity,
+                    failure_forceable
+                )
+            )
+        except LibraryError as e:
+            report_items.extend(e.args)
+
+    tools_run_parallel(_parallel, func_args_kwargs)
+    reporter.process_list(report_items)

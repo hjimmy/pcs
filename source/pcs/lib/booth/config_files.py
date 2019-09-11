@@ -2,9 +2,11 @@ from __future__ import (
     absolute_import,
     division,
     print_function,
+    unicode_literals,
 )
 
 import os
+import binascii
 
 from pcs.common import report_codes, env_file_role_codes as file_roles
 from pcs.common.tools import format_environment_error
@@ -13,6 +15,9 @@ from pcs.lib.booth import reports
 from pcs.lib.errors import ReportItemSeverity
 from pcs.settings import booth_config_dir as BOOTH_CONFIG_DIR
 
+
+def generate_key():
+    return binascii.hexlify(os.urandom(32))
 
 def get_all_configs_file_names():
     """

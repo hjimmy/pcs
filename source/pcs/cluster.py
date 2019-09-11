@@ -2,9 +2,9 @@ from __future__ import (
     absolute_import,
     division,
     print_function,
+    unicode_literals,
 )
 
-import math
 import os
 import subprocess
 import re
@@ -26,50 +26,29 @@ from pcs import (
     constraint,
     node,
     pcsd,
-    quorum,
+    # quorum,
     resource,
     settings,
     status,
+    stonith,
     usage,
     utils,
 )
 from pcs.utils import parallel_for_nodes
-from pcs.common import (
-    env_file_role_codes,
-    report_codes,
-)
-from pcs.common.tools import (
-    format_environment_error,
-    Version,
-)
-from pcs.cli.common.errors import (
-    CmdLineInputError,
-    ERR_NODE_LIST_AND_ALL_MUTUALLY_EXCLUSIVE,
-)
+from pcs.common import report_codes
 from pcs.cli.common.reports import process_library_reports, build_report_message
-import pcs.cli.cluster.command as cluster_command
 from pcs.lib import (
+    pacemaker as lib_pacemaker,
     sbd as lib_sbd,
     reports as lib_reports,
 )
 from pcs.lib.booth import sync as booth_sync
-from pcs.lib.cib.tools import VERSION_FORMAT
-from pcs.lib.commands.remote_node import _share_authkey, _destroy_pcmk_remote_env
+from pcs.lib.nodes_task import check_corosync_offline_on_nodes
 from pcs.lib.commands.quorum import _add_device_model_net
-from pcs.lib.communication.corosync import CheckCorosyncOffline
-from pcs.lib.communication.nodes import DistributeFiles
-from pcs.lib.communication.sbd import (
-    CheckSbd,
-    SetSbdConfig,
-    EnableSbdService,
-    DisableSbdService,
-)
-from pcs.lib.communication.tools import run_and_raise
 from pcs.lib.corosync import (
     config_parser as corosync_conf_utils,
     qdevice_net,
 )
-from pcs.cli.common.console_report import warn, error
 from pcs.lib.corosync.config_facade import ConfigFacade as corosync_conf_facade
 from pcs.lib.errors import (
     LibraryError,
@@ -78,20 +57,11 @@ from pcs.lib.errors import (
 from pcs.lib.external import (
     disable_service,
     is_systemctl,
-    NodeCommandUnsuccessfulException,
     NodeCommunicationException,
     node_communicator_exception_to_report_item,
 )
-from pcs.lib.env import  MIN_FEATURE_SET_VERSION_FOR_DIFF
-from pcs.lib.env_tools import get_nodes
 from pcs.lib.node import NodeAddresses
-from pcs.lib import node_communication_format
-import pcs.lib.pacemaker.live as lib_pacemaker
-from pcs.lib.tools import (
-    environment_file_to_dict,
-    generate_binary_key,
-    generate_key,
-)
+from pcs.lib.tools import environment_file_to_dict
 
 def cluster_cmd(argv):
     if len(argv) == 0:
@@ -100,7 +70,7 @@ def cluster_cmd(argv):
 
     sub_cmd = argv.pop(0)
     if (sub_cmd == "help"):
-        usage.cluster([" ".join(argv)] if argv else [])
+        usage.cluster(argv)
     elif (sub_cmd == "setup"):
         if "--name" in utils.pcs_options:
             cluster_setup([utils.pcs_options["--name"]] + argv)
@@ -117,73 +87,39 @@ def cluster_cmd(argv):
     elif (sub_cmd == "certkey"):
         cluster_certkey(argv)
     elif (sub_cmd == "auth"):
-        try:
-            cluster_auth(argv)
-        except CmdLineInputError as e:
-            utils.exit_on_cmdline_input_errror(e, "cluster", "auth")
+        cluster_auth(argv)
     elif (sub_cmd == "token"):
         cluster_token(argv)
     elif (sub_cmd == "token-nodes"):
         cluster_token_nodes(argv)
     elif (sub_cmd == "start"):
         if "--all" in utils.pcs_options:
-            if argv:
-                utils.err(ERR_NODE_LIST_AND_ALL_MUTUALLY_EXCLUSIVE)
             start_cluster_all()
         else:
             start_cluster(argv)
     elif (sub_cmd == "stop"):
         if "--all" in utils.pcs_options:
-            if argv:
-                utils.err(ERR_NODE_LIST_AND_ALL_MUTUALLY_EXCLUSIVE)
             stop_cluster_all()
         else:
             stop_cluster(argv)
     elif (sub_cmd == "kill"):
         kill_cluster(argv)
     elif (sub_cmd == "standby"):
-        try:
-            node.node_standby_cmd(
-                utils.get_library_wrapper(),
-                argv,
-                utils.get_modifiers(),
-                True
-            )
-        except LibraryError as e:
-            utils.process_library_reports(e.args)
-        except CmdLineInputError as e:
-            utils.exit_on_cmdline_input_errror(e, "node", "standby")
+        node.node_standby(argv)
     elif (sub_cmd == "unstandby"):
-        try:
-            node.node_standby_cmd(
-                utils.get_library_wrapper(),
-                argv,
-                utils.get_modifiers(),
-                False
-            )
-        except LibraryError as e:
-            utils.process_library_reports(e.args)
-        except CmdLineInputError as e:
-            utils.exit_on_cmdline_input_errror(e, "node", "unstandby")
+        node.node_standby(argv, False)
     elif (sub_cmd == "enable"):
         if "--all" in utils.pcs_options:
-            if argv:
-                utils.err(ERR_NODE_LIST_AND_ALL_MUTUALLY_EXCLUSIVE)
             enable_cluster_all()
         else:
             enable_cluster(argv)
     elif (sub_cmd == "disable"):
         if "--all" in utils.pcs_options:
-            if argv:
-                utils.err(ERR_NODE_LIST_AND_ALL_MUTUALLY_EXCLUSIVE)
             disable_cluster_all()
         else:
             disable_cluster(argv)
     elif (sub_cmd == "remote-node"):
-        try:
-            cluster_remote_node(argv)
-        except LibraryError as e:
-            utils.process_library_reports(e.args)
+        cluster_remote_node(argv)
     elif (sub_cmd == "cib"):
         get_cib(argv)
     elif (sub_cmd == "cib-push"):
@@ -193,34 +129,7 @@ def cluster_cmd(argv):
     elif (sub_cmd == "edit"):
         cluster_edit(argv)
     elif (sub_cmd == "node"):
-        if not argv:
-            usage.cluster(["node"])
-            sys.exit(1)
-
-        remote_node_command_map = {
-            "add-remote": cluster_command.node_add_remote,
-            "add-guest": cluster_command.node_add_guest,
-            "remove-remote": cluster_command.create_node_remove_remote(
-                resource.resource_remove
-            ),
-            "remove-guest": cluster_command.node_remove_guest,
-            "clear": cluster_command.node_clear,
-        }
-        if argv[0] in remote_node_command_map:
-            try:
-                remote_node_command_map[argv[0]](
-                    utils.get_library_wrapper(),
-                    argv[1:],
-                    utils.get_modifiers()
-                )
-            except LibraryError as e:
-                process_library_reports(e.args)
-            except CmdLineInputError as e:
-                utils.exit_on_cmdline_input_errror(
-                    e, "cluster", "node " + argv[0]
-                )
-        else:
-            cluster_node(argv)
+        cluster_node(argv)
     elif (sub_cmd == "localnode"):
         cluster_localnode(argv)
     elif (sub_cmd == "uidgid"):
@@ -235,12 +144,12 @@ def cluster_cmd(argv):
         cluster_verify(argv)
     elif (sub_cmd == "report"):
         cluster_report(argv)
-    elif (sub_cmd == "quorum"):
-        if argv and argv[0] == "unblock":
-            quorum.quorum_unblock_cmd(argv[1:])
-        else:
-            usage.cluster()
-            sys.exit(1)
+    # elif (sub_cmd == "quorum"):
+    #     if argv and argv[0] == "unblock":
+    #         quorum.quorum_unblock_cmd(argv[1:])
+    #     else:
+    #         usage.cluster()
+    #         sys.exit(1)
     else:
         usage.cluster()
         sys.exit(1)
@@ -282,10 +191,10 @@ def auth_nodes(nodes):
     else:
         password = None
 
-    nodes_dict = parse_nodes_with_ports(nodes)
+    set_nodes = set(nodes)
     need_auth = "--force" in utils.pcs_options or (username or password)
     if not need_auth:
-        for node in nodes_dict:
+        for node in set_nodes:
             status = utils.checkAuthorization(node)
             if status[0] == 3:
                 need_auth = True
@@ -295,9 +204,7 @@ def auth_nodes(nodes):
                 try:
                     auth_status = json.loads(status[1])
                     if auth_status["success"]:
-                        if set(nodes_dict.keys()).issubset(
-                            set(auth_status["node_list"])
-                        ):
+                        if set_nodes.issubset(set(auth_status["node_list"])):
                             mutually_authorized = True
                 except (ValueError, KeyError):
                     pass
@@ -312,66 +219,18 @@ def auth_nodes(nodes):
             password = utils.get_terminal_password()
 
         utils.auth_nodes_do(
-            nodes_dict, username, password, '--force' in utils.pcs_options,
+            set_nodes, username, password, '--force' in utils.pcs_options,
             '--local' in utils.pcs_options
         )
     else:
-        for node in nodes_dict:
+        for node in set_nodes:
             print(node + ": Already authorized")
-
-
-def parse_nodes_with_ports(node_list):
-    result = {}
-    for node in node_list:
-        if node.count(":") > 1 and not node.startswith("["):
-            # if IPv6 without port put it in parentheses
-            node = "[{0}]".format(node)
-        hostname, port =_split_addr_port(node)
-        if hostname in result and result[hostname] != port:
-            raise CmdLineInputError(
-                "Node '{0}' defined twice with different ports".format(hostname)
-            )
-        result[hostname] = port
-    return result
-
-def _split_addr_port(host_port):
-    # urrlib code without .lower()
-    host_port = host_port.strip()
-    if (
-        ("[" in host_port and "]" not in host_port)
-        or
-        ("]" in host_port and "[" not in host_port)
-    ):
-        raise CmdLineInputError("Invalid IPv6 address '{}'".format(host_port))
-
-    _, have_open_br, bracketed = host_port.partition('[')
-    if have_open_br:
-        hostname, _, port = bracketed.partition(']')
-        _, _, port = port.partition(':')
-    else:
-        hostname, _, port = host_port.partition(':')
-    if not port:
-        port = None
-    return hostname, port
-
 
 def cluster_certkey(argv):
     return pcsd.pcsd_certkey(argv)
 
 
 def cluster_setup(argv):
-    modifiers = utils.get_modifiers()
-    allowed_encryption_values = ["0", "1"]
-    if modifiers["encryption"] not in allowed_encryption_values:
-        process_library_reports([
-            lib_reports.invalid_option_value(
-                "--encryption",
-                modifiers["encryption"],
-                allowed_encryption_values,
-                severity=ReportItemSeverity.ERROR,
-                forceable=None
-            )
-        ])
     if len(argv) < 2:
         usage.cluster(["setup"])
         sys.exit(1)
@@ -438,8 +297,7 @@ def cluster_setup(argv):
         )
     if udpu_rrp and "rrp_mode" not in options["transport_options"]:
         options["transport_options"]["rrp_mode"] = "passive"
-    if messages:
-        process_library_reports(messages)
+    process_library_reports(messages)
 
     # prepare config file
     if is_rhel6:
@@ -455,11 +313,9 @@ def cluster_setup(argv):
             node_list,
             options["transport_options"],
             options["totem_options"],
-            options["quorum_options"],
-            modifiers["encryption"] == "1"
+            options["quorum_options"]
         )
-    if messages:
-        process_library_reports(messages)
+    process_library_reports(messages)
 
     # setup on the local node
     if "--local" in utils.pcs_options:
@@ -502,58 +358,23 @@ def cluster_setup(argv):
     else:
         # verify and ensure no cluster is set up on the nodes
         # checks that nodes are authenticated as well
-        lib_env = utils.get_lib_env()
         if "--force" not in utils.pcs_options:
             all_nodes_available = True
             for node in primary_addr_list:
-                available, message = utils.canAddNodeToCluster(
-                    lib_env.get_node_communicator(),
-                    lib_env.get_node_target_factory().get_target(
-                        NodeAddresses(node)
-                    )
-                )
+                available, message = utils.canAddNodeToCluster(node)
                 if not available:
                     all_nodes_available = False
                     utils.err("{0}: {1}".format(node, message), False)
             if not all_nodes_available:
                 utils.err(
                     "nodes availability check failed, use --force to override. "
-                    "WARNING: This will destroy existing cluster on the nodes. "
-                    "You should remove the nodes from their clusters instead "
-                    "to keep the clusters working properly."
+                    + "WARNING: This will destroy existing cluster on the nodes."
                 )
         print("Destroying cluster on nodes: {0}...".format(
             ", ".join(primary_addr_list)
         ))
         destroy_cluster(primary_addr_list)
         print()
-
-        try:
-            file_definitions = {}
-            file_definitions.update(
-                node_communication_format.pcmk_authkey_file(generate_key())
-            )
-            if modifiers["encryption"] == "1":
-                file_definitions.update(
-                    node_communication_format.corosync_authkey_file(
-                        generate_binary_key(random_bytes_count=128)
-                    )
-                )
-            com_cmd = DistributeFiles(
-                lib_env.report_processor,
-                file_definitions,
-                skip_offline_targets=modifiers["skip_offline_nodes"],
-                allow_fails=modifiers["force"],
-            )
-            com_cmd.set_targets(
-                lib_env.get_node_target_factory().get_target_list(
-                    [NodeAddresses(node) for node in primary_addr_list]
-                )
-            )
-            run_and_raise(lib_env.get_node_communicator(), com_cmd)
-        except LibraryError as e: #Theoretically, this should not happen
-            utils.process_library_reports(e.args)
-
 
         # send local cluster pcsd configs to the new nodes
         print("Sending cluster config files to the nodes...")
@@ -598,12 +419,8 @@ def cluster_setup(argv):
             enable_cluster(primary_addr_list)
 
         # sync certificates as the last step because it restarts pcsd
-        if _is_ssl_cert_sync_enabled():
-            print()
-            pcsd.pcsd_sync_certs(
-                [], exit_after_error=False, async_restart=modifiers["async"]
-            )
-
+        print()
+        pcsd.pcsd_sync_certs([], exit_after_error=False)
         if wait:
             print()
             wait_for_nodes_started(primary_addr_list, wait_timeout)
@@ -662,7 +479,6 @@ def cluster_setup_parse_options_corosync(options, force=False):
         "--consensus": "consensus",
         "--miss_count_const": "miss_count_const",
         "--fail_recv_const": "fail_recv_const",
-        "--netmtu": "netmtu",
     }
     for opt_name, parsed_name in totem_options_names.items():
         if opt_name in options:
@@ -822,8 +638,7 @@ def cluster_setup_parse_options_cman(options, force=False):
     return parsed, messages
 
 def cluster_setup_create_corosync_conf(
-    cluster_name, node_list, transport_options, totem_options, quorum_options,
-    encrypted
+    cluster_name, node_list, transport_options, totem_options, quorum_options
 ):
     messages = []
 
@@ -838,9 +653,8 @@ def cluster_setup_create_corosync_conf(
     corosync_conf.add_section(logging_section)
 
     totem_section.add_attribute("version", "2")
+    totem_section.add_attribute("secauth", "off")
     totem_section.add_attribute("cluster_name", cluster_name)
-    if not encrypted:
-        totem_section.add_attribute("secauth", "off")
 
     transport_options_names = (
         "transport",
@@ -858,7 +672,6 @@ def cluster_setup_create_corosync_conf(
         "consensus",
         "miss_count_const",
         "fail_recv_const",
-        "netmtu",
     )
     for opt_name in totem_options_names:
         if opt_name in totem_options:
@@ -1060,43 +873,16 @@ def start_cluster(argv):
         wait = True
 
     if len(argv) > 0:
-        nodes = set(argv) # unique
-        start_cluster_nodes(nodes)
+        start_cluster_nodes(argv)
         if wait:
-            wait_for_nodes_started(nodes, wait_timeout)
+            wait_for_nodes_started(argv, wait_timeout)
         return
 
-    start_all = (
-        "--pacemaker" not in utils.pcs_options
-        and
-        "--corosync" not in utils.pcs_options
-    )
-    if start_all or "--corosync" in utils.pcs_options:
-        start_cluster_corosync()
-    if start_all or "--pacemaker" in utils.pcs_options:
-        start_cluster_pacemaker()
-
-    # --wait will never succeed if only corosync is started. However,
-    # --pacemaker and --corosync is only supposed to be used from pcsd which
-    # does not use --wait. --wait is used from cli, where --corosync and
-    # --pacemaker is not supposed to be used (it's not documented).
-    if wait:
-        wait_for_nodes_started([], wait_timeout)
-
-def start_cluster_pacemaker():
-    print("Starting Cluster (pacemaker)...")
-    output, retval = utils.start_service("pacemaker")
-    if retval != 0:
-        print(output)
-        utils.err("unable to start pacemaker")
-
-def start_cluster_corosync():
+    print("Starting Cluster...")
+    service_list = []
     if utils.is_cman_cluster():
-        print("Starting Cluster (cman)...")
-        # Verify that CMAN_QUORUM_TIMEOUT is set, if not, then we set it to 0
-        retval, output = getstatusoutput(
-            'source /etc/sysconfig/cman ; [ -z "$CMAN_QUORUM_TIMEOUT" ]'
-        )
+#   Verify that CMAN_QUORUM_TIMEOUT is set, if not, then we set it to 0
+        retval, output = getstatusoutput('source /etc/sysconfig/cman ; [ -z "$CMAN_QUORUM_TIMEOUT" ]')
         if retval == 0:
             with open("/etc/sysconfig/cman", "a") as cman_conf_file:
                 cman_conf_file.write("\nCMAN_QUORUM_TIMEOUT=0\n")
@@ -1105,17 +891,18 @@ def start_cluster_corosync():
         if retval != 0:
             print(output)
             utils.err("unable to start cman")
-        return
-
-    print("Starting Cluster (corosync)...")
-    service_list = ["corosync"]
-    if utils.need_to_handle_qdevice_service():
-        service_list.append("corosync-qdevice")
+    else:
+        service_list.append("corosync")
+        if utils.need_to_handle_qdevice_service():
+            service_list.append("corosync-qdevice")
+    service_list.append("pacemaker")
     for service in service_list:
         output, retval = utils.start_service(service)
         if retval != 0:
             print(output)
             utils.err("unable to start {0}".format(service))
+    if wait:
+        wait_for_nodes_started([], wait_timeout)
 
 def start_cluster_all():
     wait = False
@@ -1130,101 +917,12 @@ def start_cluster_all():
     if wait:
         wait_for_nodes_started(all_nodes, wait_timeout)
 
-class IsComponentStartSupported(object):
-    def __init__(self, node):
-        self.node = node
-        self.supported = False
-        self.error = None
-
-    def run(self):
-        code, output = utils.getPcsdCapabilities(self.node)
-        if code != 0:
-            message = '{0}: {1}'.format(self.node, output.strip())
-            print(message)
-            self.error = message
-        else:
-            try:
-                data = json.loads(output)
-                if (
-                    "node.start-stop-enable-disable.start-component"
-                    in
-                    data["pcsd_capabilities"]
-                ):
-                    self.supported = True
-            except (KeyError, ValueError):
-                # not a valid json or 404 => not supported
-                pass
-
 def start_cluster_nodes(nodes):
-    # Large clusters take longer time to start up. So we make the timeout longer
-    # for each 8 nodes:
-    #  1 -  8 nodes: 1 * timeout
-    #  9 - 16 nodes: 2 * timeout
-    # 17 - 24 nodes: 3 * timeout
-    # and so on
-    # Users can override this and set their own timeout by specifying
-    # the --request-timeout option (see utils.sendHTTPRequest).
-    timeout = int(
-        settings.default_request_timeout * math.ceil(len(nodes) / 8.0)
-    )
-    was_error = False
-
-    utils.read_token_file() # cache node tokens
-    task_list = [
-        IsComponentStartSupported(node) for node in nodes
-    ]
-    utils.run_parallel([task.run for task in task_list])
-    nodes_supported = []
-    nodes_not_supported = []
-    for task in task_list:
-        if task.error:
-            # unable to connect, unathorized
-            was_error = True
-            print("{0}: Not starting cluster - node is unreachable".format(
-                task.node
-            ))
-        else:
-            if task.supported:
-                nodes_supported.append(task.node)
-            else:
-                nodes_not_supported.append(task.node)
-    if not nodes_supported + nodes_not_supported:
-        utils.err("unable to start all nodes")
-
-    node_errors = parallel_for_nodes(
-        utils.startCorosync,
-        nodes_supported,
-        quiet=True,
-        timeout=timeout,
-        __sleep_step=0.25
-    )
-    started_corosync_nodes = [
-        node for node in nodes_supported if node not in node_errors.keys()
-    ]
-    if node_errors:
-        utils.err(
-            "unable to start all nodes\n" + "\n".join(node_errors.values()),
-            exit_after_error=not started_corosync_nodes
-        )
-        was_error = True
-
-    for node in node_errors:
-        print("{0}: Not starting cluster - node is unreachable".format(node))
-
-    # nodes not supporting separate corosync / pacemaker start will start both
-    # pacemaker and corosync
-    node_errors = parallel_for_nodes(
-        utils.startPacemaker,
-        set(started_corosync_nodes + nodes_not_supported),
-        quiet=True,
-        timeout=timeout
-    )
+    node_errors = parallel_for_nodes(utils.startCluster, nodes, quiet=True)
     if node_errors:
         utils.err(
             "unable to start all nodes\n" + "\n".join(node_errors.values())
         )
-    if was_error:
-        utils.err("unable to start all nodes")
 
 def is_node_fully_started(node_status):
     return (
@@ -1236,7 +934,6 @@ def is_node_fully_started(node_status):
 def wait_for_local_node_started(stop_at, interval):
     try:
         while True:
-            time.sleep(interval)
             node_status = lib_pacemaker.get_local_node_status(
                 utils.cmd_runner()
             )
@@ -1244,6 +941,7 @@ def wait_for_local_node_started(stop_at, interval):
                 return 0, "Started"
             if datetime.datetime.now() > stop_at:
                 return 1, "Waiting timeout"
+            time.sleep(interval)
     except LibraryError as e:
         return 1, "Unable to get node status: {0}".format(
             "\n".join([build_report_message(item) for item in e.args])
@@ -1251,7 +949,6 @@ def wait_for_local_node_started(stop_at, interval):
 
 def wait_for_remote_node_started(node, stop_at, interval):
     while True:
-        time.sleep(interval)
         code, output = utils.getPacemakerNodeStatus(node)
         # HTTP error, permission denied or unable to auth
         # there is no point in trying again as it won't get magically fixed
@@ -1267,6 +964,7 @@ def wait_for_remote_node_started(node, stop_at, interval):
                 return 1, "Unable to get node status"
         if datetime.datetime.now() > stop_at:
             return 1, "Waiting timeout"
+        time.sleep(interval)
 
 def wait_for_nodes_started(node_list, timeout=None):
     timeout = 60 * 15 if timeout is None else timeout
@@ -1280,7 +978,6 @@ def wait_for_nodes_started(node_list, timeout=None):
         else:
             print(output)
     else:
-        utils.read_token_file() # cache node tokens
         node_errors = parallel_for_nodes(
             wait_for_remote_node_started, node_list, stop_at, interval
         )
@@ -1299,7 +996,6 @@ def stop_cluster_nodes(nodes):
             % "', '".join(unknown_nodes)
         )
 
-    utils.read_token_file() # cache node tokens
     stopping_all = set(nodes) >= set(all_nodes)
     if "--force" not in utils.pcs_options and not stopping_all:
         error_list = []
@@ -1340,11 +1036,7 @@ def stop_cluster_nodes(nodes):
             )
 
     was_error = False
-    node_errors = parallel_for_nodes(
-        utils.repeat_if_timeout(utils.stopPacemaker),
-        nodes,
-        quiet=True
-    )
+    node_errors = parallel_for_nodes(utils.stopPacemaker, nodes, quiet=True)
     accessible_nodes = [
         node for node in nodes if node not in node_errors.keys()
     ]
@@ -1355,7 +1047,7 @@ def stop_cluster_nodes(nodes):
         )
         was_error = True
 
-    for node in node_errors:
+    for node in node_errors.keys():
         print("{0}: Not stopping cluster - node is unreachable".format(node))
 
     node_errors = parallel_for_nodes(
@@ -1410,12 +1102,7 @@ def destroy_cluster(argv, keep_going=False):
     if len(argv) > 0:
         # stop pacemaker and resources while cluster is still quorate
         nodes = argv
-        utils.read_token_file() # cache node tokens
-        node_errors = parallel_for_nodes(
-            utils.repeat_if_timeout(utils.stopPacemaker),
-            nodes,
-            quiet=True
-        )
+        node_errors = parallel_for_nodes(utils.stopPacemaker, nodes, quiet=True)
         # proceed with destroy regardless of errors
         # destroy will stop any remaining cluster daemons
         node_errors = parallel_for_nodes(utils.destroyCluster, nodes, quiet=True)
@@ -1480,7 +1167,7 @@ def stop_cluster(argv):
 def stop_cluster_pacemaker():
     print("Stopping Cluster (pacemaker)...")
     if not is_systemctl():
-        command = [settings.service_binary, "pacemaker", "stop"]
+        command = ["service", "pacemaker", "stop"]
         # If --skip-cman is not specified, pacemaker init script will stop cman
         # and corosync as well. That way some of the nodes may stop cman before
         # others stop pacemaker, which leads to quorum loss. We need to keep
@@ -1489,7 +1176,7 @@ def stop_cluster_pacemaker():
         if utils.is_cman_cluster():
             command.append("--skip-cman")
     else:
-        command = [settings.systemctl_binary, "stop", "pacemaker"]
+        command = ["systemctl", "stop", "pacemaker"]
     output, retval = utils.run(command)
     if retval != 0:
         print(output)
@@ -1524,10 +1211,10 @@ def kill_cluster(argv):
         "cib",
         "pacemakerd",
         "pacemaker_remoted",
-        "corosync-qdevice",
+        # "corosync-qdevice",
         "corosync",
     ]
-    dummy_output, dummy_retval = utils.run(["/usr/bin/killall", "-9"] + daemons)
+    dummy_output, dummy_retval = utils.run(["killall", "-9"] + daemons)
 #    if dummy_retval != 0:
 #        print "Error: unable to execute killall -9"
 #        print output
@@ -1541,8 +1228,6 @@ def cluster_push(argv):
     filename = None
     scope = None
     timeout = None
-    diff_against = None
-
     if "--wait" in utils.pcs_options:
         timeout = utils.validate_wait_get_timeout()
     for arg in argv:
@@ -1550,22 +1235,16 @@ def cluster_push(argv):
             filename = arg
         else:
             arg_name, arg_value = arg.split("=", 1)
-            if arg_name == "scope":
-                if "--config" in utils.pcs_options:
-                    utils.err("Cannot use both scope and --config")
+            if arg_name == "scope" and "--config" not in utils.pcs_options:
                 if not utils.is_valid_cib_scope(arg_value):
                     utils.err("invalid CIB scope '%s'" % arg_value)
                 else:
                     scope = arg_value
-            elif arg_name == "diff-against":
-                diff_against = arg_value
             else:
                 usage.cluster(["cib-push"])
                 sys.exit(1)
     if "--config" in utils.pcs_options:
         scope = "configuration"
-    if diff_against and scope:
-        utils.err("Cannot use both scope and diff-against")
     if not filename:
         usage.cluster(["cib-push"])
         sys.exit(1)
@@ -1580,93 +1259,18 @@ def cluster_push(argv):
     except (EnvironmentError, xml.parsers.expat.ExpatError) as e:
         utils.err("unable to parse new cib: %s" % e)
 
-    if diff_against:
-        try:
-            original_cib = xml.dom.minidom.parse(diff_against)
-        except (EnvironmentError, xml.parsers.expat.ExpatError) as e:
-            utils.err("unable to parse original cib: %s" % e)
-
-        def unable_to_diff(reason):
-            return error(
-                "unable to diff against original cib '{0}': {1}"
-                .format(diff_against, reason)
-            )
-
-        cib_element_list = original_cib.getElementsByTagName("cib")
-
-        if len(cib_element_list) != 1:
-            raise unable_to_diff("there is not exactly one 'cib' element")
-
-        crm_feature_set = cib_element_list[0].getAttribute("crm_feature_set")
-        if not crm_feature_set:
-            raise unable_to_diff(
-                "the 'cib' element is missing 'crm_feature_set' value"
-            )
-
-        match = re.match(VERSION_FORMAT, crm_feature_set)
-        if not match:
-            raise unable_to_diff(
-                "the attribute 'crm_feature_set' of the element 'cib' has an"
-                " invalid value: '{0}'".format(crm_feature_set)
-            )
-        crm_feature_set_version = Version(
-            int(match.group("major")),
-            int(match.group("minor")),
-            int(match.group("rev")) if match.group("rev") else None
-        )
-
-        if crm_feature_set_version < MIN_FEATURE_SET_VERSION_FOR_DIFF:
-            raise unable_to_diff(
-                (
-                    "the 'crm_feature_set' version is '{0}'"
-                    " but at least version '{1}' is required"
-                ).format(
-                    crm_feature_set_version,
-                    MIN_FEATURE_SET_VERSION_FOR_DIFF,
-                )
-            )
-
-        runner = utils.cmd_runner()
-        command = [
-            os.path.join(settings.pacemaker_binaries, "crm_diff"),
-            "--original", diff_against, "--new", filename, "--no-version"
-        ]
-        patch, stderr, dummy_retval = runner.run(command)
-        # dummy_retval == 1 means one of two things:
-        # a) an error has occured
-        # b) --original and --new differ
-        # therefore it's of no use to see if an error occurred
-        if stderr.strip():
-            utils.err("unable to diff the CIBs:\n" + stderr)
-        if not patch.strip():
-            print(
-                "The new CIB is the same as the original CIB, nothing to push."
-            )
-            sys.exit(0)
-
-        command = [
-            os.path.join(settings.pacemaker_binaries, "cibadmin"),
-            "--patch", "--xml-pipe"
-        ]
-        output, stderr, retval = runner.run(command, patch)
-        if retval != 0:
-            utils.err("unable to push cib\n" + stderr + output)
-
-    else:
-        command = ["cibadmin", "--replace", "--xml-file", filename]
-        if scope:
-            command.append("--scope=%s" % scope)
-        output, retval = utils.run(command)
-        if retval != 0:
-            utils.err("unable to push cib\n" + output)
-
+    command = ["cibadmin", "--replace", "--xml-file", filename]
+    if scope:
+        command.append("--scope=%s" % scope)
+    output, retval = utils.run(command)
+    if retval != 0:
+        utils.err("unable to push cib\n" + output)
     print("CIB updated")
-
     if "--wait" not in utils.pcs_options:
         return
     cmd = ["crm_resource", "--wait"]
     if timeout:
-        cmd.extend(["--timeout", str(timeout)])
+        cmd.extend(["--timeout", timeout])
     output, retval = utils.run(cmd)
     if retval != 0:
         msg = []
@@ -1784,42 +1388,25 @@ def _ensure_cluster_is_offline_if_atb_should_be_enabled(
                 "make SBD fencing effecive after this change. Cluster has to "
                 "be offline to be able to make this change."
             )
-            com_cmd = CheckCorosyncOffline(
-                lib_env.report_processor, skip_offline_nodes
+            check_corosync_offline_on_nodes(
+                lib_env.node_communicator(),
+                lib_env.report_processor,
+                corosync_conf.get_nodes(),
+                skip_offline_nodes
             )
-            com_cmd.set_targets(
-                lib_env.get_node_target_factory().get_target_list(
-                    corosync_conf.get_nodes()
-                )
-            )
-            run_and_raise(lib_env.get_node_communicator(), com_cmd)
 
 
 def cluster_node(argv):
-    if len(argv) < 1:
-        usage.cluster(["node"])
+    if len(argv) != 2:
+        usage.cluster()
         sys.exit(1)
 
     if argv[0] == "add":
         add_node = True
     elif argv[0] in ["remove","delete"]:
         add_node = False
-    elif argv[0] == "add-outside":
-        try:
-            node_add_outside_cluster(
-                utils.get_library_wrapper(),
-                argv[1:],
-                utils.get_modifiers(),
-            )
-        except CmdLineInputError as e:
-            utils.exit_on_cmdline_input_errror(e, "cluster", "node")
-        return
     else:
-        usage.cluster(["node"])
-        sys.exit(1)
-
-    if len(argv) != 2:
-        usage.cluster([" ".join(["node", argv[0]])])
+        usage.cluster()
         sys.exit(1)
 
     node = argv[1]
@@ -1845,353 +1432,253 @@ def cluster_node(argv):
             utils.err(msg)
 
     lib_env = utils.get_lib_env()
-    modifiers = utils.get_modifiers()
+    modifiers = utils.get_modificators()
 
     if add_node == True:
-        node_add(lib_env, node0, node1, modifiers)
-    else:
-        node_remove(lib_env, node0, modifiers)
-
-
-def node_add_outside_cluster(lib, argv, modifiers):
-    if len(argv) != 2:
-        raise CmdLineInputError(
-            "Usage: pcs cluster node add-outside <node[,node-altaddr]> <cluster node>"
-        )
-
-    if len(modifiers["watchdog"]) > 1:
-        raise CmdLineInputError("Multiple watchdogs defined")
-
-    node_ring0, node_ring1 = utils.parse_multiring_node(argv[0])
-    cluster_node = argv[1]
-    data = [
-        ("new_nodename", node_ring0),
-    ]
-
-    if node_ring1:
-        data.append(("new_ring1addr", node_ring1))
-    if modifiers["watchdog"]:
-        data.append(("watchdog", modifiers["watchdog"][0]))
-    if modifiers["device"]:
-        # way to send data in array
-        data += [("devices[]", device) for device in modifiers["device"]]
-
-    communicator = utils.get_lib_env().node_communicator()
-    try:
-        communicator.call_host(
-            cluster_node,
-            "remote/add_node_all",
-            communicator.format_data_dict(data),
-        )
-    except NodeCommandUnsuccessfulException as e:
-        print(e.reason)
-    except NodeCommunicationException as e:
-        process_library_reports([node_communicator_exception_to_report_item(e)])
-
-
-def node_add(lib_env, node0, node1, modifiers):
-    wait = False
-    wait_timeout = None
-    if "--start" in utils.pcs_options and "--wait" in utils.pcs_options:
-        wait_timeout = utils.validate_wait_get_timeout(False)
-        wait = True
-    need_ring1_address = utils.need_ring1_address(utils.getCorosyncConf())
-    if not node1 and need_ring1_address:
-        utils.err(
-            "cluster is configured for RRP, "
-            "you have to specify ring 1 address for the node"
-        )
-    elif node1 and not need_ring1_address:
-        utils.err(
-            "cluster is not configured for RRP, "
-            "you must not specify ring 1 address for the node"
-        )
-    node_addr = NodeAddresses(node0, node1)
-    (canAdd, error) =  utils.canAddNodeToCluster(
-        lib_env.get_node_communicator(),
-        lib_env.get_node_target_factory().get_target(node_addr)
-    )
-
-    if not canAdd:
-        utils.err("Unable to add '%s' to cluster: %s" % (node0, error))
-
-    report_processor = lib_env.report_processor
-    com_factory = lib_env.communicator_factory
-
-    # First set up everything else than corosync. Once the new node is
-    # present in corosync.conf / cluster.conf, it's considered part of a
-    # cluster and the node add command cannot be run again. So we need to
-    # minimize the amout of actions (and therefore possible failures) after
-    # adding the node to corosync.
-    try:
-        # qdevice setup
-        if not utils.is_rhel6():
-            conf_facade = corosync_conf_facade.from_string(
-                utils.getCorosyncConf()
+        wait = False
+        wait_timeout = None
+        if "--start" in utils.pcs_options and "--wait" in utils.pcs_options:
+            wait_timeout = utils.validate_wait_get_timeout(False)
+            wait = True
+        need_ring1_address = utils.need_ring1_address(utils.getCorosyncConf())
+        if not node1 and need_ring1_address:
+            utils.err(
+                "cluster is configured for RRP, "
+                "you have to specify ring 1 address for the node"
             )
-            qdevice_model, qdevice_model_options, _, _ = conf_facade.get_quorum_device_settings()
-            if qdevice_model == "net":
-                _add_device_model_net(
-                    lib_env,
-                    qdevice_model_options["host"],
-                    conf_facade.get_cluster_name(),
-                    [node_addr],
-                    skip_offline_nodes=False
+        elif node1 and not need_ring1_address:
+            utils.err(
+                "cluster is not configured for RRP, "
+                "you must not specify ring 1 address for the node"
+            )
+        (canAdd, error) =  utils.canAddNodeToCluster(node0)
+        if not canAdd:
+            utils.err("Unable to add '%s' to cluster: %s" % (node0, error))
+
+        report_processor = lib_env.report_processor
+        node_communicator = lib_env.node_communicator()
+        node_addr = NodeAddresses(node0, node1)
+
+        # First set up everything else than corosync. Once the new node is
+        # present in corosync.conf / cluster.conf, it's considered part of a
+        # cluster and the node add command cannot be run again. So we need to
+        # minimize the amout of actions (and therefore possible failures) after
+        # adding the node to corosync.
+        try:
+            # qdevice setup
+            if not utils.is_rhel6():
+                conf_facade = corosync_conf_facade.from_string(
+                    utils.getCorosyncConf()
                 )
-
-        # sbd setup
-        new_node_target = lib_env.get_node_target_factory().get_target(
-            node_addr
-        )
-        if lib_sbd.is_sbd_enabled(utils.cmd_runner()):
-            if "--watchdog" not in utils.pcs_options:
-                watchdog = settings.sbd_watchdog_default
-                print("Warning: using default watchdog '{0}'".format(
-                    watchdog
-                ))
-            else:
-                watchdog = utils.pcs_options["--watchdog"][0]
-
-            _ensure_cluster_is_offline_if_atb_should_be_enabled(
-                lib_env, 1, modifiers["skip_offline_nodes"]
-            )
-
-            report_processor.process(lib_reports.sbd_check_started())
-
-            device_list = utils.pcs_options.get("--device", [])
-            device_num = len(device_list)
-            sbd_with_device = lib_sbd.is_device_set_local()
-            sbd_cfg = environment_file_to_dict(lib_sbd.get_local_sbd_config())
-
-            if sbd_with_device and device_num not in range(1, 4):
-                utils.err(
-                    "SBD is configured to use shared storage, therefore it " +\
-                    "is required to specify at least one device and at most " +\
-                    "{0} devices (option --device),".format(
-                        settings.sbd_max_device_num
+                qdevice_model, qdevice_model_options, _ = conf_facade.get_quorum_device_settings()
+                if qdevice_model == "net":
+                    _add_device_model_net(
+                        lib_env,
+                        qdevice_model_options["host"],
+                        conf_facade.get_cluster_name(),
+                        [node_addr],
+                        skip_offline_nodes=False
                     )
+
+            # sbd setup
+            if lib_sbd.is_sbd_enabled(utils.cmd_runner()):
+                if "--watchdog" not in utils.pcs_options:
+                    watchdog = settings.sbd_watchdog_default
+                    print("Warning: using default watchdog '{0}'".format(
+                        watchdog
+                    ))
+                else:
+                    watchdog = utils.pcs_options["--watchdog"][0]
+
+                _ensure_cluster_is_offline_if_atb_should_be_enabled(
+                    lib_env, 1, modifiers["skip_offline_nodes"]
                 )
-            elif not sbd_with_device and device_num > 0:
-                utils.err(
-                    "SBD is not configured to use shared device, " +\
-                    "therefore --device should not be specified"
+
+                report_processor.process(lib_reports.sbd_check_started())
+                lib_sbd.check_sbd_on_node(
+                    report_processor, node_communicator, node_addr, watchdog
                 )
-            com_cmd = CheckSbd(lib_env.report_processor)
-            # Do not send watchdog if validation is turned off. Listing of
-            # available watchdogs in pcsd may restart the machine in some
-            # corner cases.
-            com_cmd.add_request(
-                new_node_target,
-                "" if modifiers["no_watchdog_validation"] else watchdog,
-                device_list,
-            )
-            run_and_raise(com_factory.get_communicator(), com_cmd)
-
-            com_cmd = SetSbdConfig(lib_env.report_processor)
-            com_cmd.add_request(
-                new_node_target,
-                lib_sbd.create_sbd_config(
-                    sbd_cfg, new_node_target.label, watchdog, device_list
+                sbd_cfg = environment_file_to_dict(
+                    lib_sbd.get_local_sbd_config()
                 )
-            )
-            run_and_raise(com_factory.get_communicator(), com_cmd)
-
-            com_cmd = EnableSbdService(lib_env.report_processor)
-            com_cmd.add_request(new_node_target)
-            run_and_raise(com_factory.get_communicator(), com_cmd)
-        else:
-            com_cmd = DisableSbdService(lib_env.report_processor)
-            com_cmd.add_request(new_node_target)
-            run_and_raise(com_factory.get_communicator(), com_cmd)
-
-        # booth setup
-        booth_sync.send_all_config_to_node(
-            com_factory.get_communicator(),
-            report_processor,
-            new_node_target,
-            rewrite_existing=modifiers["force"],
-            skip_wrong_config=modifiers["force"]
-        )
-
-        if os.path.isfile(settings.corosync_authkey_file):
-            com_cmd = DistributeFiles(
-                lib_env.report_processor,
-                node_communication_format.corosync_authkey_file(
-                    open(settings.corosync_authkey_file, "rb").read()
-                ),
-                # added force, it was missing before
-                # but it doesn't make sence here
-                skip_offline_targets=modifiers["skip_offline_nodes"],
-                allow_fails=modifiers["force"],
-            )
-            com_cmd.set_targets(
-                lib_env.get_node_target_factory().get_target_list([node_addr])
-            )
-            run_and_raise(lib_env.get_node_communicator(), com_cmd)
-
-        # do not send pcmk authkey to guest and remote nodes, they either have
-        # it or are not working anyway
-        # if the cluster is stopped, we cannot get the cib anyway
-        _share_authkey(
-            lib_env,
-            get_nodes(lib_env.get_corosync_conf()),
-            node_addr,
-            skip_offline_nodes=modifiers["skip_offline_nodes"],
-            allow_incomplete_distribution=modifiers["skip_offline_nodes"]
-        )
-
-    except LibraryError as e:
-        process_library_reports(e.args)
-    except NodeCommunicationException as e:
-        process_library_reports(
-            [node_communicator_exception_to_report_item(e)]
-        )
-
-    # Now add the new node to corosync.conf / cluster.conf
-    corosync_conf = None
-    for my_node in utils.getNodesFromCorosyncConf():
-        retval, output = utils.addLocalNode(my_node, node0, node1)
-        if retval != 0:
-            utils.err(
-                "unable to add %s on %s - %s" % (node0, my_node, output.strip()),
-                False
-            )
-        else:
-            print("%s: Corosync updated" % my_node)
-            corosync_conf = output
-    if not utils.is_cman_cluster():
-        # When corosync 2 is in use, the procedure for adding a node is:
-        # 1. add the new node to corosync.conf
-        # 2. reload  corosync.conf before the new node is started
-        # 3. start the new node
-        # If done otherwise, membership gets broken and qdevice hangs. Cluster
-        # will recover after a minute or so but still it's a wrong way.
-        # When corosync 1 is in use, the procedure for adding a node is:
-        # 1. add the new node to cluster.conf
-        # 2. start the new node
-        # Starting the node will automaticall reload cluster.conf on all
-        # nodes. If the config is reloaded before the new node is started,
-        # the new node gets fenced by the cluster.
-        output, retval = utils.reloadCorosync()
-    if corosync_conf != None:
-        # send local cluster pcsd configs to the new node
-        # may be used for sending corosync config as well in future
-        pcsd_data = {
-            'nodes': [node0],
-            'force': True,
-        }
-        output, retval = utils.run_pcsdcli('send_local_configs', pcsd_data)
-        if retval != 0:
-            utils.err("Unable to set pcsd configs")
-        if output['status'] == 'notauthorized':
-            utils.err(
-                "Unable to authenticate to " + node0
-                + ", try running 'pcs cluster auth'"
-            )
-        if output['status'] == 'ok' and output['data']:
-            try:
-                node_response = output['data'][node0]
-                if node_response['status'] not in ['ok', 'not_supported']:
-                    utils.err("Unable to set pcsd configs")
-            except:
-                utils.err('Unable to communicate with pcsd')
-
-        print("Setting up corosync...")
-        utils.setCorosyncConfig(node0, corosync_conf)
-        if "--enable" in utils.pcs_options:
-            retval, err = utils.enableCluster(node0)
-            if retval != 0:
-                print("Warning: enable cluster - {0}".format(err))
-        if "--start" in utils.pcs_options or utils.is_rhel6():
-            # Always start the new node on cman cluster in order to reload
-            # cluster.conf (see above).
-            retval, err = utils.startCluster(node0)
-            if retval != 0:
-                print("Warning: start cluster - {0}".format(err))
-
-        if _is_ssl_cert_sync_enabled():
-            pcsd.pcsd_sync_certs([node0], exit_after_error=False)
-    else:
-        utils.err("Unable to update any nodes")
-    if utils.is_cman_with_udpu_transport():
-        print("Warning: Using udpu transport on a CMAN cluster, "
-            + "cluster restart is required to apply node addition")
-    if wait:
-        print()
-        wait_for_nodes_started([node0], wait_timeout)
-
-def node_remove(lib_env, node0, modifiers):
-    if node0 not in utils.getNodesFromCorosyncConf():
-        utils.err(
-            "node '%s' does not appear to exist in configuration" % node0
-        )
-    if "--force" not in utils.pcs_options:
-        retval, data = utils.get_remote_quorumtool_output(node0)
-        if retval != 0:
-            utils.err(
-                "Unable to determine whether removing the node will cause "
-                + "a loss of the quorum, use --force to override\n"
-                + data
-            )
-        # we are sure whether we are on cman cluster or not because only
-        # nodes from a local cluster can be stopped (see nodes validation
-        # above)
-        if utils.is_rhel6():
-            quorum_info = utils.parse_cman_quorum_info(data)
-        else:
-            quorum_info = utils.parse_quorumtool_output(data)
-        if quorum_info:
-            if utils.is_node_stop_cause_quorum_loss(
-                quorum_info, local=False, node_list=[node0]
-            ):
-                utils.err(
-                    "Removing the node will cause a loss of the quorum"
-                    + ", use --force to override"
+                report_processor.process(
+                    lib_reports.sbd_config_distribution_started()
                 )
-        elif not utils.is_node_offline_by_quorumtool_output(data):
-            utils.err(
-                "Unable to determine whether removing the node will cause "
-                + "a loss of the quorum, use --force to override\n"
-                + data
-            )
-        # else the node seems to be stopped already, we're ok to proceed
-
-    try:
-        _ensure_cluster_is_offline_if_atb_should_be_enabled(
-            lib_env, -1, modifiers["skip_offline_nodes"]
-        )
-    except LibraryError as e:
-        utils.process_library_reports(e.args)
-
-    nodesRemoved = False
-    c_nodes = utils.getNodesFromCorosyncConf()
-    destroy_cluster([node0], keep_going=("--force" in utils.pcs_options))
-    for my_node in c_nodes:
-        if my_node == node0:
-            continue
-        retval, output = utils.removeLocalNode(my_node, node0)
-        if retval != 0:
-            utils.err(
-                "unable to remove %s on %s - %s" % (node0,my_node,output.strip()),
-                False
-            )
-        else:
-            if output[0] == 0:
-                print("%s: Corosync updated" % my_node)
-                nodesRemoved = True
+                lib_sbd.set_sbd_config_on_node(
+                    report_processor,
+                    node_communicator,
+                    node_addr,
+                    sbd_cfg,
+                    watchdog
+                )
+                report_processor.process(lib_reports.sbd_enabling_started())
+                lib_sbd.enable_sbd_service_on_node(
+                    report_processor, node_communicator, node_addr
+                )
             else:
+                report_processor.process(lib_reports.sbd_disabling_started())
+                lib_sbd.disable_sbd_service_on_node(
+                    report_processor, node_communicator, node_addr
+                )
+
+            # booth setup
+            booth_sync.send_all_config_to_node(
+                node_communicator,
+                report_processor,
+                node_addr,
+                rewrite_existing=modifiers["force"],
+                skip_wrong_config=modifiers["force"]
+            )
+        except LibraryError as e:
+            process_library_reports(e.args)
+        except NodeCommunicationException as e:
+            process_library_reports(
+                [node_communicator_exception_to_report_item(e)]
+            )
+
+        # Now add the new node to corosync.conf / cluster.conf
+        corosync_conf = None
+        for my_node in utils.getNodesFromCorosyncConf():
+            retval, output = utils.addLocalNode(my_node, node0, node1)
+            if retval != 0:
                 utils.err(
-                    "%s: Error executing command occured: %s" % (my_node, "".join(output[1])),
+                    "unable to add %s on %s - %s" % (node0, my_node, output.strip()),
                     False
                 )
-    if nodesRemoved == False:
-        utils.err("Unable to update any nodes")
+            else:
+                print("%s: Corosync updated" % my_node)
+                corosync_conf = output
+        if not utils.is_cman_cluster():
+            # When corosync 2 is in use, the procedure for adding a node is:
+            # 1. add the new node to corosync.conf
+            # 2. reload  corosync.conf before the new node is started
+            # 3. start the new node
+            # If done otherwise, membership gets broken a qdevice hangs. Cluster
+            # will recover after a minute or so but still it's a wrong way.
+            # When corosync 1 is in use, the procedure for adding a node is:
+            # 1. add the new node to cluster.conf
+            # 2. start the new node
+            # Starting the node will automaticall reload cluster.conf on all
+            # nodes. If the config is reloaded before the new node is started,
+            # the new node gets fenced by the cluster,
+            output, retval = utils.reloadCorosync()
+        if corosync_conf != None:
+            # send local cluster pcsd configs to the new node
+            # may be used for sending corosync config as well in future
+            pcsd_data = {
+                'nodes': [node0],
+                'force': True,
+            }
+            output, retval = utils.run_pcsdcli('send_local_configs', pcsd_data)
+            if retval != 0:
+                utils.err("Unable to set pcsd configs")
+            if output['status'] == 'notauthorized':
+                utils.err(
+                    "Unable to authenticate to " + node0
+                    + ", try running 'pcs cluster auth'"
+                )
+            if output['status'] == 'ok' and output['data']:
+                try:
+                    node_response = output['data'][node0]
+                    if node_response['status'] not in ['ok', 'not_supported']:
+                        utils.err("Unable to set pcsd configs")
+                except:
+                    utils.err('Unable to communicate with pcsd')
 
-    output, retval = utils.reloadCorosync()
-    output, retval = utils.run(["crm_node", "--force", "-R", node0])
-    if utils.is_cman_with_udpu_transport():
-        print("Warning: Using udpu transport on a CMAN cluster, "
-            + "cluster restart is required to apply node removal")
+            print("Setting up corosync...")
+            utils.setCorosyncConfig(node0, corosync_conf)
+            if "--enable" in utils.pcs_options:
+                retval, err = utils.enableCluster(node0)
+                if retval != 0:
+                    print("Warning: enable cluster - {0}".format(err))
+            if "--start" in utils.pcs_options or utils.is_rhel6():
+                # Always start the new node on cman cluster in order to reload
+                # cluster.conf (see above).
+                retval, err = utils.startCluster(node0)
+                if retval != 0:
+                    print("Warning: start cluster - {0}".format(err))
+
+            pcsd.pcsd_sync_certs([node0], exit_after_error=False)
+        else:
+            utils.err("Unable to update any nodes")
+        if utils.is_cman_with_udpu_transport():
+            print("Warning: Using udpu transport on a RHEL 6 cluster, "
+                + "cluster restart is required to apply node addition")
+        if wait:
+            print()
+            wait_for_nodes_started([node0], wait_timeout)
+    else:
+        if node0 not in utils.getNodesFromCorosyncConf():
+            utils.err(
+                "node '%s' does not appear to exist in configuration" % node0
+            )
+        if "--force" not in utils.pcs_options:
+            retval, data = utils.get_remote_quorumtool_output(node0)
+            if retval != 0:
+                utils.err(
+                    "Unable to determine whether removing the node will cause "
+                    + "a loss of the quorum, use --force to override\n"
+                    + data
+                )
+            # we are sure whether we are on cman cluster or not because only
+            # nodes from a local cluster can be stopped (see nodes validation
+            # above)
+            if utils.is_rhel6():
+                quorum_info = utils.parse_cman_quorum_info(data)
+            else:
+                quorum_info = utils.parse_quorumtool_output(data)
+            if quorum_info:
+                if utils.is_node_stop_cause_quorum_loss(
+                    quorum_info, local=False, node_list=[node0]
+                ):
+                    utils.err(
+                        "Removing the node will cause a loss of the quorum"
+                        + ", use --force to override"
+                    )
+            elif not utils.is_node_offline_by_quorumtool_output(data):
+                utils.err(
+                    "Unable to determine whether removing the node will cause "
+                    + "a loss of the quorum, use --force to override\n"
+                    + data
+                )
+            # else the node seems to be stopped already, we're ok to proceed
+
+        try:
+            _ensure_cluster_is_offline_if_atb_should_be_enabled(
+                lib_env, -1, modifiers["skip_offline_nodes"]
+            )
+        except LibraryError as e:
+            utils.process_library_reports(e.args)
+
+        nodesRemoved = False
+        c_nodes = utils.getNodesFromCorosyncConf()
+        destroy_cluster([node0], keep_going=("--force" in utils.pcs_options))
+        for my_node in c_nodes:
+            if my_node == node0:
+                continue
+            retval, output = utils.removeLocalNode(my_node, node0)
+            if retval != 0:
+                utils.err(
+                    "unable to remove %s on %s - %s" % (node0,my_node,output.strip()),
+                    False
+                )
+            else:
+                if output[0] == 0:
+                    print("%s: Corosync updated" % my_node)
+                    nodesRemoved = True
+                else:
+                    utils.err(
+                        "%s: Error executing command occured: %s" % (my_node, "".join(output[1])),
+                        False
+                    )
+        if nodesRemoved == False:
+            utils.err("Unable to update any nodes")
+
+        output, retval = utils.reloadCorosync()
+        output, retval = utils.run(["crm_node", "--force", "-R", node0])
+        if utils.is_cman_with_udpu_transport():
+            print("Warning: Using udpu transport on a RHEL 6 cluster, "
+                + "cluster restart is required to apply node removal")
 
 def cluster_localnode(argv):
     if len(argv) != 2:
@@ -2358,7 +1845,7 @@ def cluster_uidgid(argv, silent_list = False):
 
 def cluster_get_corosync_conf(argv):
     if utils.is_rhel6():
-        utils.err("corosync.conf is not supported on CMAN clusters")
+        utils.err("corosync.conf is not supported on RHEL 6 clusters")
 
     if len(argv) > 1:
         usage.cluster()
@@ -2389,30 +1876,6 @@ def cluster_reload(argv):
 # Code taken from cluster-clean script in pacemaker
 def cluster_destroy(argv):
     if "--all" in utils.pcs_options:
-        # destroy remote and guest nodes
-        cib = None
-        lib_env = utils.get_lib_env()
-        try:
-            cib = lib_env.get_cib()
-        except LibraryError as e:
-            warn(
-                "Unable to load CIB to get guest and remote nodes from it, "
-                "those nodes will not be deconfigured."
-            )
-        if cib is not None:
-            try:
-                all_remote_nodes = get_nodes(tree=cib)
-                if len(all_remote_nodes) > 0:
-                    _destroy_pcmk_remote_env(
-                        lib_env,
-                        all_remote_nodes,
-                        skip_offline_nodes=True,
-                        allow_fails=True
-                    )
-            except LibraryError as e:
-                utils.process_library_reports(e.args)
-
-        # destroy full-stack nodes
         destroy_cluster(utils.getNodesFromCorosyncConf())
     else:
         print("Shutting down pacemaker/corosync services...")
@@ -2421,7 +1884,7 @@ def cluster_destroy(argv):
             # ignore it since we want it not to be running anyways.
             utils.stop_service(service)
         print("Killing any remaining services...")
-        utils.run(["/usr/bin/killall", "-q", "-9", "corosync", "corosync-qdevice", "aisexec", "heartbeat", "pacemakerd", "ccm", "stonithd", "ha_logd", "lrmd", "crmd", "pengine", "attrd", "pingd", "mgmtd", "cib", "fenced", "dlm_controld", "gfs_controld"])
+        os.system("killall -q -9 corosync corosync-qdevice aisexec heartbeat pacemakerd ccm stonithd ha_logd lrmd crmd pengine attrd pingd mgmtd cib fenced dlm_controld gfs_controld")
         try:
             utils.disableServices()
         except:
@@ -2436,21 +1899,13 @@ def cluster_destroy(argv):
 
         print("Removing all cluster configuration files...")
         if utils.is_rhel6():
-            utils.run(["/bin/rm", "-f", "/etc/cluster/cluster.conf"])
+            os.system("rm -f /etc/cluster/cluster.conf")
         else:
-            utils.run([
-                "/bin/rm", "-f",
-                "/etc/corosync/corosync.conf",
-                settings.corosync_authkey_file
-            ])
+            os.system("rm -f /etc/corosync/corosync.conf")
         state_files = ["cib.xml*", "cib-*", "core.*", "hostcache", "cts.*",
                 "pe*.bz2","cib.*"]
         for name in state_files:
-            utils.run([
-                "/usr/bin/find", "/var/lib/pacemaker", "-name", name,
-                "-exec", "/bin/rm", "-f", "{}", ";"
-            ])
-        utils.run(["/bin/rm", "-f", settings.pacemaker_authkey_file])
+            os.system("find /var/lib -name '"+name+"' -exec rm -f \{\} \;")
         try:
             qdevice_net.client_destroy()
         except:
@@ -2459,29 +1914,28 @@ def cluster_destroy(argv):
             pass
 
 def cluster_verify(argv):
-    if len(argv) > 1:
+    nofilename = True
+    if len(argv) == 1:
+        filename = argv.pop(0)
+        nofilename = False
+    elif len(argv) > 1:
         usage.cluster("verify")
-        raise SystemExit(1)
 
-    if argv:
-        filename = argv[0]
-        if not utils.usefile:
-            #We must operate on given cib everywhere.
-            utils.usefile = True
-            utils.filename = filename
-        elif os.path.abspath(filename) == os.path.abspath(utils.filename):
-            warn("File '{0}' specified twice".format(os.path.abspath(filename)))
-        else:
-            raise error(
-                "Ambiguous cib filename specification: '{0}' vs  -f '{1}'"
-                .format(filename, utils.filename)
-            )
+    options = []
+    if "-V" in utils.pcs_options:
+        options.append("-V")
+    if nofilename:
+        options.append("--live-check")
+    else:
+        options.append("--xml-file")
+        options.append(filename)
 
-    lib = utils.get_library_wrapper()
-    try:
-        lib.cluster.verify(verbose="-V" in utils.pcs_options)
-    except LibraryError as e:
-        utils.process_library_reports(e.args)
+    output, retval = utils.run([settings.crm_verify] + options)
+
+    if output != "":
+        print(output)
+    stonith.stonith_level_verify()
+    return retval
 
 def cluster_report(argv):
     if len(argv) != 1:
@@ -2512,12 +1966,6 @@ def cluster_report(argv):
 
     crm_report_opts.append(outfile)
     output, retval = utils.run([settings.crm_report] + crm_report_opts)
-    if (
-        retval != 0
-        and
-        "ERROR: Cannot determine nodes; specify --nodes or --single-node" in output
-    ):
-        utils.err("cluster is not configured on this node")
     newoutput = ""
     for line in output.split("\n"):
         if line.startswith("cat:") or line.startswith("grep") or line.startswith("grep") or line.startswith("tail"):
@@ -2530,71 +1978,31 @@ def cluster_report(argv):
             continue
         if "to diagnose" in line:
             continue
-        if "--dest" in line:
-            line = line.replace("--dest", "<dest>")
         newoutput = newoutput + line + "\n"
     if retval != 0:
         utils.err(newoutput)
     print(newoutput)
 
 def cluster_remote_node(argv):
-    usage_add = """\
-    remote-node add <hostname> <resource id> [options]
-        Enables the specified resource as a remote-node resource on the
-        specified hostname (hostname should be the same as 'uname -n')."""
-    usage_remove = """\
-    remote-node remove <hostname>
-        Disables any resources configured to be remote-node resource on the
-        specified hostname (hostname should be the same as 'uname -n')."""
-
     if len(argv) < 1:
-        print("\nUsage: pcs cluster remote-node...")
-        print(usage_add)
-        print()
-        print(usage_remove)
-        print()
+        usage.cluster(["remote-node"])
         sys.exit(1)
 
     command = argv.pop(0)
     if command == "add":
         if len(argv) < 2:
-            print("\nUsage: pcs cluster remote-node add...")
-            print(usage_add)
-            print()
+            usage.cluster(["remote-node"])
             sys.exit(1)
-        if "--force" in utils.pcs_options:
-            warn("this command is deprecated, use 'pcs cluster node add-guest'")
-        else:
-            raise error(
-                "this command is deprecated, use 'pcs cluster node add-guest'"
-                ", use --force to override"
-            )
         hostname = argv.pop(0)
         rsc = argv.pop(0)
         if not utils.dom_get_resource(utils.get_cib_dom(), rsc):
             utils.err("unable to find resource '%s'" % rsc)
-        resource.resource_update(
-            rsc,
-            ["meta", "remote-node="+hostname] + argv,
-            deal_with_guest_change=False
-        )
+        resource.resource_update(rsc, ["meta", "remote-node="+hostname] + argv)
 
     elif command in ["remove","delete"]:
         if len(argv) < 1:
-            print("\nUsage: pcs cluster remote-node remove...")
-            print(usage_remove)
-            print()
+            usage.cluster(["remote-node"])
             sys.exit(1)
-        if "--force" in utils.pcs_options:
-            warn(
-                "this command is deprecated, use"
-                " 'pcs cluster node remove-guest'"
-            )
-        else:
-            raise error(
-                "this command is deprecated, use 'pcs cluster node"
-                " remove-guest', use --force to override"
-            )
         hostname = argv.pop(0)
         dom = utils.get_cib_dom()
         nvpairs = dom.getElementsByTagName("nvpair")
@@ -2619,31 +2027,6 @@ def cluster_remote_node(argv):
             if retval != 0:
                 utils.err("unable to remove: {0}".format(output))
     else:
-        print("\nUsage: pcs cluster remote-node...")
-        print(usage_add)
-        print()
-        print(usage_remove)
-        print()
+        usage.cluster(["remote-node"])
         sys.exit(1)
 
-def _is_ssl_cert_sync_enabled():
-    try:
-        if os.path.isfile(settings.pcsd_config):
-            with open(settings.pcsd_config, "r") as cfg_file:
-                cfg = environment_file_to_dict(cfg_file.read())
-                return (
-                    cfg.get("PCSD_SSL_CERT_SYNC_ENABLED", "true").lower()
-                    ==
-                    "true"
-                )
-    except EnvironmentError as e:
-        process_library_reports([
-            lib_reports.file_io_error(
-                env_file_role_codes.PCSD_ENVIRONMENT_CONFIG,
-                file_path=settings.pcsd_config,
-                reason=format_environment_error(e),
-                operation="read",
-                severity=ReportItemSeverity.WARNING
-            )
-        ])
-    return True

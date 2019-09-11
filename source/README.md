@@ -1,177 +1,90 @@
-## PCS - Pacemaker/Corosync Configuration System
+## PCS - Pacemaker/Corosync configuration system
 
-Pcs is a Corosync and Pacemaker configuration tool. It permits users to
-easily view, modify and create Pacemaker based clusters. Pcs contains pcsd, a
-pcs daemon, which operates as a remote server for pcs and provides a web UI.
-
----
-
-### Pcs Versions
-
-There are two pcs branches currently:
-* master [![Build Status](https://travis-ci.org/ClusterLabs/pcs.svg?branch=master)](https://travis-ci.org/ClusterLabs/pcs)
-  * This is where pcs-0.10 lives.
-  * Clusters running Pacemaker 2.x on top of Corosync 3.x are supported.
-  * The main development happens here.
-* pcs-0.9 [![Build Status](https://travis-ci.org/ClusterLabs/pcs.svg?branch=pcs-0.9)](https://travis-ci.org/ClusterLabs/pcs)
-  * Clusters running Pacemaker 1.x on top of Corosync 2.x or Corosync 1.x with 
-    CMAN are supported.
-  * This branch is in maintenance mode - bugs are being fixed but only a subset
-    of new features lands here.
-
----
-
-### Dependencies
-
-These are the runtime dependencies of pcs and pcsd:
-* python 2.7+
-* python-lxml / python3-lxml
-* python-pycurl / python3-pycurl
-* python-setuptools / python3-setuptools
-* ruby 2.0.0+
-* killall (package psmisc)
-* openssl
-* corosync 2.x or 1.x
-* pacemaker 1.x
-
-It is also recommended to have these:
-* python-clufter / python3-clufter
-* liberation fonts (package liberation-sans-fonts or fonts-liberation or
-  fonts-liberation2)
-* overpass fonts (package overpass-fonts)
-
-If you plan to manage Corosync 1.x based clusters, you will also need:
-* cman
-* ccs
-
----
-
-### Installation from Source
-
-Apart from the dependencies listed above, these are also required for
-installation:
-
-* python development files (package python-devel / python3-devel)
-* ruby development files (package ruby-devel)
-* rubygems
-* rubygem bundler (package rubygem-bundler or ruby-bundler or bundler)
-* gcc
-* gcc-c++
-* PAM development files (package pam-devel or libpam0g-dev)
-* FFI development files (package libffi-devel or libffi-dev)
-* fontconfig
-* printf (package coreutils)
-* redhat-rpm-config if you are using Fedora
-* wget (to download bundled libraries)
-
-During the installation, all required rubygems are automatically downloaded and
-compiled.
-
-To install pcs and pcsd run the following in terminal:
-```shell
-# tar -xzvf pcs-0.9.160.tar.gz
-# cd pcs-0.9.160
-# make install
-# make install_pcsd
-```
-
-If you are using GNU/Linux with systemd, it is now time to:
-```shell
-# systemctl daemon-reload
-```
-
-Start pcsd and make it start on boot:
-```shell
-# systemctl start pcsd
-# systemctl enable pcsd
-```
-
----
-
-### Packages
-
-Currently this is built into Fedora, RHEL and its clones and Debian and its
-derivates.
-* [Fedora package git repositories](https://src.fedoraproject.org/rpms/pcs)
-* [Current Fedora .spec](https://src.fedoraproject.org/rpms/pcs/blob/master/f/pcs.spec)
-* [Debian-HA project home page](https://wiki.debian.org/Debian-HA)
-
----
 
 ### Quick Start
+***
 
-* **Authenticate cluster nodes**
 
-  Set the same password for the `hacluster` user on all nodes.
-  ```shell
-  # passwd hacluster
-  ```
+- **PCS Installation from Source**
 
-  To authenticate the nodes, run the following command on one of the nodes
-  (replacing node1, node2, node3 with a list of nodes in your future cluster).
-  Specify all your cluster nodes in the command. Make sure pcsd is running on
-  all nodes.
-  ```shell
-  # pcs cluster auth node1 node2 node3 -u hacluster
-  ```
+   Run the following in terminal:
 
-* **Create a cluster**
+   ```shell
+   # tar -xzvf pcs-0.9.143.tar.gz
+   # cd pcs-0.9.143
+   # make install
+   ```
 
-  To create a cluster run the following command on one node (replacing
-  cluster\_name with a name of your cluster and node1, node2, node3 with a list
-  of nodes in the cluster). `--start` and `--enable` will start your cluster
-  and configure the nodes to start the cluster on boot respectively.
-  ```shell
-  # pcs cluster setup --name cluster_name node1 node2 node3 --start --enable
-  ```
+   This will install pcs into `/usr/sbin/pcs`.
 
-* **Check the cluster status**
+<br />
+- **Create and Start a Basic Cluster**
 
-   After a few moments the cluster should startup and you can get the status of
-   the cluster.
+   To create a cluster run the following commands on all nodes (replacing node1, node2, node3 with a list of nodes in the cluster).
+
+   ```shell
+   # pcs cluster setup --local --name cluster_name node1 node2 node3
+   ```
+
+   Then run the following command on all nodes:
+
+   ```shell
+   # pcs cluster start
+   ```
+
+<br />
+- **Check the Cluster Status**
+
+   After a few moments the cluster should startup and you can get the status of the cluster
+
    ```shell
    # pcs status
    ```
 
-* **Add cluster resources**
+<br />
+- **Add Cluster Resources**
 
-   After this you can add stonith agents and resources:
+   After this you can add resources and stonith agents:
+
    ```shell
-   # pcs -h stonith create
+   # pcs resource help
    ```
+
    and
+
    ```shell
-   # pcs -h resource create
+   # pcs stonith help
    ```
 
----
+<br />
+- **PCSD Installation from Source**
 
-### Accessing the Web UI
+   You can also install pcsd which operates as a GUI and remote server for pcs. pcsd may also be necessary in order to follow the guides on the clusterlabs.org website.
 
-Apart from command line interface you can use web user interface to view and
-configure your cluster. To access the web UI open a browser to the following
-URL (replace nodename with an address of your node):
-```
-https://nodename:2224
-```
-Login as the `hacluster` user.
+   To install pcsd run the following commands from the root of your pcs directory. (You must have the ruby bundler gem installed, rubygem-bundler in Fedora, and development packages installed)
 
----
+   ```shell
+   # cd pcsd ; make get_gems ; cd ..
+   # make install_pcsd
+   ```
 
-### Further Documentation
+   If you are using GNU/Linux its now time to:
 
-[ClusterLabs website](https://clusterlabs.org) is an excellent place to learn
-more about Pacemaker clusters.
-* [ClusterLabs quick start](https://clusterlabs.org/quickstart.html)
-* [Clusters from Scratch](https://clusterlabs.org/pacemaker/doc/en-US/Pacemaker/1.1/html/Clusters_from_Scratch/index.html)
-* [ClusterLabs documentation page](https://clusterlabs.org/pacemaker/doc/)
+   ```shell
+   # systemctl daemon-reload
+   ```
 
----
+<br />
+### Packages
+***
 
+   Currently this is built into Fedora (other distributions to follow).  You can see the current Fedora .spec in the fedora package git repositories here: http://pkgs.fedoraproject.org/cgit/pcs.git/
+
+   Current Fedora 23 .spec:
+   http://pkgs.fedoraproject.org/cgit/pcs.git/tree/pcs.spec?h=f23
+
+<br />
 ### Inquiries
-If you have any bug reports or feature requests please feel free to open a
-github issue on the pcs project.
+***
 
-Alternatively you can use ClusterLabs
-[users mailinglist](https://oss.clusterlabs.org/mailman/listinfo/users)
-which is also a great place to ask Pacemaker clusters related questions.
+If you have any questions or concerns please feel free to email cfeist@redhat.com or open a github issue on the pcs project.

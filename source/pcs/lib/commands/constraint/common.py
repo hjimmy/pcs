@@ -7,6 +7,7 @@ from __future__ import (
     absolute_import,
     division,
     print_function,
+    unicode_literals,
 )
 
 from functools import partial
@@ -67,7 +68,7 @@ def create_with_set(
         duplication_alowed=duplication_alowed,
     )
 
-    env.push_cib()
+    env.push_cib(cib)
 
 def show(tag_name, is_plain, env):
     """

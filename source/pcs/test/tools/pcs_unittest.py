@@ -2,12 +2,18 @@ import sys
 #In package unittest there is no module mock before python 3.3. In python 3
 #module mock is not imported by * because module mock is not imported in
 #unittest/__init__.py
-major = sys.version_info.major
-from unittest import *
-try:
-    import unittest.mock as mock
-except ImportError:
+major, minor = sys.version_info[:2]
+if major == 2 and minor == 6:
+    #we use features that are missing before 2.7 (like test skipping,
+    #assertRaises as context manager...) so we need unittest2
+    from unittest2 import *
     import mock
+else:
+    from unittest import *
+    try:
+        import unittest.mock as mock
+    except ImportError:
+        import mock
 
 #backport of assert_not_called (new in version 3.5)
 if not hasattr(mock.Mock, "assert_not_called"):
@@ -173,4 +179,4 @@ def ensure_raise_from_iterable_side_effect():
     mock.Mock.__call__ = create_new_call(mock.Mock.__call__, inPy3k=(major==3))
 ensure_raise_from_iterable_side_effect()
 
-del major, sys
+del major, minor, sys

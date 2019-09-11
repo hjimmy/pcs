@@ -2,6 +2,7 @@ from __future__ import (
     absolute_import,
     division,
     print_function,
+    unicode_literals,
 )
 
 from pcs.test.tools.pcs_unittest import TestCase
@@ -71,20 +72,13 @@ class DuplicateConstraintsReportTest(TestCase):
 
         self.assertEqual(
             "\n".join([
-                "duplicate constraint already exists force text",
+                "duplicate constraint already exists{force}",
                 "  constraint info"
             ]),
-            self.build(
-                {
-                    "constraint_info_list": [{"options": {"a": "b"}}],
-                    "constraint_type": "rsc_some"
-                },
-                force_text=" force text"
-            )
-        )
-        mock_constraint.assert_called_once_with(
-            "rsc_some",
-            {"options": {"a": "b"}}
+            self.build({
+                "constraint_info_list": [{"options": {"a": "b"}}],
+                "constraint_type": "rsc_some"
+            })
         )
 
 class ResourceForConstraintIsMultiinstanceTest(TestCase):
@@ -113,18 +107,6 @@ class ResourceForConstraintIsMultiinstanceTest(TestCase):
             self.build({
                 "resource_id": "RESOURCE_PRIMITIVE",
                 "parent_type": "clone",
-                "parent_id": "RESOURCE_CLONE"
-            })
-        )
-
-    def test_build_message_for_bundle(self):
-        self.assertEqual(
-            "RESOURCE_PRIMITIVE is a bundle resource, you should use the"
-                " bundle id: RESOURCE_CLONE when adding constraints"
-            ,
-            self.build({
-                "resource_id": "RESOURCE_PRIMITIVE",
-                "parent_type": "bundle",
                 "parent_id": "RESOURCE_CLONE"
             })
         )

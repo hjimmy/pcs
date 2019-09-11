@@ -2,42 +2,38 @@ from __future__ import (
     absolute_import,
     division,
     print_function,
+    unicode_literals,
 )
 
 import getopt
 import os
 import sys
 import logging
+logging.basicConfig()
 
 from pcs import (
     acl,
-    alert,
-    booth,
-    client,
+    # booth,
     cluster,
     config,
     constraint,
     node,
     pcsd,
     prop,
-    qdevice,
-    quorum,
+    # qdevice,
+    # quorum,
     resource,
     settings,
     status,
     stonith,
     usage,
     utils,
+    alert,
 )
 
-from pcs.cli.common import (
-    capabilities,
-    completion,
-    parse_args,
-)
+from pcs.cli.common import completion
 
 
-logging.basicConfig()
 usefile = False
 filename = ""
 def main(argv=None):
@@ -53,48 +49,90 @@ def main(argv=None):
     global filename, usefile
     orig_argv = argv[:]
     utils.pcs_options = {}
-
-    argv = parse_args.upgrade_args(argv)
-
-    # we want to support optional arguments for --wait, so if an argument
-    # is specified with --wait (ie. --wait=30) then we use them
-    waitsecs = None
-    new_argv = []
-    for arg in argv:
-        if arg.startswith("--wait="):
-            tempsecs = arg.replace("--wait=","")
-            if len(tempsecs) > 0:
-                waitsecs = tempsecs
-                arg = "--wait"
-        new_argv.append(arg)
-    argv = new_argv
-
+    modified_argv = []
+    real_argv = []
     try:
-        pcs_options, dummy_argv = getopt.gnu_getopt(
-            parse_args.filter_out_non_option_negative_numbers(argv),
-            parse_args.PCS_SHORT_OPTIONS,
-            parse_args.PCS_LONG_OPTIONS,
-        )
+        # we change --cloneopt to "clone" for backwards compatibility
+        new_argv = []
+        for arg in argv:
+            if arg == "--cloneopt" or arg == "--clone":
+                new_argv.append("clone")
+            elif arg.startswith("--cloneopt="):
+                new_argv.append("clone")
+                new_argv.append(arg.split('=',1)[1])
+            else:
+                new_argv.append(arg)
+        argv = new_argv
+
+        # we want to support optional arguments for --wait, so if an argument
+        # is specified with --wait (ie. --wait=30) then we use them
+        waitsecs = None
+        new_argv = []
+        for arg in argv:
+            if arg.startswith("--wait="):
+                tempsecs = arg.replace("--wait=","")
+                if len(tempsecs) > 0:
+                    waitsecs = tempsecs
+                    arg = "--wait"
+            new_argv.append(arg)
+        argv = new_argv
+
+        # h = help, f = file,
+        # p = password (cluster auth), u = user (cluster auth),
+        # V = verbose (cluster verify)
+        pcs_short_options = "hf:p:u:V"
+        pcs_long_options = [
+            "debug", "version", "help", "fullhelp",
+            "force", "skip-offline", "autocorrect", "interactive", "autodelete",
+            "all", "full", "groups", "local", "wait", "config",
+            "start", "enable", "disabled", "off",
+            "pacemaker", "corosync",
+            "no-default-ops", "defaults", "nodesc",
+            "clone", "master", "name=", "group=", "node=",
+            "from=", "to=", "after=", "before=",
+            "transport=", "rrpmode=", "ipv6",
+            "addr0=", "bcast0=", "mcast0=", "mcastport0=", "ttl0=", "broadcast0",
+            "addr1=", "bcast1=", "mcast1=", "mcastport1=", "ttl1=", "broadcast1",
+            "wait_for_all=", "auto_tie_breaker=", "last_man_standing=",
+            "last_man_standing_window=",
+            "token=", "token_coefficient=", "consensus=", "join=",
+            "miss_count_const=", "fail_recv_const=",
+            "corosync_conf=", "cluster_conf=",
+            "booth-conf=", "booth-key=",
+            "remote", "watchdog=",
+            #in pcs status - do not display resorce status on inactive node
+            "hide-inactive",
+        ]
+        # pull out negative number arguments and add them back after getopt
+        prev_arg = ""
+        for arg in argv:
+            if len(arg) > 0 and arg[0] == "-":
+                if arg[1:].isdigit() or arg[1:].startswith("INFINITY"):
+                    real_argv.append(arg)
+                else:
+                    modified_argv.append(arg)
+            else:
+                # If previous argument required an argument, then this arg
+                # should not be added back in
+                if not prev_arg or (not (prev_arg[0] == "-" and prev_arg[1:] in pcs_short_options) and not (prev_arg[0:2] == "--" and (prev_arg[2:] + "=") in pcs_long_options)):
+                    real_argv.append(arg)
+                modified_argv.append(arg)
+            prev_arg = arg
+
+        pcs_options, argv = getopt.gnu_getopt(modified_argv, pcs_short_options, pcs_long_options)
     except getopt.GetoptError as err:
         print(err)
         usage.main()
         sys.exit(1)
-    argv = parse_args.filter_out_options(argv)
-
-    full = False
-    for option, dummy_value in pcs_options:
-        if option == "--full":
-            full = True
-            break
-
+    argv = real_argv
     for o, a in pcs_options:
         if not o in utils.pcs_options:
-            if o in ["--watchdog", "--device"]:
+            if o == "--watchdog":
                 a = [a]
             utils.pcs_options[o] = a
         else:
             # If any options are a list then they've been entered twice which isn't valid
-            if o not in ["--watchdog", "--device"]:
+            if o != "--watchdog":
                 utils.err("%s can only be used once" % o)
             else:
                 utils.pcs_options[o].append(a)
@@ -116,35 +154,12 @@ def main(argv=None):
             settings.cluster_conf_file = a
         elif o == "--version":
             print(settings.pcs_version)
-            if full:
-                print(" ".join(
-                    sorted([
-                        feat["id"]
-                        for feat in capabilities.get_pcs_capabilities()
-                    ])
-                ))
             sys.exit()
         elif o == "--fullhelp":
             usage.full_usage()
             sys.exit()
         elif o == "--wait":
             utils.pcs_options[o] = waitsecs
-        elif o == "--request-timeout":
-            request_timeout_valid = False
-            try:
-                timeout = int(a)
-                if timeout > 0:
-                    utils.pcs_options[o] = timeout
-                    request_timeout_valid = True
-            except ValueError:
-                pass
-            if not request_timeout_valid:
-                utils.err(
-                    (
-                        "'{0}' is not a valid --request-timeout value, use "
-                        "a positive integer"
-                    ).format(a)
-                )
 
     if len(argv) == 0:
         usage.main()
@@ -152,7 +167,7 @@ def main(argv=None):
 
     # create a dummy logger
     # we do not have a log file for cli (yet), but library requires a logger
-    logger = logging.getLogger("pcs")
+    logger = logging.getLogger("old_cli")
     logger.propagate = 0
     logger.handlers = []
 
@@ -169,45 +184,32 @@ def main(argv=None):
         "acl": lambda argv: acl.acl_cmd(
             utils.get_library_wrapper(),
             argv,
-            utils.get_modifiers()
+            utils.get_modificators()
         ),
-        "status": lambda argv: status.status_cmd(
-            utils.get_library_wrapper(),
-            argv,
-            utils.get_modifiers()
-        ),
+        "status": status.status_cmd,
         "config": config.config_cmd,
         "pcsd": pcsd.pcsd_cmd,
-        "node": lambda argv: node.node_cmd(
-            utils.get_library_wrapper(),
-            argv,
-            utils.get_modifiers()
-        ),
-        "quorum": lambda argv: quorum.quorum_cmd(
-            utils.get_library_wrapper(),
-            argv,
-            utils.get_modifiers()
-        ),
-        "qdevice": lambda argv: qdevice.qdevice_cmd(
-            utils.get_library_wrapper(),
-            argv,
-            utils.get_modifiers()
-        ),
+        "node": node.node_cmd,
+        # "quorum": lambda argv: quorum.quorum_cmd(
+        #     utils.get_library_wrapper(),
+        #     argv,
+        #     utils.get_modificators()
+        # ),
+        # "qdevice": lambda argv: qdevice.qdevice_cmd(
+        #     utils.get_library_wrapper(),
+        #     argv,
+        #     utils.get_modificators()
+        # ),
         "alert": lambda args: alert.alert_cmd(
             utils.get_library_wrapper(),
             args,
-            utils.get_modifiers()
+            utils.get_modificators()
         ),
-        "booth": lambda argv: booth.booth_cmd(
-            utils.get_library_wrapper(),
-            argv,
-            utils.get_modifiers()
-        ),
-        "client": lambda argv: client.client_cmd(
-            utils.get_library_wrapper(),
-            argv,
-            utils.get_modifiers()
-        ),
+        # "booth": lambda argv: booth.booth_cmd(
+        #     utils.get_library_wrapper(),
+        #     argv,
+        #     utils.get_modificators()
+        # ),
     }
     if command not in cmd_map:
         usage.main()
@@ -233,13 +235,9 @@ def main(argv=None):
         ['cluster', 'sync', '...'],
         # ['config', 'restore', '...'], # handled in config.config_restore
         ['pcsd', 'sync-certificates'],
-        ["quorum", "device", "status", "..."],
-        ["quorum", "status", "..."],
-        ['status', 'corosync', '...'],
         ['status', 'nodes', 'corosync-id'],
         ['status', 'nodes', 'pacemaker-id'],
         ['status', 'pcsd', '...'],
-        ['status', 'quorum', '...'],
     ]
     argv_cmd = argv[:]
     argv_cmd.insert(0, command)
@@ -264,7 +262,7 @@ def main(argv=None):
 
             # call the local pcsd
             err_msgs, exitcode, std_out, std_err = utils.call_local_pcsd(
-                orig_argv
+                orig_argv, True
             )
             if err_msgs:
                 for msg in err_msgs:

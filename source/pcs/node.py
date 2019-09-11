@@ -2,6 +2,7 @@ from __future__ import (
     absolute_import,
     division,
     print_function,
+    unicode_literals,
 )
 
 import sys
@@ -11,97 +12,144 @@ from pcs import (
     usage,
     utils,
 )
-from pcs.cli.common.errors import (
-    CmdLineInputError,
-    ERR_NODE_LIST_AND_ALL_MUTUALLY_EXCLUSIVE,
-)
+from pcs.cli.common.errors import CmdLineInputError
 from pcs.cli.common.parse_args import prepare_options
 from pcs.lib.errors import LibraryError
-import pcs.lib.pacemaker.live as lib_pacemaker
+import pcs.lib.pacemaker as lib_pacemaker
+from pcs.lib.pacemaker_values import get_valid_timeout_seconds
 
 
-def node_cmd(lib, argv, modifiers):
-    if len(argv) < 1:
+def node_cmd(argv):
+    if len(argv) == 0:
         usage.node()
         sys.exit(1)
 
-    sub_cmd, argv_next = argv[0], argv[1:]
+    sub_cmd = argv.pop(0)
+    if sub_cmd == "help":
+        usage.node(argv)
+    elif sub_cmd == "maintenance":
+        node_maintenance(argv)
+    elif sub_cmd == "unmaintenance":
+        node_maintenance(argv, False)
+    elif sub_cmd == "standby":
+        node_standby(argv)
+    elif sub_cmd == "unstandby":
+        node_standby(argv, False)
+    elif sub_cmd == "attribute":
+        if "--name" in utils.pcs_options and len(argv) > 1:
+            usage.node("attribute")
+            sys.exit(1)
+        filter_attr=utils.pcs_options.get("--name", None)
+        if len(argv) == 0:
+            attribute_show_cmd(filter_attr=filter_attr)
+        elif len(argv) == 1:
+            attribute_show_cmd(argv.pop(0), filter_attr=filter_attr)
+        else:
+            attribute_set_cmd(argv.pop(0), argv)
+    elif sub_cmd == "utilization":
+        if "--name" in utils.pcs_options and len(argv) > 1:
+            usage.node("utilization")
+            sys.exit(1)
+        filter_name=utils.pcs_options.get("--name", None)
+        if len(argv) == 0:
+            print_node_utilization(filter_name=filter_name)
+        elif len(argv) == 1:
+            print_node_utilization(argv.pop(0), filter_name=filter_name)
+        else:
+            try:
+                set_node_utilization(argv.pop(0), argv)
+            except CmdLineInputError as e:
+                utils.exit_on_cmdline_input_errror(e, "node", "utilization")
+    # pcs-to-pcsd use only
+    elif sub_cmd == "pacemaker-status":
+        node_pacemaker_status()
+    else:
+        usage.node()
+        sys.exit(1)
+
+
+def node_maintenance(argv, on=True):
+    action = ["-v", "on"] if on else ["-D"]
+
+    cluster_nodes = utils.getNodesFromPacemaker()
+    nodes = []
+    failed_count = 0
+    if "--all" in utils.pcs_options:
+        nodes = cluster_nodes
+    elif argv:
+        for node in argv:
+            if node not in cluster_nodes:
+                utils.err(
+                    "Node '{0}' does not appear to exist in "
+                    "configuration".format(node),
+                    False
+                )
+                failed_count += 1
+            else:
+                nodes.append(node)
+    else:
+        nodes.append("")
+
+    if failed_count > 0:
+        sys.exit(1)
+
+    for node in nodes:
+        node_attr = ["-N", node] if node else []
+        output, retval = utils.run(
+            ["crm_attribute", "-t", "nodes", "-n", "maintenance"] + action +
+            node_attr
+        )
+        if retval != 0:
+            node_name = ("node '{0}'".format(node)) if argv else "current node"
+            failed_count += 1
+            if on:
+                utils.err(
+                    "Unable to put {0} to maintenance mode: {1}".format(
+                        node_name, output
+                    ),
+                    False
+                )
+            else:
+                utils.err(
+                    "Unable to remove {0} from maintenance mode: {1}".format(
+                        node_name, output
+                    ),
+                    False
+                )
+    if failed_count > 0:
+        sys.exit(1)
+
+def node_standby(argv, standby=True):
+    if (len(argv) > 1) or (len(argv) > 0 and "--all" in utils.pcs_options):
+        usage.node(["standby" if standby else "unstandby"])
+        sys.exit(1)
+
+    all_nodes = "--all" in utils.pcs_options
+    node_list = [argv[0]] if argv else []
+    wait = False
+    timeout = None
+    if "--wait" in utils.pcs_options:
+        wait = True
+        timeout = utils.pcs_options["--wait"]
 
     try:
-        if sub_cmd == "help":
-            usage.node([" ".join(argv_next)] if argv_next else [])
-        elif sub_cmd == "maintenance":
-            node_maintenance_cmd(lib, argv_next, modifiers, True)
-        elif sub_cmd == "unmaintenance":
-            node_maintenance_cmd(lib, argv_next, modifiers, False)
-        elif sub_cmd == "standby":
-            node_standby_cmd(lib, argv_next, modifiers, True)
-        elif sub_cmd == "unstandby":
-            node_standby_cmd(lib, argv_next, modifiers, False)
-        elif sub_cmd == "attribute":
-            node_attribute_cmd(lib, argv_next, modifiers)
-        elif sub_cmd == "utilization":
-            node_utilization_cmd(lib, argv_next, modifiers)
-        # pcs-to-pcsd use only
-        elif sub_cmd == "pacemaker-status":
-            node_pacemaker_status(lib, argv_next, modifiers)
+        if wait:
+            lib_pacemaker.ensure_resource_wait_support(utils.cmd_runner())
+            valid_timeout = get_valid_timeout_seconds(timeout)
+        if standby:
+            lib_pacemaker.nodes_standby(
+                utils.cmd_runner(), node_list, all_nodes
+            )
         else:
-            raise CmdLineInputError()
+            lib_pacemaker.nodes_unstandby(
+                utils.cmd_runner(), node_list, all_nodes
+            )
+        if wait:
+            lib_pacemaker.wait_for_resources(utils.cmd_runner(), valid_timeout)
     except LibraryError as e:
         utils.process_library_reports(e.args)
-    except CmdLineInputError as e:
-        utils.exit_on_cmdline_input_errror(e, "node", sub_cmd)
-
-def node_attribute_cmd(lib, argv, modifiers):
-    if modifiers["name"] and len(argv) > 1:
-        raise CmdLineInputError()
-    if len(argv) == 0:
-        attribute_show_cmd(filter_attr=modifiers["name"])
-    elif len(argv) == 1:
-        attribute_show_cmd(argv.pop(0), filter_attr=modifiers["name"])
-    else:
-        attribute_set_cmd(argv.pop(0), argv)
-
-def node_utilization_cmd(lib, argv, modifiers):
-    if modifiers["name"] and len(argv) > 1:
-        raise CmdLineInputError()
-    if len(argv) == 0:
-        print_node_utilization(filter_name=modifiers["name"])
-    elif len(argv) == 1:
-        print_node_utilization(argv.pop(0), filter_name=modifiers["name"])
-    else:
-        set_node_utilization(argv.pop(0), argv)
-
-def node_maintenance_cmd(lib, argv, modifiers, enable):
-    if len(argv) > 0 and modifiers["all"]:
-        raise CmdLineInputError(ERR_NODE_LIST_AND_ALL_MUTUALLY_EXCLUSIVE)
-    if modifiers["all"]:
-        lib.node.maintenance_unmaintenance_all(enable, modifiers["wait"])
-    elif argv:
-        lib.node.maintenance_unmaintenance_list(enable, argv, modifiers["wait"])
-    else:
-        lib.node.maintenance_unmaintenance_local(enable, modifiers["wait"])
-
-def node_standby_cmd(lib, argv, modifiers, enable):
-    if len(argv) > 0 and modifiers["all"]:
-        raise CmdLineInputError(ERR_NODE_LIST_AND_ALL_MUTUALLY_EXCLUSIVE)
-    if modifiers["all"]:
-        lib.node.standby_unstandby_all(enable, modifiers["wait"])
-    elif argv:
-        lib.node.standby_unstandby_list(enable, argv, modifiers["wait"])
-    else:
-        lib.node.standby_unstandby_local(enable, modifiers["wait"])
 
 def set_node_utilization(node, argv):
-    nvpair_dict = prepare_options(argv)
-    if not nvpair_dict:
-        return
-    only_removing = True
-    for value in nvpair_dict.values():
-        if value != "":
-            only_removing = False
-            break
-
     cib = utils.get_cib_dom()
     node_el = utils.dom_get_node(cib, node)
     if node_el is None:
@@ -119,10 +167,6 @@ def set_node_utilization(node, argv):
         if len(nodes_section_list) == 0:
             utils.err("Unable to get nodes section of cib")
 
-        if only_removing:
-            # Do not create new node if we are only removing values from it.
-            return
-
         dom = nodes_section_list[0].ownerDocument
         node_el = dom.createElement("node")
         node_el.setAttribute("id", node_attrs.id)
@@ -130,7 +174,7 @@ def set_node_utilization(node, argv):
         node_el.setAttribute("uname", node_attrs.name)
         nodes_section_list[0].appendChild(node_el)
 
-    utils.dom_update_utilization(node_el, nvpair_dict, "nodes-")
+    utils.dom_update_utilization(node_el, prepare_options(argv), "nodes-")
     utils.replace_cib_configuration(cib)
 
 def print_node_utilization(filter_node=None, filter_name=None):
@@ -169,10 +213,13 @@ def print_node_utilization(filter_node=None, filter_name=None):
     for node in sorted(utilization):
         print(" {0}: {1}".format(node, utilization[node]))
 
-def node_pacemaker_status(lib, argv, modifiers):
-    print(json.dumps(
-        lib_pacemaker.get_local_node_status(utils.cmd_runner())
-    ))
+def node_pacemaker_status():
+    try:
+        print(json.dumps(
+            lib_pacemaker.get_local_node_status(utils.cmd_runner())
+        ))
+    except LibraryError as e:
+        utils.process_library_reports(e.args)
 
 def attribute_show_cmd(filter_node=None, filter_attr=None):
     node_attributes = utils.get_node_attributes(
@@ -183,7 +230,11 @@ def attribute_show_cmd(filter_node=None, filter_attr=None):
     attribute_print(node_attributes)
 
 def attribute_set_cmd(node, argv):
-    for name, value in prepare_options(argv).items():
+    try:
+        attrs = prepare_options(argv)
+    except CmdLineInputError as e:
+        utils.exit_on_cmdline_input_errror(e, "node", "attribute")
+    for name, value in attrs.items():
         utils.set_node_attribute(name, value, node)
 
 def attribute_print(node_attributes):
@@ -192,3 +243,4 @@ def attribute_print(node_attributes):
         for name, value in sorted(node_attributes[node].items()):
             line_parts.append("{0}={1}".format(name, value))
         print(" ".join(line_parts))
+

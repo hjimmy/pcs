@@ -1,4 +1,5 @@
 require 'json'
+require 'orderedhash'
 
 require 'cluster.rb'
 require 'permissions.rb'
@@ -123,15 +124,15 @@ class PCSConfig
   end
 
   def text()
-    out_hash = Hash.new
+    out_hash = OrderedHash.new
     out_hash['format_version'] = CURRENT_FORMAT
     out_hash['data_version'] = @data_version
     out_hash['clusters'] = []
-    out_hash['permissions'] = Hash.new
+    out_hash['permissions'] = OrderedHash.new
     out_hash['permissions']['local_cluster'] = []
 
     @clusters.each { |c|
-      c_hash = Hash.new
+      c_hash = OrderedHash.new
       c_hash['name'] = c.name
       c_hash['nodes'] = c.nodes.uniq.sort
       out_hash['clusters'] << c_hash
@@ -180,21 +181,15 @@ class PCSConfig
   end
 end
 
-def hash_to_ordered_hash(hash)
-  new_hash = Hash.new
-  hash.keys.sort.each { |key| new_hash[key] = hash[key] }
-  return new_hash
-end
 
 class PCSTokens
-  CURRENT_FORMAT = 3
-  attr_accessor :tokens, :format_version, :data_version, :ports
+  CURRENT_FORMAT = 2
+  attr_accessor :tokens, :format_version, :data_version
 
   def initialize(cfg_text)
     @format_version = 0
     @data_version = 0
     @tokens = {}
-    @ports = {}
 
     # set a reasonable parseable default if got empty text
     if cfg_text.nil? or cfg_text.strip.empty?
@@ -217,9 +212,6 @@ class PCSTokens
         )
       end
 
-      if @format_version >= 3
-        @ports = json['ports'] || {}
-      end
       if @format_version >= 2
         @data_version = json['data_version'] || 0
         @tokens = json['tokens'] || {}
@@ -234,11 +226,13 @@ class PCSTokens
   end
 
   def text()
-    out_hash = Hash.new
+    tokens_hash = OrderedHash.new
+    @tokens.keys.sort.each { |key| tokens_hash[key] = @tokens[key] }
+
+    out_hash = OrderedHash.new
     out_hash['format_version'] = CURRENT_FORMAT
     out_hash['data_version'] = @data_version
-    out_hash['tokens'] = hash_to_ordered_hash(@tokens)
-    out_hash['ports'] = hash_to_ordered_hash(@ports)
+    out_hash['tokens'] = tokens_hash
 
     return JSON.pretty_generate(out_hash)
   end

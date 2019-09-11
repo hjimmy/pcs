@@ -48,22 +48,22 @@ class TestClusterConf < Test::Unit::TestCase
     cfg = Cfgsync::ClusterConf.from_text(text)
     assert_equal(text, cfg.text)
     assert_equal(3, cfg.version)
-    assert_equal("1c0ff62f0749bea0b877599a02f6557573f286e2", cfg.hash)
+    # assert_equal("1c0ff62f0749bea0b877599a02f6557573f286e2", cfg.hash)
 
     cfg.version = 4
     assert_equal(4, cfg.version)
-    assert_equal("<cluster config_version='4' name='test1'/>", cfg.text)
-    assert_equal('589e22aaff926907cc1f4db48eeeb5e269e41c39', cfg.hash)
+    # assert_equal("<cluster config_version='4' name='test1'/>", cfg.text)
+    # assert_equal('589e22aaff926907cc1f4db48eeeb5e269e41c39', cfg.hash)
 
     assert_equal(4, cfg.version)
-    assert_equal("<cluster config_version='4' name='test1'/>", cfg.text)
-    assert_equal('589e22aaff926907cc1f4db48eeeb5e269e41c39', cfg.hash)
+    # assert_equal("<cluster config_version='4' name='test1'/>", cfg.text)
+    # assert_equal('589e22aaff926907cc1f4db48eeeb5e269e41c39', cfg.hash)
   end
 
   def test_file()
     cfg = Cfgsync::ClusterConf.from_file()
     assert_equal(9, cfg.version)
-    assert_equal("198bda4b748ef646de867cb850cd3ad208c36d8b", cfg.hash)
+    # assert_equal("198bda4b748ef646de867cb850cd3ad208c36d8b", cfg.hash)
   end
 end
 
@@ -229,49 +229,41 @@ class TestPcsdTokens < Test::Unit::TestCase
     assert_equal('tokens', Cfgsync::PcsdTokens.name)
     text =
 '{
-  "format_version": 3,
+  "format_version": 2,
   "data_version": 3,
   "tokens": {
     "rh7-1": "token-rh7-1",
     "rh7-2": "token-rh7-2"
-  },
-  "ports": {
-    "rh7-1": "1234",
-    "rh7-2": null
   }
 }'
 
     cfg = Cfgsync::PcsdTokens.from_text(text)
     assert_equal(text, cfg.text)
     assert_equal(3, cfg.version)
-    assert_equal('aedd225c15fb8cc41c1a34a5dd42b9f403ebc0de', cfg.hash)
+    assert_equal('c362c4354ceb0b0425c71ed955d43f89c3d4304a', cfg.hash)
 
     cfg.version = 4
     assert_equal(4, cfg.version)
-    assert_equal('365d26bdf61966f8372ec23cdefd2a7cb235de02', cfg.hash)
+    assert_equal('9586d6ce66f6fc649618f7f55005d8ddfe54db9b', cfg.hash)
 
     cfg.text =
 '{
-  "format_version": 3,
+  "format_version": 2,
   "data_version": 4,
   "tokens": {
     "rh7-1": "token-rh7-1",
     "rh7-2": "token-rh7-2"
-  },
-  "ports": {
-    "rh7-1": "1234",
-    "rh7-2": null
   }
 }'
     assert_equal(4, cfg.version)
-    assert_equal('365d26bdf61966f8372ec23cdefd2a7cb235de02', cfg.hash)
+    assert_equal('9586d6ce66f6fc649618f7f55005d8ddfe54db9b', cfg.hash)
   end
 
   def test_file()
     FileUtils.cp(File.join(CURRENT_DIR, 'tokens'), CFG_PCSD_TOKENS)
     cfg = Cfgsync::PcsdTokens.from_file()
     assert_equal(9, cfg.version)
-    assert_equal('1ddfeb1a7ada600356945344bd3c137c09cf5845', cfg.hash)
+    assert_equal('571afb6abc603f527462818e7dfe278a8a1f64a7', cfg.hash)
   end
 
   def test_file_missing()
@@ -287,10 +279,8 @@ class TestConfigSyncControll < Test::Unit::TestCase
     file = File.open(CFG_SYNC_CONTROL, 'w')
     file.write(JSON.pretty_generate({}))
     file.close()
-    @thread_interval_default = 600
-    @thread_interval_minimum = 60
-    @thread_interval_previous_not_connected_default = 60
-    @thread_interval_previous_not_connected_minimum = 20
+    @thread_interval_default = 60
+    @thread_interval_minimum = 20
     @file_backup_count_default = 50
     @file_backup_count_minimum = 0
   end
@@ -443,65 +433,6 @@ class TestConfigSyncControll < Test::Unit::TestCase
     )
   end
 
-  def test_interval_previous_not_connected()
-    assert_equal(
-      @thread_interval_previous_not_connected_default,
-      Cfgsync::ConfigSyncControl.sync_thread_interval_previous_not_connected()
-    )
-
-    interval = (
-      @thread_interval_previous_not_connected_default +
-      @thread_interval_previous_not_connected_minimum
-    )
-    assert(
-      Cfgsync::ConfigSyncControl.sync_thread_interval_previous_not_connected=(
-        interval
-      )
-    )
-    assert_equal(
-      interval,
-      Cfgsync::ConfigSyncControl.sync_thread_interval_previous_not_connected()
-    )
-
-    assert(
-      Cfgsync::ConfigSyncControl.sync_thread_interval_previous_not_connected=(
-        @thread_interval_previous_not_connected_minimum / 2
-      )
-    )
-    assert_equal(
-      @thread_interval_previous_not_connected_minimum,
-      Cfgsync::ConfigSyncControl.sync_thread_interval_previous_not_connected()
-    )
-
-    assert(
-      Cfgsync::ConfigSyncControl.sync_thread_interval_previous_not_connected=(0)
-    )
-    assert_equal(
-      @thread_interval_previous_not_connected_minimum,
-      Cfgsync::ConfigSyncControl.sync_thread_interval_previous_not_connected()
-    )
-
-    assert(
-      Cfgsync::ConfigSyncControl.sync_thread_interval_previous_not_connected=(
-        -100
-      )
-    )
-    assert_equal(
-      @thread_interval_previous_not_connected_minimum,
-      Cfgsync::ConfigSyncControl.sync_thread_interval_previous_not_connected()
-    )
-
-    assert(
-      Cfgsync::ConfigSyncControl.sync_thread_interval_previous_not_connected=(
-        'abcd'
-      )
-    )
-    assert_equal(
-      @thread_interval_previous_not_connected_default,
-      Cfgsync::ConfigSyncControl.sync_thread_interval_previous_not_connected()
-    )
-  end
-
   def test_file_backup_count()
     assert_equal(
       @file_backup_count_default,
@@ -556,12 +487,11 @@ class TestConfigFetcher < Test::Unit::TestCase
     end
 
     def get_configs_cluster(nodes, cluster_name)
-      return @configs_cluster, @node_connected
+      return @configs_cluster
     end
 
-    def set_configs_cluster(configs, node_connected=true)
+    def set_configs_cluster(configs)
       @configs_cluster = configs
-      @node_connected = node_connected
       return self
     end
 
@@ -631,37 +561,31 @@ class TestConfigFetcher < Test::Unit::TestCase
     cfg_name = Cfgsync::ClusterConf.name
     fetcher = ConfigFetcherMock.new({}, [Cfgsync::ClusterConf], nil, nil)
 
-    # unable to connect to any nodes
-    fetcher.set_configs_local({cfg_name => cfg1})
-
-    fetcher.set_configs_cluster({}, false)
-    assert_equal([[], [], false], fetcher.fetch())
-
     # local config is synced
     fetcher.set_configs_local({cfg_name => cfg1})
 
     fetcher.set_configs_cluster({
       'node1' => {'configs' => {cfg_name => cfg1}},
     })
-    assert_equal([[], [], true], fetcher.fetch())
+    assert_equal([[], []], fetcher.fetch())
 
     fetcher.set_configs_cluster({
       'node1' => {'configs' => {cfg_name => cfg2}},
     })
-    assert_equal([[], [], true], fetcher.fetch())
+    assert_equal([[], []], fetcher.fetch())
 
     fetcher.set_configs_cluster({
       'node1' => {'configs' => {cfg_name => cfg1}},
       'node2' => {'configs' => {cfg_name => cfg2}},
     })
-    assert_equal([[], [], true], fetcher.fetch())
+    assert_equal([[], []], fetcher.fetch())
 
     fetcher.set_configs_cluster({
       'node1' => {'configs' => {cfg_name => cfg1}},
       'node2' => {'configs' => {cfg_name => cfg2}},
       'node3' => {'configs' => {cfg_name => cfg2}},
     })
-    assert_equal([[], [], true], fetcher.fetch())
+    assert_equal([[], []], fetcher.fetch())
 
     # local config is older
     fetcher.set_configs_local({cfg_name => cfg1})
@@ -669,20 +593,20 @@ class TestConfigFetcher < Test::Unit::TestCase
     fetcher.set_configs_cluster({
       'node1' => {cfg_name => cfg3},
     })
-    assert_equal([[cfg3], [], true], fetcher.fetch())
+    assert_equal([[cfg3], []], fetcher.fetch())
 
     fetcher.set_configs_cluster({
       'node1' => {cfg_name => cfg3},
       'node2' => {cfg_name => cfg4},
     })
-    assert_equal([[cfg4], [], true], fetcher.fetch())
+    assert_equal([[cfg4], []], fetcher.fetch())
 
     fetcher.set_configs_cluster({
       'node1' => {cfg_name => cfg3},
       'node2' => {cfg_name => cfg4},
       'node3' => {cfg_name => cfg3},
     })
-    assert_equal([[cfg3], [], true], fetcher.fetch())
+    assert_equal([[cfg3], []], fetcher.fetch())
 
     # local config is newer
     fetcher.set_configs_local({cfg_name => cfg3})
@@ -690,13 +614,13 @@ class TestConfigFetcher < Test::Unit::TestCase
     fetcher.set_configs_cluster({
       'node1' => {cfg_name => cfg1},
     })
-    assert_equal([[], [cfg3], true], fetcher.fetch())
+    assert_equal([[], [cfg3]], fetcher.fetch())
 
     fetcher.set_configs_cluster({
       'node1' => {cfg_name => cfg1},
       'node2' => {cfg_name => cfg1},
     })
-    assert_equal([[], [cfg3], true], fetcher.fetch())
+    assert_equal([[], [cfg3]], fetcher.fetch())
 
     # local config is the same version
     fetcher.set_configs_local({cfg_name => cfg3})
@@ -704,32 +628,32 @@ class TestConfigFetcher < Test::Unit::TestCase
     fetcher.set_configs_cluster({
       'node1' => {cfg_name => cfg3},
     })
-    assert_equal([[], [], true], fetcher.fetch())
+    assert_equal([[], []], fetcher.fetch())
 
     fetcher.set_configs_cluster({
       'node1' => {cfg_name => cfg4},
     })
-    assert_equal([[cfg4], [], true], fetcher.fetch())
+    assert_equal([[cfg4], []], fetcher.fetch())
 
     fetcher.set_configs_cluster({
       'node1' => {cfg_name => cfg3},
       'node2' => {cfg_name => cfg4},
     })
-    assert_equal([[cfg4], [], true], fetcher.fetch())
+    assert_equal([[cfg4], []], fetcher.fetch())
 
     fetcher.set_configs_cluster({
       'node1' => {cfg_name => cfg3},
       'node2' => {cfg_name => cfg4},
       'node3' => {cfg_name => cfg3},
     })
-    assert_equal([[], [], true], fetcher.fetch())
+    assert_equal([[], []], fetcher.fetch())
 
     fetcher.set_configs_cluster({
       'node1' => {cfg_name => cfg3},
       'node2' => {cfg_name => cfg4},
       'node3' => {cfg_name => cfg4},
     })
-    assert_equal([[cfg4], [], true], fetcher.fetch())
+    assert_equal([[cfg4], []], fetcher.fetch())
 
     # local config is the same version
     fetcher.set_configs_local({cfg_name => cfg4})
@@ -737,32 +661,32 @@ class TestConfigFetcher < Test::Unit::TestCase
     fetcher.set_configs_cluster({
       'node1' => {cfg_name => cfg3},
     })
-    assert_equal([[cfg3], [], true], fetcher.fetch())
+    assert_equal([[cfg3], []], fetcher.fetch())
 
     fetcher.set_configs_cluster({
       'node1' => {cfg_name => cfg4},
     })
-    assert_equal([[], [], true], fetcher.fetch())
+    assert_equal([[], []], fetcher.fetch())
 
     fetcher.set_configs_cluster({
       'node1' => {cfg_name => cfg3},
       'node2' => {cfg_name => cfg4},
     })
-    assert_equal([[], [], true], fetcher.fetch())
+    assert_equal([[], []], fetcher.fetch())
 
     fetcher.set_configs_cluster({
       'node1' => {cfg_name => cfg3},
       'node2' => {cfg_name => cfg4},
       'node3' => {cfg_name => cfg3},
     })
-    assert_equal([[cfg3], [], true], fetcher.fetch())
+    assert_equal([[cfg3], []], fetcher.fetch())
 
     fetcher.set_configs_cluster({
       'node1' => {cfg_name => cfg3},
       'node2' => {cfg_name => cfg4},
       'node3' => {cfg_name => cfg4},
     })
-    assert_equal([[], [], true], fetcher.fetch())
+    assert_equal([[], []], fetcher.fetch())
   end
 end
 
@@ -774,49 +698,34 @@ class TestMergeTokens < Test::Unit::TestCase
 
   def test_nothing_to_merge()
     old_cfg = Cfgsync::PcsdTokens.from_file()
-    new_cfg = Cfgsync::merge_tokens_files(old_cfg, nil, {}, {})
+    new_cfg = Cfgsync::merge_tokens_files(old_cfg, nil, {})
     assert_equal(old_cfg.text.strip, new_cfg.text.strip)
 
     old_cfg = Cfgsync::PcsdTokens.from_file()
-    new_cfg = Cfgsync::merge_tokens_files(
-      old_cfg, nil, {'rh7-4' => 'token4'}, {'rh7-4' => '4321'}
-    )
+    new_cfg = Cfgsync::merge_tokens_files(old_cfg, nil, {'rh7-4' => 'token4'})
     new_cfg_text =
 '{
-  "format_version": 3,
+  "format_version": 2,
   "data_version": 9,
   "tokens": {
     "rh7-1": "2a8b40aa-b539-4713-930a-483468d62ef4",
     "rh7-2": "76174e2c-09e8-4435-b318-5c6b8250a22c",
     "rh7-3": "55844951-9ae5-4103-bb4a-64f9c1ea0a71",
     "rh7-4": "token4"
-  },
-  "ports": {
-    "rh7-1": null,
-    "rh7-2": "2224",
-    "rh7-3": "1234",
-    "rh7-4": "4321"
   }
 }'
     assert_equal(new_cfg_text, new_cfg.text.strip)
 
     old_cfg = Cfgsync::PcsdTokens.from_file()
-    new_cfg = Cfgsync::merge_tokens_files(
-      old_cfg, nil, {'rh7-3' => 'token3'}, {}
-    )
+    new_cfg = Cfgsync::merge_tokens_files(old_cfg, nil, {'rh7-3' => 'token3'})
     new_cfg_text =
 '{
-  "format_version": 3,
+  "format_version": 2,
   "data_version": 9,
   "tokens": {
     "rh7-1": "2a8b40aa-b539-4713-930a-483468d62ef4",
     "rh7-2": "76174e2c-09e8-4435-b318-5c6b8250a22c",
     "rh7-3": "token3"
-  },
-  "ports": {
-    "rh7-1": null,
-    "rh7-2": "2224",
-    "rh7-3": "1234"
   }
 }'
     assert_equal(new_cfg_text, new_cfg.text.strip)
@@ -826,64 +735,45 @@ class TestMergeTokens < Test::Unit::TestCase
     to_merge = [
       Cfgsync::PcsdTokens.from_text(
 '{
-  "format_version": 3,
+  "format_version": 2,
   "data_version": 1,
   "tokens": {
     "rh7-1": "token1",
     "rh7-4": "token4a"
-  },
-  "ports": {
-    "rh7-1": null,
-    "rh7-4": "2224"
   }
 }'
       )
     ]
 
     old_cfg = Cfgsync::PcsdTokens.from_file()
-    new_cfg = Cfgsync::merge_tokens_files(old_cfg, to_merge, {}, {})
+    new_cfg = Cfgsync::merge_tokens_files(old_cfg, to_merge, {})
     assert_equal(old_cfg.text.strip, new_cfg.text.strip)
 
     old_cfg = Cfgsync::PcsdTokens.from_file()
-    new_cfg = Cfgsync::merge_tokens_files(
-      old_cfg, to_merge, {'rh7-4' => 'token4'}, {'rh7-4' => '4321'}
-    )
+    new_cfg = Cfgsync::merge_tokens_files(old_cfg, to_merge, {'rh7-4' => 'token4'})
     new_cfg_text =
 '{
-  "format_version": 3,
+  "format_version": 2,
   "data_version": 9,
   "tokens": {
     "rh7-1": "2a8b40aa-b539-4713-930a-483468d62ef4",
     "rh7-2": "76174e2c-09e8-4435-b318-5c6b8250a22c",
     "rh7-3": "55844951-9ae5-4103-bb4a-64f9c1ea0a71",
     "rh7-4": "token4"
-  },
-  "ports": {
-    "rh7-1": null,
-    "rh7-2": "2224",
-    "rh7-3": "1234",
-    "rh7-4": "4321"
   }
 }'
     assert_equal(new_cfg_text, new_cfg.text.strip)
 
     old_cfg = Cfgsync::PcsdTokens.from_file()
-    new_cfg = Cfgsync::merge_tokens_files(
-      old_cfg, to_merge, {'rh7-3' => 'token3'}, {}
-    )
+    new_cfg = Cfgsync::merge_tokens_files(old_cfg, to_merge, {'rh7-3' => 'token3'})
     new_cfg_text =
 '{
-  "format_version": 3,
+  "format_version": 2,
   "data_version": 9,
   "tokens": {
     "rh7-1": "2a8b40aa-b539-4713-930a-483468d62ef4",
     "rh7-2": "76174e2c-09e8-4435-b318-5c6b8250a22c",
     "rh7-3": "token3"
-  },
-  "ports": {
-    "rh7-1": null,
-    "rh7-2": "2224",
-    "rh7-3": "1234"
   }
 }'
     assert_equal(new_cfg_text, new_cfg.text.strip)
@@ -893,79 +783,57 @@ class TestMergeTokens < Test::Unit::TestCase
     to_merge = [
       Cfgsync::PcsdTokens.from_text(
 '{
-  "format_version": 3,
+  "format_version": 2,
   "data_version": 11,
   "tokens": {
     "rh7-1": "token1",
     "rh7-4": "token4a"
-  },
-  "ports": {
-    "rh7-1": "4321",
-    "rh7-4": null
   }
 }'
       )
     ]
 
     old_cfg = Cfgsync::PcsdTokens.from_file()
-    new_cfg = Cfgsync::merge_tokens_files(old_cfg, to_merge, {}, {})
+    new_cfg = Cfgsync::merge_tokens_files(old_cfg, to_merge, {})
     new_cfg_text =
 '{
-  "format_version": 3,
+  "format_version": 2,
   "data_version": 11,
   "tokens": {
     "rh7-1": "token1",
     "rh7-2": "76174e2c-09e8-4435-b318-5c6b8250a22c",
     "rh7-3": "55844951-9ae5-4103-bb4a-64f9c1ea0a71",
     "rh7-4": "token4a"
-  },
-  "ports": {
-    "rh7-1": "4321",
-    "rh7-2": "2224",
-    "rh7-3": "1234",
-    "rh7-4": null
   }
 }'
     assert_equal(new_cfg_text, new_cfg.text.strip)
 
     old_cfg = Cfgsync::PcsdTokens.from_file()
-    new_cfg = Cfgsync::merge_tokens_files(old_cfg, to_merge, {'rh7-4' => 'token4'}, {'rh7-4' => '12345'})
+    new_cfg = Cfgsync::merge_tokens_files(old_cfg, to_merge, {'rh7-4' => 'token4'})
     new_cfg_text =
 '{
-  "format_version": 3,
+  "format_version": 2,
   "data_version": 11,
   "tokens": {
     "rh7-1": "token1",
     "rh7-2": "76174e2c-09e8-4435-b318-5c6b8250a22c",
     "rh7-3": "55844951-9ae5-4103-bb4a-64f9c1ea0a71",
     "rh7-4": "token4"
-  },
-  "ports": {
-    "rh7-1": "4321",
-    "rh7-2": "2224",
-    "rh7-3": "1234",
-    "rh7-4": "12345"
   }
 }'
     assert_equal(new_cfg_text, new_cfg.text.strip)
 
     old_cfg = Cfgsync::PcsdTokens.from_file()
-    new_cfg = Cfgsync::merge_tokens_files(old_cfg, to_merge, {'rh7-3' => 'token3'}, {})
+    new_cfg = Cfgsync::merge_tokens_files(old_cfg, to_merge, {'rh7-3' => 'token3'})
     new_cfg_text =
 '{
-  "format_version": 3,
+  "format_version": 2,
   "data_version": 11,
   "tokens": {
     "rh7-1": "token1",
     "rh7-2": "76174e2c-09e8-4435-b318-5c6b8250a22c",
     "rh7-3": "token3",
     "rh7-4": "token4a"
-  },
-  "ports": {
-    "rh7-1": "4321",
-    "rh7-2": "2224",
-    "rh7-3": "1234",
-    "rh7-4": null
   }
 }'
     assert_equal(new_cfg_text, new_cfg.text.strip)
@@ -974,116 +842,88 @@ class TestMergeTokens < Test::Unit::TestCase
   def test_more_to_merge()
     to_merge_12 = Cfgsync::PcsdTokens.from_text(
 '{
-  "format_version": 3,
+  "format_version": 2,
   "data_version": 12,
   "tokens": {
     "rh7-2": "token2",
     "rh7-4": "token4b"
-  },
-  "ports": {
-    "rh7-2": "port2",
-    "rh7-4": "port4b"
   }
 }'
     )
     to_merge_11 = Cfgsync::PcsdTokens.from_text(
 '{
-  "format_version": 3,
+  "format_version": 2,
   "data_version": 11,
   "tokens": {
     "rh7-1": "token1",
     "rh7-4": "token4a"
-  },
-  "ports": {
-    "rh7-1": "port1",
-    "rh7-4": "port4a"
   }
 }'
     )
 
     new_cfg_text =
 '{
-  "format_version": 3,
+  "format_version": 2,
   "data_version": 12,
   "tokens": {
     "rh7-1": "token1",
     "rh7-2": "token2",
     "rh7-3": "55844951-9ae5-4103-bb4a-64f9c1ea0a71",
     "rh7-4": "token4b"
-  },
-  "ports": {
-    "rh7-1": "port1",
-    "rh7-2": "port2",
-    "rh7-3": "1234",
-    "rh7-4": "port4b"
   }
 }'
     old_cfg = Cfgsync::PcsdTokens.from_file()
     new_cfg = Cfgsync::merge_tokens_files(
-      old_cfg, [to_merge_11, to_merge_12], {}, {}
+      old_cfg, [to_merge_11, to_merge_12], {}
     )
     assert_equal(new_cfg_text, new_cfg.text.strip)
     old_cfg = Cfgsync::PcsdTokens.from_file()
     new_cfg = Cfgsync::merge_tokens_files(
-      old_cfg, [to_merge_12, to_merge_11], {}, {}
+      old_cfg, [to_merge_12, to_merge_11], {}
     )
     assert_equal(new_cfg_text, new_cfg.text.strip)
 
     new_cfg_text =
 '{
-  "format_version": 3,
+  "format_version": 2,
   "data_version": 12,
   "tokens": {
     "rh7-1": "token1",
     "rh7-2": "token2",
     "rh7-3": "55844951-9ae5-4103-bb4a-64f9c1ea0a71",
     "rh7-4": "token4"
-  },
-  "ports": {
-    "rh7-1": "port1",
-    "rh7-2": "port2",
-    "rh7-3": "1234",
-    "rh7-4": "port4"
   }
 }'
     old_cfg = Cfgsync::PcsdTokens.from_file()
     new_cfg = Cfgsync::merge_tokens_files(
-      old_cfg, [to_merge_11, to_merge_12], {'rh7-4' => 'token4'},
-      {'rh7-4' => 'port4'}
+      old_cfg, [to_merge_11, to_merge_12], {'rh7-4' => 'token4'}
     )
     assert_equal(new_cfg_text, new_cfg.text.strip)
     old_cfg = Cfgsync::PcsdTokens.from_file()
     new_cfg = Cfgsync::merge_tokens_files(
-      old_cfg, [to_merge_12, to_merge_11], {'rh7-4' => 'token4'},
-      {'rh7-4' => 'port4'}
+      old_cfg, [to_merge_12, to_merge_11], {'rh7-4' => 'token4'}
     )
     assert_equal(new_cfg_text, new_cfg.text.strip)
 
     new_cfg_text =
 '{
-  "format_version": 3,
+  "format_version": 2,
   "data_version": 12,
   "tokens": {
     "rh7-1": "token1",
     "rh7-2": "token2",
     "rh7-3": "token3",
     "rh7-4": "token4b"
-  },
-  "ports": {
-    "rh7-1": "port1",
-    "rh7-2": "port2",
-    "rh7-3": "1234",
-    "rh7-4": "port4b"
   }
 }'
     old_cfg = Cfgsync::PcsdTokens.from_file()
     new_cfg = Cfgsync::merge_tokens_files(
-      old_cfg, [to_merge_11, to_merge_12], {'rh7-3' => 'token3'}, {}
+      old_cfg, [to_merge_11, to_merge_12], {'rh7-3' => 'token3'}
     )
     assert_equal(new_cfg_text, new_cfg.text.strip)
     old_cfg = Cfgsync::PcsdTokens.from_file()
     new_cfg = Cfgsync::merge_tokens_files(
-      old_cfg, [to_merge_12, to_merge_11], {'rh7-3' => 'token3'}, {}
+      old_cfg, [to_merge_12, to_merge_11], {'rh7-3' => 'token3'}
     )
     assert_equal(new_cfg_text, new_cfg.text.strip)
   end

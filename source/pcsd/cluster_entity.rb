@@ -516,28 +516,6 @@ module ClusterEntity
           @utilization << ClusterEntity::NvPair.from_dom(e)
         }
         @stonith = @_class == 'stonith'
-        if @stonith
-          @instance_attr.each{ |attr|
-            if attr.name == 'action'
-              @warning_list << {
-                :message => (
-                  'This fence-device has the "action" option set, it is ' +
-                  'recommended to set "pcmk_off_action", "pcmk_reboot_action" ' +
-                  'instead'
-                )
-              }
-            end
-            if attr.name == 'method' and attr.value == 'cycle'
-              @warning_list << {
-                :message => (
-                  'This fence-device has the "method" option set to "cycle" ' +
-                  'which is potentially dangerous, please consider using ' +
-                  '"onoff"'
-                )
-              }
-            end
-          }
-        end
         if @id and rsc_status
           @crm_status = rsc_status[@id] || []
         end
@@ -589,9 +567,7 @@ module ClusterEntity
           # 7 == OCF_NOT_RUNNING == The resource is safely stopped.
           next if o.operation == 'monitor' and o.rc_code == 7
           # 8 == OCF_RUNNING_MASTER == The resource is running in master mode.
-          # 193 == PCMK_OCF_UNKNOWN => The resource operation is still in
-          # progress.
-          next if [8, 193].include?(o.rc_code)
+          next if 8 == o.rc_code
           failed_ops << o
           message = "Failed to #{o.operation} #{@id}"
           message += " on #{Time.at(o.last_rc_change).asctime}"

@@ -2,6 +2,7 @@ from __future__ import (
     absolute_import,
     division,
     print_function,
+    unicode_literals,
 )
 
 from pcs.cli.constraint.console_report import (
@@ -42,14 +43,12 @@ def constraint_plain(constraint_type, options_dict, with_id=False):
 
     return type_report_map[constraint_type](options_dict, with_id)
 
-#Each value (a callable taking report_item.info) returns a message.
-#Force text will be appended if necessary.
-#If it is necessary to put the force text inside the string then the callable
-#must take the force_text parameter.
+#Each value (callable taking report_item.info) returns string template.
+#Optionaly the template can contain placehodler {force} for next processing.
+#Placeholder {force} will be appended if is necessary and if is not presset
 CODE_TO_MESSAGE_BUILDER_MAP = {
-    codes.DUPLICATE_CONSTRAINTS_EXIST: lambda info, force_text:
-        "duplicate constraint already exists{0}\n".format(force_text)
-        + "\n".join([
+    codes.DUPLICATE_CONSTRAINTS_EXIST: lambda info:
+        "duplicate constraint already exists{force}\n" + "\n".join([
             "  " + constraint(info["constraint_type"], constraint_info)
             for constraint_info in info["constraint_info_list"]
         ])
@@ -60,9 +59,7 @@ CODE_TO_MESSAGE_BUILDER_MAP = {
             "{resource_id} is a {mode} resource, you should use the"
             " {parent_type} id: {parent_id} when adding constraints"
         ).format(
-            mode="master/slave" if info["parent_type"] == "master"
-                else info["parent_type"]
-            ,
+            mode="master/slave" if info["parent_type"] == "master" else "clone",
             **info
         )
     ,

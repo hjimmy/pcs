@@ -2,6 +2,7 @@ from __future__ import (
     absolute_import,
     division,
     print_function,
+    unicode_literals,
 )
 
 from pcs.test.tools.pcs_unittest import TestCase
@@ -19,7 +20,7 @@ from pcs.test.tools.pcs_unittest import mock
 
 
 class PrepareSetTest(TestCase):
-    def test_return_corrected_resource_set(self):
+    def test_return_corrected_resurce_set(self):
         find_valid_id = mock.Mock()
         find_valid_id.side_effect = lambda id: {"A": "AA", "B": "BB"}[id]
         self.assertEqual(
@@ -38,12 +39,11 @@ class PrepareSetTest(TestCase):
             }),
             (
                 severities.ERROR,
-                report_codes.INVALID_OPTIONS,
+                report_codes.INVALID_OPTION,
                 {
-                    "option_names": ["invalid_name"],
+                    "option_name": "invalid_name",
                     "option_type": None,
                     "allowed": ["action", "require-all", "role", "sequential"],
-                    "allowed_patterns": [],
             }),
         )
 

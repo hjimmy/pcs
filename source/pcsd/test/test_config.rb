@@ -122,12 +122,12 @@ class TestConfig < Test::Unit::TestCase
   ]
 }'
     cfg = PCSConfig.new(text)
-    assert_equal(1, $logger.log.length)
-    assert_equal('error', $logger.log[0][0])
-    assert_match(
-      # the number is based on JSON gem version
-      /Unable to parse pcs_settings file: \d+: unexpected token/,
-      $logger.log[0][1]
+    assert_equal(
+      [[
+        'error',
+        "Unable to parse pcs_settings file: 399: unexpected token at '\"rh71-node2\"\n      ]\n    }\n  ]\n}'"
+      ]],
+      $logger.log
     )
     assert_equal(fixture_empty_config, cfg.text)
   end
@@ -673,11 +673,9 @@ class TestTokens < Test::Unit::TestCase
   def fixture_empty_config()
     return(
 '{
-  "format_version": 3,
+  "format_version": 2,
   "data_version": 0,
   "tokens": {
-  },
-  "ports": {
   }
 }'
     )
@@ -715,17 +713,14 @@ class TestTokens < Test::Unit::TestCase
     text = '{"rh7-1": "token-rh7-1", "rh7-2": "token-rh7-2"}'
     cfg = PCSTokens.new(text)
     assert_equal(2, cfg.tokens.length)
-    assert_equal(0, cfg.ports.length)
     assert_equal('token-rh7-1', cfg.tokens['rh7-1'])
     assert_equal(
 '{
-  "format_version": 3,
+  "format_version": 2,
   "data_version": 0,
   "tokens": {
     "rh7-1": "token-rh7-1",
     "rh7-2": "token-rh7-2"
-  },
-  "ports": {
   }
 }',
       cfg.text
@@ -742,14 +737,11 @@ class TestTokens < Test::Unit::TestCase
     assert_equal(2, cfg.format_version)
     assert_equal(0, cfg.data_version)
     assert_equal(0, cfg.tokens.length)
-    assert_equal(0, cfg.ports.length)
     assert_equal(
 '{
-  "format_version": 3,
+  "format_version": 2,
   "data_version": 0,
   "tokens": {
-  },
-  "ports": {
   }
 }',
       cfg.text
@@ -768,66 +760,7 @@ class TestTokens < Test::Unit::TestCase
     assert_equal(2, cfg.format_version)
     assert_equal(9, cfg.data_version)
     assert_equal(2, cfg.tokens.length)
-    assert_equal(0, cfg.ports.length)
     assert_equal('token-rh7-1', cfg.tokens['rh7-1'])
-    expected_text =
-'{
-  "format_version": 3,
-  "data_version": 9,
-  "tokens": {
-    "rh7-1": "token-rh7-1",
-    "rh7-2": "token-rh7-2"
-  },
-  "ports": {
-  }
-}'
-    assert_equal(expected_text, cfg.text)
-  end
-
-  def test_parse_format3()
-    text =
-'{
-  "format_version": 3,
-  "tokens": {},
-  "ports": {}
-}'
-    cfg = PCSTokens.new(text)
-    assert_equal(3, cfg.format_version)
-    assert_equal(0, cfg.data_version)
-    assert_equal(0, cfg.tokens.length)
-    assert_equal(0, cfg.ports.length)
-    assert_equal(
-'{
-  "format_version": 3,
-  "data_version": 0,
-  "tokens": {
-  },
-  "ports": {
-  }
-}',
-      cfg.text
-    )
-
-    text =
-'{
-  "format_version": 3,
-  "data_version": 9,
-  "tokens": {
-    "rh7-1": "token-rh7-1",
-    "rh7-2": "token-rh7-2"
-  },
-  "ports": {
-    "rh7-1": "1234",
-    "rh7-2": null
-  }
-}'
-    cfg = PCSTokens.new(text)
-    assert_equal(3, cfg.format_version)
-    assert_equal(9, cfg.data_version)
-    assert_equal(2, cfg.tokens.length)
-    assert_equal(2, cfg.ports.length)
-    assert_equal('token-rh7-1', cfg.tokens['rh7-1'])
-    assert_equal('1234', cfg.ports['rh7-1'])
     assert_equal(text, cfg.text)
   end
 
@@ -840,14 +773,6 @@ class TestTokens < Test::Unit::TestCase
         'rh7-3' => '55844951-9ae5-4103-bb4a-64f9c1ea0a71',
       },
       cfg.tokens
-    )
-    assert_equal(
-      {
-        'rh7-1' => nil,
-        'rh7-2' => '2224',
-        'rh7-3' => '1234',
-      },
-      cfg.ports
     )
 
     cfg.tokens.delete('rh7-2')
@@ -868,39 +793,14 @@ class TestTokens < Test::Unit::TestCase
       },
       cfg.tokens
     )
-
-    cfg.ports.delete('rh7-3')
-    assert_equal(
-      {
-        'rh7-1' => nil,
-        'rh7-2' => '2224',
-      },
-      cfg.ports
-    )
-
-    cfg.ports['rh7-3'] = "4321"
-    assert_equal(
-      {
-        'rh7-1' => nil,
-        'rh7-2' => '2224',
-        'rh7-3' => '4321',
-      },
-      cfg.ports
-    )
-
     assert_equal(
 '{
-  "format_version": 3,
+  "format_version": 2,
   "data_version": 9,
   "tokens": {
     "rh7-1": "2a8b40aa-b539-4713-930a-483468d62ef4",
     "rh7-2": "76174e2c-09e8-4435-b318-5c6b8250a22c",
     "rh7-3": "55844951-9ae5-4103-bb4a-64f9c1ea0a71"
-  },
-  "ports": {
-    "rh7-1": null,
-    "rh7-2": "2224",
-    "rh7-3": "4321"
   }
 }',
       cfg.text

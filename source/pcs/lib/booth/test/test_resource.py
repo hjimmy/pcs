@@ -2,6 +2,7 @@ from __future__ import (
     absolute_import,
     division,
     print_function,
+    unicode_literals,
 )
 
 from pcs.test.tools.pcs_unittest import TestCase
@@ -10,6 +11,7 @@ from lxml import etree
 
 import pcs.lib.booth.resource as booth_resource
 from pcs.test.tools.pcs_unittest import mock
+from pcs.test.tools.misc import get_test_resource as rc
 
 
 def fixture_resources_with_booth(booth_config_file_path):
@@ -89,9 +91,6 @@ class RemoveFromClusterTest(TestCase):
         booth_resource.get_remover(mock_resource_remove)(element_list)
         return mock_resource_remove
 
-    def find_booth_resources(self, tree):
-        return tree.xpath('.//primitive[@type="booth-site"]')
-
     def test_remove_ip_when_is_only_booth_sibling_in_group(self):
         group = etree.fromstring('''
             <group>
@@ -104,7 +103,7 @@ class RemoveFromClusterTest(TestCase):
             </group>
         ''')
 
-        mock_resource_remove = self.call(self.find_booth_resources(group))
+        mock_resource_remove = self.call(group.getchildren()[1:])
         self.assertEqual(
             mock_resource_remove.mock_calls, [
                 mock.call('ip'),
@@ -112,73 +111,43 @@ class RemoveFromClusterTest(TestCase):
             ]
         )
 
-    def test_remove_ip_when_group_is_disabled_1(self):
-        group = etree.fromstring('''
-            <group>
-                <primitive id="ip" type="IPaddr2"/>
-                <primitive id="booth" type="booth-site">
-                    <instance_attributes>
-                        <nvpair name="config" value="/PATH/TO/CONF"/>
-                    </instance_attributes>
-                </primitive>
-                <meta_attributes>
-                    <nvpair name="target-role" value="Stopped"/>
-                </meta_attributes>
-            </group>
-        ''')
+class CreateInClusterTest(TestCase):
+    def test_remove_ip_when_booth_resource_add_failed(self):
+        mock_resource_create = mock.Mock(side_effect=[None, SystemExit(1)])
+        mock_resource_remove = mock.Mock()
+        mock_create_id = mock.Mock(side_effect=["ip_id","booth_id","group_id"])
+        ip = "1.2.3.4"
+        booth_config_file_path = rc("/path/to/booth.conf")
 
-        mock_resource_remove = self.call(self.find_booth_resources(group))
-        self.assertEqual(
-            mock_resource_remove.mock_calls, [
-                mock.call('ip'),
-                mock.call('booth'),
-            ]
+        booth_resource.get_creator(mock_resource_create, mock_resource_remove)(
+            ip,
+            booth_config_file_path,
+            mock_create_id
         )
+        self.assertEqual(mock_resource_create.mock_calls, [
+            mock.call(
+                clone_opts=[],
+                group=u'group_id',
+                meta_values=[],
+                op_values=[],
+                ra_id=u'ip_id',
+                ra_type=u'ocf:heartbeat:IPaddr2',
+                ra_values=[u'ip=1.2.3.4'],
+            ),
+            mock.call(
+                clone_opts=[],
+                group='group_id',
+                meta_values=[],
+                op_values=[],
+                ra_id='booth_id',
+                ra_type='ocf:pacemaker:booth-site',
+                ra_values=['config=/path/to/booth.conf'],
+            )
+        ])
+        mock_resource_remove.assert_called_once_with("ip_id")
 
-    def test_remove_ip_when_group_is_disabled_2(self):
-        group = etree.fromstring('''
-            <group>
-                <meta_attributes>
-                    <nvpair name="target-role" value="Stopped"/>
-                </meta_attributes>
-                <primitive id="ip" type="IPaddr2"/>
-                <primitive id="booth" type="booth-site">
-                    <instance_attributes>
-                        <nvpair name="config" value="/PATH/TO/CONF"/>
-                    </instance_attributes>
-                </primitive>
-            </group>
-        ''')
 
-        mock_resource_remove = self.call(self.find_booth_resources(group))
-        self.assertEqual(
-            mock_resource_remove.mock_calls, [
-                mock.call('ip'),
-                mock.call('booth'),
-            ]
-        )
-
-    def test_dont_remove_ip_when_group_has_other_resources(self):
-        group = etree.fromstring('''
-            <group>
-                <primitive id="ip" type="IPaddr2"/>
-                <primitive id="booth" type="booth-site">
-                    <instance_attributes>
-                        <nvpair name="config" value="/PATH/TO/CONF"/>
-                    </instance_attributes>
-                </primitive>
-                <primitive id="dummy" type="Dummy"/>
-            </group>
-        ''')
-
-        mock_resource_remove = self.call(self.find_booth_resources(group))
-        self.assertEqual(
-            mock_resource_remove.mock_calls, [
-                mock.call('booth'),
-            ]
-        )
-
-class FindBoundIpTest(TestCase):
+class FindBindedIpTest(TestCase):
     def fixture_resource_section(self, ip_element_list):
         resources_section = etree.fromstring('<resources/>')
         group = etree.SubElement(resources_section, "group")

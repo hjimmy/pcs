@@ -2,6 +2,7 @@ from __future__ import (
     absolute_import,
     division,
     print_function,
+    unicode_literals,
 )
 
 import re
@@ -115,6 +116,7 @@ def format_error_list(flavour, errors, descriptions, traceback_highlight):
             "%s: %s" % (red(flavour), get_description(test, descriptions)),
             lightgrey(separator2),
             "%s" % format_traceback(err) if traceback_highlight else err,
+            "",
         ])
     return line_list
 
@@ -146,7 +148,7 @@ def format_traceback(err):
         else:
             formated_err.append(line)
             was_prev_path = False
-    return "\n".join(formated_err)+"\n"
+    return "\n".join(formated_err)
 
 def format_skips(skip_map):
     return [blue("Some tests have been skipped:")] + [

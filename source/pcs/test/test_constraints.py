@@ -2,62 +2,33 @@ from __future__ import (
     absolute_import,
     division,
     print_function,
+    unicode_literals,
 )
 
-from lxml import etree
 import os
 import shutil
 from pcs.test.tools import pcs_unittest as unittest
 
-from pcs.test.tools.assertions import (
-    ac,
-    AssertPcsMixin,
-    console_report,
-)
-from pcs.test.tools.cib import get_assert_pcs_effect_mixin
+from pcs.test.tools.assertions import AssertPcsMixin, console_report
 from pcs.test.tools.misc import (
+    ac,
     get_test_resource as rc,
-    skip_unless_pacemaker_supports_bundle,
-    skip_unless_pacemaker_version,
-    outdent,
+    is_minimum_pacemaker_version,
 )
 from pcs.test.tools.pcs_runner import pcs, PcsRunner
 
 
 empty_cib = rc("cib-empty.xml")
+empty_cib_1_2 = rc("cib-empty-1.2.xml")
 temp_cib = rc("temp-cib.xml")
 large_cib = rc("cib-large.xml")
 
-skip_unless_location_resource_discovery = skip_unless_pacemaker_version(
-    (1, 1, 12),
-    "constraints with the resource-discovery option"
-)
-skip_unless_location_rsc_pattern = skip_unless_pacemaker_version(
-    (1, 1, 16),
-    "location constraints with resource patterns"
-)
-LOCATION_NODE_VALIDATION_SKIP_WARNING = (
-    "Warning: Validation for node existence in the cluster will be skipped\n"
-)
-
 class ConstraintTest(unittest.TestCase):
     def setUp(self):
-        with open(temp_cib, "w") as temp_cib_file:
-            temp_cib_file.write(self.fixture_cib_cache())
-
-    def fixture_cib_cache(self):
-        if not hasattr(self.__class__, "cib_cache"):
-            self.__class__.cib_cache = self.fixture_cib()
-        return self.__class__.cib_cache
-
-    def fixture_cib(self):
         shutil.copy(empty_cib, temp_cib)
         self.setupClusterA(temp_cib)
-        cib_content = open(temp_cib).read()
-        shutil.copy(empty_cib, temp_cib)
-        return cib_content
 
-    # Sets up a cluster with Resources, groups, master/slave resource and clones
+    # Setups up a cluster with Resources, groups, master/slave resource and clones
     def setupClusterA(self,temp_cib):
         line = "resource create D1 ocf:heartbeat:Dummy"
         output, returnVal = pcs(temp_cib, line)
@@ -262,11 +233,11 @@ Ticket Constraints:
         ac(o,"Location Constraints:\nOrdering Constraints:\n  stop D1 then stop D2 (kind:Mandatory) (id:order-D1-D2-mandatory)\n  start D1 then start D2 (kind:Mandatory) (id:order-D1-D2-mandatory-1)\nColocation Constraints:\nTicket Constraints:\n")
         assert r == 0
 
-    @skip_unless_pacemaker_version(
-        (1, 1, 12),
-        "constraints with the require-all option"
-    )
     def testOrderConstraintRequireAll(self):
+        if not is_minimum_pacemaker_version(1, 1, 12):
+            print("WARNING: Pacemaker version is too old (must be >= 1.1.12) to test require-all")
+            return
+
         o,r = pcs("cluster cib-upgrade")
         ac(o,"Cluster CIB has been upgraded to latest version\n")
         assert r == 0
@@ -287,7 +258,7 @@ Ticket Constraints:
 
     def testAllConstraints(self):
         output, returnVal = pcs(temp_cib, "constraint location D5 prefers node1")
-        assert returnVal == 0 and output == LOCATION_NODE_VALIDATION_SKIP_WARNING, output
+        assert returnVal == 0 and output == "", output
 
         output, returnVal = pcs(temp_cib, "constraint order Master then D5")
         assert returnVal == 0 and output == "Adding Master D5 (kind: Mandatory) (Options: first-action=start then-action=start)\n", output
@@ -304,18 +275,17 @@ Ticket Constraints:
         ac(output,"Location Constraints:\n  Resource: D5\n    Enabled on: node1 (score:INFINITY) (id:location-D5-node1-INFINITY)\nOrdering Constraints:\n  start Master then start D5 (kind:Mandatory) (id:order-Master-D5-mandatory)\nColocation Constraints:\n  Master with D5 (score:INFINITY) (id:colocation-Master-D5-INFINITY)\nTicket Constraints:\n")
 
     def testLocationConstraints(self):
-        # see also BundleLocation
         output, returnVal = pcs(temp_cib, "constraint location D5 prefers node1")
-        assert returnVal == 0 and output == LOCATION_NODE_VALIDATION_SKIP_WARNING, output
+        assert returnVal == 0 and output == "", output
 
         output, returnVal = pcs(temp_cib, "constraint location D5 avoids node1")
-        assert returnVal == 0 and output == LOCATION_NODE_VALIDATION_SKIP_WARNING, output
+        assert returnVal == 0 and output == "", output
 
         output, returnVal = pcs(temp_cib, "constraint location D5 prefers node1")
-        assert returnVal == 0 and output == LOCATION_NODE_VALIDATION_SKIP_WARNING, output
+        assert returnVal == 0 and output == "", output
 
         output, returnVal = pcs(temp_cib, "constraint location D5 avoids node2")
-        assert returnVal == 0 and output == LOCATION_NODE_VALIDATION_SKIP_WARNING, output
+        assert returnVal == 0 and output == "", output
 
         output, returnVal = pcs(temp_cib, "constraint")
         assert returnVal == 0
@@ -327,10 +297,10 @@ Ticket Constraints:
 
     def testConstraintRemoval(self):
         output, returnVal = pcs(temp_cib, "constraint location D5 prefers node1")
-        assert returnVal == 0 and output == LOCATION_NODE_VALIDATION_SKIP_WARNING, output
+        assert returnVal == 0 and output == "", output
 
         output, returnVal = pcs(temp_cib, "constraint location D6 prefers node1")
-        assert returnVal == 0 and output == LOCATION_NODE_VALIDATION_SKIP_WARNING, output
+        assert returnVal == 0 and output == "", output
 
         output, returnVal = pcs(temp_cib, "constraint remove blahblah")
         assert returnVal == 1 and output.startswith("Error: Unable to find constraint - 'blahblah'"), output
@@ -348,7 +318,6 @@ Ticket Constraints:
         assert returnVal == 0
 
     def testColocationConstraints(self):
-        # see also BundleColocation
         line = "resource create M1 ocf:heartbeat:Dummy --master"
         output, returnVal = pcs(temp_cib, line)
         assert returnVal == 0 and output == ""
@@ -421,7 +390,6 @@ Ticket Constraints:
         ac(o,'Location Constraints:\nOrdering Constraints:\nColocation Constraints:\n  D1 with D3-clone (score:INFINITY)\n  D1 with D2 (score:100)\n  D1 with D2 (score:-100)\n  Master with D5 (score:100)\n  M1-master with M2-master (score:INFINITY) (rsc-role:Master) (with-rsc-role:Master)\n  M3-master with M4-master (score:INFINITY)\n  M5-master with M6-master (score:500) (rsc-role:Slave) (with-rsc-role:Started)\n  M7-master with M8-master (score:INFINITY) (rsc-role:Started) (with-rsc-role:Master)\n  M9-master with M10-master (score:INFINITY) (rsc-role:Slave) (with-rsc-role:Started)\nTicket Constraints:\n')
 
     def testColocationSets(self):
-        # see also BundleColocation
         line = "resource create D7 ocf:heartbeat:Dummy"
         output, returnVal = pcs(temp_cib, line)
         assert returnVal == 0 and output == ""
@@ -486,24 +454,11 @@ Colocation Constraints:
         assert r == 0
 
         o, r = pcs(temp_cib, "resource delete D5")
-        ac(o, outdent(
-            """\
-            Removing D5 from set pcs_rsc_set_D5_D6_D7
-            Removing D5 from set pcs_rsc_set_D5_D6-1
-            Deleting Resource - D5
-            """
-        ))
+        ac(o,"Removing D5 from set pcs_rsc_set_D5_D6_D7\nRemoving D5 from set pcs_rsc_set_D5_D6-1\nDeleting Resource - D5\n")
         assert r == 0
 
         o, r = pcs(temp_cib, "resource delete D6")
-        ac(o, outdent(
-            """\
-            Removing D6 from set pcs_rsc_set_D5_D6_D7
-            Removing D6 from set pcs_rsc_set_D5_D6-1
-            Removing set pcs_rsc_set_D5_D6-1
-            Deleting Resource - D6
-            """
-        ))
+        ac(o,"Removing D6 from set pcs_rsc_set_D5_D6_D7\nRemoving D6 from set pcs_rsc_set_D5_D6-1\nRemoving set pcs_rsc_set_D5_D6-1\nDeleting Resource - D6\n")
         assert r == 0
 
         o, r = pcs(temp_cib, "constraint ref D7")
@@ -515,19 +470,19 @@ Colocation Constraints:
         assert r == 0
 
         output, retValue = pcs(temp_cib, "constraint colocation set D1 D2 sequential=foo")
-        ac(output, "Error: 'foo' is not a valid sequential value, use false, true\n")
+        ac(output, "Error: 'foo' is not a valid sequential value, use true, false\n")
         self.assertEqual(1, retValue)
 
         output, retValue = pcs(temp_cib, "constraint colocation set D1 D2 require-all=foo")
-        ac(output, "Error: 'foo' is not a valid require-all value, use false, true\n")
+        ac(output, "Error: 'foo' is not a valid require-all value, use true, false\n")
         self.assertEqual(1, retValue)
 
         output, retValue = pcs(temp_cib, "constraint colocation set D1 D2 role=foo")
-        ac(output, "Error: 'foo' is not a valid role value, use Master, Slave, Started, Stopped\n")
+        ac(output, "Error: 'foo' is not a valid role value, use Stopped, Started, Master, Slave\n")
         self.assertEqual(1, retValue)
 
         output, retValue = pcs(temp_cib, "constraint colocation set D1 D2 action=foo")
-        ac(output, "Error: 'foo' is not a valid action value, use demote, promote, start, stop\n")
+        ac(output, "Error: 'foo' is not a valid action value, use start, promote, demote, stop\n")
         self.assertEqual(1, retValue)
 
         output, retValue = pcs(temp_cib, "constraint colocation set D1 D2 foo=bar")
@@ -550,8 +505,11 @@ Colocation Constraints:
         ac(output, "")
         self.assertEqual(0, retValue)
 
-    @skip_unless_location_resource_discovery
-    def testConstraintResourceDiscoveryRules(self):
+    def testConstraintResourceDiscovery(self):
+        if not is_minimum_pacemaker_version(1, 1, 12):
+            print("WARNING: Pacemaker version is too old (must be >= 1.1.12) to test resource-discovery")
+            return
+
         o,r = pcs("resource create crd ocf:heartbeat:Dummy")
         ac(o,"")
         assert r == 0
@@ -586,29 +544,24 @@ Colocation Constraints:
         ])+'\n')
         assert r == 0
 
-    @skip_unless_location_resource_discovery
-    def testConstraintResourceDiscovery(self):
-        o,r = pcs("resource create crd ocf:heartbeat:Dummy")
+        o,r = pcs("constraint delete location-crd")
         ac(o,"")
-        assert r == 0
+        assert r==0
 
-        o,r = pcs("resource create crd1 ocf:heartbeat:Dummy")
+        o,r = pcs("constraint delete location-crd1")
         ac(o,"")
+        assert r==0
+
+        o,r = pcs("constraint --full")
+        ac(o,"Location Constraints:\nOrdering Constraints:\nColocation Constraints:\nTicket Constraints:\n")
         assert r == 0
 
         o,r = pcs("constraint location add my_constraint_id crd my_node -INFINITY resource-discovery=always")
-        ac(
-            o,
-            (
-                "Cluster CIB has been upgraded to latest version\n"
-                +
-                LOCATION_NODE_VALIDATION_SKIP_WARNING
-            )
-        )
+        ac(o,"")
         assert r == 0
 
         o,r = pcs("constraint location add my_constraint_id2 crd1 my_node -INFINITY resource-discovery=never")
-        ac(o, LOCATION_NODE_VALIDATION_SKIP_WARNING)
+        ac(o,"")
         assert r == 0
 
         o,r = pcs("constraint --full")
@@ -691,7 +644,6 @@ Colocation Constraints:
         assert r == 0
 
     def testOrderSets(self):
-        # see also BundleOrder
         line = "resource create D7 ocf:heartbeat:Dummy"
         output, returnVal = pcs(temp_cib, line)
         assert returnVal == 0 and output == ""
@@ -756,40 +708,27 @@ Ordering Constraints:
 """)
 
         o, r = pcs(temp_cib, "resource delete D5")
-        ac(o, outdent(
-            """\
-            Removing D5 from set pcs_rsc_set_D5_D6_D7
-            Removing D5 from set pcs_rsc_set_D5_D6-1
-            Deleting Resource - D5
-            """
-        ))
+        ac(o,"Removing D5 from set pcs_rsc_set_D5_D6_D7\nRemoving D5 from set pcs_rsc_set_D5_D6-1\nDeleting Resource - D5\n")
         assert r == 0
 
         o, r = pcs(temp_cib, "resource delete D6")
-        ac(o, outdent(
-            """\
-            Removing D6 from set pcs_rsc_set_D5_D6_D7
-            Removing D6 from set pcs_rsc_set_D5_D6-1
-            Removing set pcs_rsc_set_D5_D6-1
-            Deleting Resource - D6
-            """
-        ))
+        ac(o,"Removing D6 from set pcs_rsc_set_D5_D6_D7\nRemoving D6 from set pcs_rsc_set_D5_D6-1\nRemoving set pcs_rsc_set_D5_D6-1\nDeleting Resource - D6\n")
         assert r == 0
 
         output, retValue = pcs(temp_cib, "constraint order set D1 D2 sequential=foo")
-        ac(output, "Error: 'foo' is not a valid sequential value, use false, true\n")
+        ac(output, "Error: 'foo' is not a valid sequential value, use true, false\n")
         self.assertEqual(1, retValue)
 
         output, retValue = pcs(temp_cib, "constraint order set D1 D2 require-all=foo")
-        ac(output, "Error: 'foo' is not a valid require-all value, use false, true\n")
+        ac(output, "Error: 'foo' is not a valid require-all value, use true, false\n")
         self.assertEqual(1, retValue)
 
         output, retValue = pcs(temp_cib, "constraint order set D1 D2 role=foo")
-        ac(output, "Error: 'foo' is not a valid role value, use Master, Slave, Started, Stopped\n")
+        ac(output, "Error: 'foo' is not a valid role value, use Stopped, Started, Master, Slave\n")
         self.assertEqual(1, retValue)
 
         output, retValue = pcs(temp_cib, "constraint order set D1 D2 action=foo")
-        ac(output, "Error: 'foo' is not a valid action value, use demote, promote, start, stop\n")
+        ac(output, "Error: 'foo' is not a valid action value, use start, promote, demote, stop\n")
         self.assertEqual(1, retValue)
 
         output, retValue = pcs(temp_cib, "constraint order set D1 D2 foo=bar")
@@ -809,14 +748,14 @@ Error: invalid option 'foo', allowed options are: id, kind, symmetrical
             temp_cib,
             "constraint order set D1 D2 setoptions kind=foo"
         )
-        ac(output, "Error: 'foo' is not a valid kind value, use Mandatory, Optional, Serialize\n")
+        ac(output, "Error: 'foo' is not a valid kind value, use Optional, Mandatory, Serialize\n")
         self.assertEqual(1, retValue)
 
         output, retValue = pcs(
             temp_cib,
             "constraint order set D1 D2 setoptions symmetrical=foo"
         )
-        ac(output, "Error: 'foo' is not a valid symmetrical value, use false, true\n")
+        ac(output, "Error: 'foo' is not a valid symmetrical value, use true, false\n")
         self.assertEqual(1, retValue)
 
         output, retValue = pcs(
@@ -841,10 +780,10 @@ Ticket Constraints:
 
     def testLocationConstraintRule(self):
         o, r = pcs(temp_cib, "constraint location D1 prefers rh7-1")
-        assert r == 0 and o == LOCATION_NODE_VALIDATION_SKIP_WARNING, o
+        assert r == 0 and o == "", o
 
         o, r = pcs(temp_cib, "constraint location D2 prefers rh7-2")
-        assert r == 0 and o == LOCATION_NODE_VALIDATION_SKIP_WARNING, o
+        assert r == 0 and o == "", o
 
         o, r = pcs(temp_cib, "constraint rule add location-D1-rh7-1-INFINITY #uname eq rh7-1")
         assert r == 0 and o == "", o
@@ -1070,7 +1009,7 @@ Warning: changing a monitor operation interval from 10 to 11 to make the operati
         assert r == 0
 
         o,r = pcs("constraint location stateful1 prefers rh7-1 --force")
-        ac(o, LOCATION_NODE_VALIDATION_SKIP_WARNING)
+        ac(o,"")
         assert r == 0
 
         o,r = pcs("constraint location statefulG rule #uname eq rh7-1 --force")
@@ -1142,13 +1081,13 @@ Warning: changing a monitor operation interval from 10 to 11 to make the operati
         output, returnVal = pcs(
             "constraint location stateful1 prefers rh7-1 --autocorrect"
         )
-        ac(output, LOCATION_NODE_VALIDATION_SKIP_WARNING)
+        ac(output, "")
         self.assertEqual(0, returnVal)
 
         output, returnVal = pcs(
             "constraint location statefulG prefers rh7-1 --autocorrect"
         )
-        ac(output, LOCATION_NODE_VALIDATION_SKIP_WARNING)
+        ac(output, "")
         self.assertEqual(0, returnVal)
 
         output, returnVal = pcs(
@@ -1437,7 +1376,7 @@ Ticket Constraints:
         assert r == 0
 
         o,r = pcs("constraint location dummy prefers rh7-1 --force")
-        ac(o, LOCATION_NODE_VALIDATION_SKIP_WARNING)
+        ac(o,"")
         assert r == 0
 
         o,r = pcs("constraint location dummyG rule #uname eq rh7-1 --force")
@@ -1505,13 +1444,13 @@ Ticket Constraints:
         output, returnVal = pcs(
             "constraint location dummy prefers rh7-1 --autocorrect"
         )
-        ac(output, LOCATION_NODE_VALIDATION_SKIP_WARNING)
+        ac(output, "")
         self.assertEqual(0, returnVal)
 
         output, returnVal = pcs(
             "constraint location dummyG prefers rh7-1 --autocorrect"
         )
-        ac(output, LOCATION_NODE_VALIDATION_SKIP_WARNING)
+        ac(output, "")
         self.assertEqual(0, returnVal)
 
         output, returnVal = pcs(
@@ -1741,7 +1680,7 @@ Ticket Constraints:
         shutil.copy(large_cib, temp_cib)
 
         output, returnVal = pcs(temp_cib, "constraint location dummy prefers rh7-1")
-        ac(output, LOCATION_NODE_VALIDATION_SKIP_WARNING)
+        ac(output, "")
         assert returnVal == 0
 
         output, returnVal = pcs(temp_cib, "constraint location show resources dummy --full")
@@ -1769,7 +1708,7 @@ Ticket Constraints:
         assert returnVal == 0
 
         output, returnVal = pcs(temp_cib, "constraint location dummy prefers rh7-1")
-        ac(output, LOCATION_NODE_VALIDATION_SKIP_WARNING)
+        ac(output, "")
         assert returnVal == 0
 
         output, returnVal = pcs(temp_cib, "constraint location show resources dummy --full")
@@ -1782,7 +1721,7 @@ Ticket Constraints:
 
     def testConstraintResourceCloneUpdate(self):
         output, returnVal = pcs(temp_cib, "constraint location D1 prefers rh7-1")
-        ac(output, LOCATION_NODE_VALIDATION_SKIP_WARNING)
+        ac(output, "")
         assert returnVal == 0
 
         output, returnVal = pcs(temp_cib, "constraint colocation add D1 with D5")
@@ -1822,7 +1761,7 @@ Ticket Constraints:
 
     def testConstraintResourceMasterUpdate(self):
         output, returnVal = pcs(temp_cib, "constraint location D1 prefers rh7-1")
-        ac(output, LOCATION_NODE_VALIDATION_SKIP_WARNING)
+        ac(output, "")
         assert returnVal == 0
 
         output, returnVal = pcs(temp_cib, "constraint colocation add D1 with D5")
@@ -1866,7 +1805,7 @@ Ticket Constraints:
         assert returnVal == 0
 
         output, returnVal = pcs(temp_cib, "constraint location DG prefers rh7-1")
-        ac(output, LOCATION_NODE_VALIDATION_SKIP_WARNING)
+        ac(output, "")
         assert returnVal == 0
 
         output, returnVal = pcs(temp_cib, "constraint colocation add DG with D5")
@@ -1910,7 +1849,7 @@ Ticket Constraints:
         assert returnVal == 0
 
         output, returnVal = pcs(temp_cib, "constraint location DG prefers rh7-1")
-        ac(output, LOCATION_NODE_VALIDATION_SKIP_WARNING)
+        ac(output, "")
         assert returnVal == 0
 
         output, returnVal = pcs(temp_cib, "constraint colocation add DG with D5")
@@ -1953,39 +1892,33 @@ Ticket Constraints:
         # deleting the remote node resource
         output, returnVal = pcs(
             temp_cib,
-            'resource create vm-guest1 ocf:heartbeat:VirtualDomain'
-                ' hypervisor="qemu:///system" config="/root/guest1.xml" meta'
-                ' remote-node=guest1 --force'
+            'resource create vm-guest1 ocf:heartbeat:VirtualDomain hypervisor="qemu:///system" config="/root/guest1.xml" meta remote-node=guest1'
         )
-        ac(
-            output,
-            "Warning: this command is not sufficient for creating a guest node, use"
-                " 'pcs cluster node add-guest'\n"
-        )
+        ac(output, "")
         self.assertEqual(0, returnVal)
 
         output, returnVal = pcs(
             temp_cib, "constraint location D1 prefers node1=100"
         )
-        ac(output, LOCATION_NODE_VALIDATION_SKIP_WARNING)
+        ac(output, "")
         self.assertEqual(0, returnVal)
 
         output, returnVal = pcs(
             temp_cib, "constraint location D1 prefers guest1=200"
         )
-        ac(output, LOCATION_NODE_VALIDATION_SKIP_WARNING)
+        ac(output, "")
         self.assertEqual(0, returnVal)
 
         output, returnVal = pcs(
             temp_cib, "constraint location D2 avoids node2=300"
         )
-        ac(output, LOCATION_NODE_VALIDATION_SKIP_WARNING)
+        ac(output, "")
         self.assertEqual(0, returnVal)
 
         output, returnVal = pcs(
             temp_cib, "constraint location D2 avoids guest1=400"
         )
-        ac(output, LOCATION_NODE_VALIDATION_SKIP_WARNING)
+        ac(output, "")
         self.assertEqual(0, returnVal)
 
         output, returnVal = pcs(temp_cib, "constraint --full")
@@ -2004,13 +1937,11 @@ Ticket Constraints:
         self.assertEqual(0, returnVal)
 
         output, returnVal = pcs(temp_cib, "resource delete vm-guest1")
-        ac(output, outdent(
-            """\
-            Removing Constraint - location-D1-guest1-200
-            Removing Constraint - location-D2-guest1--400
-            Deleting Resource - vm-guest1
-            """
-        ))
+        ac(output, """\
+Removing Constraint - location-D1-guest1-200
+Removing Constraint - location-D2-guest1--400
+Deleting Resource - vm-guest1
+""")
         self.assertEqual(0, returnVal)
 
         output, returnVal = pcs(temp_cib, "constraint --full")
@@ -2030,27 +1961,21 @@ Ticket Constraints:
         # removing the remote node
         output, returnVal = pcs(
             temp_cib,
-            'resource create vm-guest1 ocf:heartbeat:VirtualDomain'
-                ' hypervisor="qemu:///system" config="/root/guest1.xml"'
-                ' meta remote-node=guest1 --force'
+            'resource create vm-guest1 ocf:heartbeat:VirtualDomain hypervisor="qemu:///system" config="/root/guest1.xml" meta remote-node=guest1'
         )
-        ac(
-            output,
-            "Warning: this command is not sufficient for creating a guest node, use"
-                " 'pcs cluster node add-guest'\n"
-        )
+        ac(output, "")
         self.assertEqual(0, returnVal)
 
         output, returnVal = pcs(
             temp_cib, "constraint location D1 prefers guest1=200"
         )
-        ac(output, LOCATION_NODE_VALIDATION_SKIP_WARNING)
+        ac(output, "")
         self.assertEqual(0, returnVal)
 
         output, returnVal = pcs(
             temp_cib, "constraint location D2 avoids guest1=400"
         )
-        ac(output, LOCATION_NODE_VALIDATION_SKIP_WARNING)
+        ac(output, "")
         self.assertEqual(0, returnVal)
 
         output, returnVal = pcs(temp_cib, "constraint --full")
@@ -2069,13 +1994,9 @@ Ticket Constraints:
         self.assertEqual(0, returnVal)
 
         output, returnVal = pcs(
-            temp_cib, "cluster remote-node remove guest1 --force"
+            temp_cib, "cluster remote-node remove guest1"
         )
-        ac(
-            output,
-            "Warning: this command is deprecated, use 'pcs cluster node"
-                " remove-guest'\n"
-        )
+        ac(output, "")
         self.assertEqual(0, returnVal)
 
         output, returnVal = pcs(temp_cib, "constraint --full")
@@ -2092,35 +2013,31 @@ Ticket Constraints:
         self.assertEqual(0, returnVal)
 
         output, returnVal = pcs(temp_cib, "resource delete vm-guest1")
-        ac(output, "Deleting Resource - vm-guest1\n")
+        ac(output, """\
+Deleting Resource - vm-guest1
+""")
         self.assertEqual(0, returnVal)
 
         # constraints referencing the remote node resource
         # deleting the remote node resource
         output, returnVal = pcs(
             temp_cib,
-            'resource create vm-guest1 ocf:heartbeat:VirtualDomain hypervisor="qemu:///system" config="/root/guest1.xml" meta remote-node=guest1 --force'
+            'resource create vm-guest1 ocf:heartbeat:VirtualDomain hypervisor="qemu:///system" config="/root/guest1.xml" meta remote-node=guest1'
         )
-        ac(
-            output,
-            "Warning: this command is not sufficient for creating a guest node, use"
-                " 'pcs cluster node add-guest'\n"
-        )
+        ac(output, "")
         self.assertEqual(0, returnVal)
 
         output, returnVal = pcs(
             temp_cib, "constraint location vm-guest1 prefers node1"
         )
-        ac(output, LOCATION_NODE_VALIDATION_SKIP_WARNING)
+        ac(output, "")
         self.assertEqual(0, returnVal)
 
         output, returnVal = pcs(temp_cib, "resource delete vm-guest1")
-        ac(output, outdent(
-           """\
-            Removing Constraint - location-vm-guest1-node1-INFINITY
-            Deleting Resource - vm-guest1
-            """
-        ))
+        ac(output, """\
+Removing Constraint - location-vm-guest1-node1-INFINITY
+Deleting Resource - vm-guest1
+""")
         self.assertEqual(0, returnVal)
 
     def testDuplicateOrder(self):
@@ -2680,12 +2597,9 @@ Ticket Constraints:
         self.assertEqual(0, returnVal)
 
 class ConstraintBaseTest(unittest.TestCase, AssertPcsMixin):
-    temp_cib = rc("temp-cib.xml")
-    empty_cib = rc("cib-empty.xml")
-
     def setUp(self):
-        shutil.copy(self.empty_cib, self.temp_cib)
-        self.pcs_runner = PcsRunner(self.temp_cib)
+        shutil.copy(empty_cib, temp_cib)
+        self.pcs_runner = PcsRunner(temp_cib)
         self.assert_pcs_success('resource create A ocf:heartbeat:Dummy')
         self.assert_pcs_success('resource create B ocf:heartbeat:Dummy')
 
@@ -2694,7 +2608,7 @@ class CommonCreateWithSet(ConstraintBaseTest):
     def test_refuse_when_resource_does_not_exist(self):
         self.assert_pcs_fail(
             'constraint ticket set A C setoptions ticket=T',
-            ["Error: bundle/clone/group/master/resource 'C' does not exist"]
+            ["Error: Resource 'C' does not exist"]
         )
 
 class TicketCreateWithSet(ConstraintBaseTest):
@@ -2714,7 +2628,7 @@ class TicketCreateWithSet(ConstraintBaseTest):
     def test_refuse_bad_loss_policy(self):
         self.assert_pcs_fail(
             'constraint ticket set A B setoptions ticket=T loss-policy=none',
-            ["Error: 'none' is not a valid loss-policy value, use demote, fence, freeze, stop"]
+            ["Error: 'none' is not a valid loss-policy value, use fence, stop, freeze, demote"]
         )
 
     def test_refuse_when_ticket_option_is_missing(self):
@@ -2742,13 +2656,13 @@ class TicketAdd(ConstraintBaseTest):
     def test_refuse_noexistent_resource_id(self):
         self.assert_pcs_fail(
             'constraint ticket add T master AA loss-policy=fence',
-            ["Error: bundle/clone/group/master/resource 'AA' does not exist"]
+            ["Error: Resource 'AA' does not exist"]
         )
 
     def test_refuse_invalid_role(self):
         self.assert_pcs_fail(
             'constraint ticket add T bad-role A loss-policy=fence',
-            ["Error: 'bad-role' is not a valid rsc-role value, use Master, Slave, Started, Stopped"]
+            ["Error: 'bad-role' is not a valid rsc-role value, use Stopped, Started, Master, Slave"]
         )
 
     def test_refuse_duplicate_ticket(self):
@@ -2837,777 +2751,4 @@ class TicketShow(ConstraintBaseTest):
                 "  Resource Sets:",
                 "    set A B setoptions ticket=T",
             ]
-        )
-
-
-class ConstraintEffect(
-    unittest.TestCase,
-    get_assert_pcs_effect_mixin(
-        lambda cib: etree.tostring(
-            # pylint:disable=undefined-variable
-            etree.parse(cib).findall(".//constraints")[0]
-        )
-    )
-):
-    temp_cib = rc("temp-cib.xml")
-    empty_cib = rc("cib-empty.xml")
-
-    def setUp(self):
-        shutil.copy(self.empty_cib, self.temp_cib)
-        self.pcs_runner = PcsRunner(self.temp_cib)
-
-    def fixture_primitive(self, name):
-        self.assert_pcs_success(
-            "resource create {0} ocf:heartbeat:Dummy".format(name)
-        )
-
-
-class LocationTypeId(ConstraintEffect):
-    # This was written while implementing rsc-pattern to location constraints.
-    # Thus it focuses only the new feature (rsc-pattern) and it is NOT a
-    # complete test of location constraints. Instead it relies on legacy tests
-    # to test location constraints with plain resource name.
-    def test_prefers(self):
-        self.fixture_primitive("A")
-        self.assert_effect(
-            [
-                "constraint location A prefers node1",
-                "constraint location %A prefers node1",
-                "constraint location resource%A prefers node1",
-            ],
-            """<constraints>
-                <rsc_location id="location-A-node1-INFINITY" node="node1"
-                    rsc="A" score="INFINITY"
-                />
-            </constraints>""",
-            output=LOCATION_NODE_VALIDATION_SKIP_WARNING
-        )
-
-    def test_avoids(self):
-        self.fixture_primitive("A")
-        self.assert_effect(
-            [
-                "constraint location A avoids node1",
-                "constraint location %A avoids node1",
-                "constraint location resource%A avoids node1",
-            ],
-            """<constraints>
-                <rsc_location id="location-A-node1--INFINITY" node="node1"
-                    rsc="A" score="-INFINITY"
-                />
-            </constraints>""",
-            output=LOCATION_NODE_VALIDATION_SKIP_WARNING
-        )
-
-    def test_add(self):
-        self.fixture_primitive("A")
-        self.assert_effect(
-            [
-                "constraint location add my-id A node1 INFINITY",
-                "constraint location add my-id %A node1 INFINITY",
-                "constraint location add my-id resource%A node1 INFINITY",
-            ],
-            """<constraints>
-                <rsc_location id="my-id" node="node1" rsc="A" score="INFINITY"/>
-            </constraints>""",
-            output=LOCATION_NODE_VALIDATION_SKIP_WARNING
-        )
-
-    def test_rule(self):
-        self.fixture_primitive("A")
-        self.assert_effect(
-            [
-                "constraint location A rule '#uname' eq node1",
-                "constraint location %A rule '#uname' eq node1",
-                "constraint location resource%A rule '#uname' eq node1",
-            ],
-            """<constraints>
-                <rsc_location id="location-A" rsc="A">
-                    <rule id="location-A-rule" score="INFINITY">
-                        <expression id="location-A-rule-expr"
-                            operation="eq" attribute="#uname" value="node1"
-                        />
-                    </rule>
-                </rsc_location>
-            </constraints>"""
-        )
-
-
-@skip_unless_location_rsc_pattern
-class LocationTypePattern(ConstraintEffect):
-    # This was written while implementing rsc-pattern to location constraints.
-    # Thus it focuses only the new feature (rsc-pattern) and it is NOT a
-    # complete test of location constraints. Instead it relies on legacy tests
-    # to test location constraints with plain resource name.
-    empty_cib = rc("cib-empty-2.6.xml")
-
-    def stdout(self):
-        return ""
-
-    def test_prefers(self):
-        self.assert_effect(
-            "constraint location regexp%res_[0-9] prefers node1",
-            """<constraints>
-                <rsc_location id="location-res_0-9-node1-INFINITY" node="node1"
-                    rsc-pattern="res_[0-9]" score="INFINITY"
-                />
-            </constraints>""",
-            self.stdout() + LOCATION_NODE_VALIDATION_SKIP_WARNING
-        )
-
-    def test_avoids(self):
-        self.assert_effect(
-            "constraint location regexp%res_[0-9] avoids node1",
-            """<constraints>
-                <rsc_location id="location-res_0-9-node1--INFINITY" node="node1"
-                    rsc-pattern="res_[0-9]" score="-INFINITY"
-                />
-            </constraints>""",
-            self.stdout() + LOCATION_NODE_VALIDATION_SKIP_WARNING
-        )
-
-    def test_add(self):
-        self.assert_effect(
-            "constraint location add my-id regexp%res_[0-9] node1 INFINITY",
-            """<constraints>
-                <rsc_location id="my-id" node="node1" rsc-pattern="res_[0-9]"
-                    score="INFINITY"
-                />
-            </constraints>""",
-            self.stdout() + LOCATION_NODE_VALIDATION_SKIP_WARNING
-        )
-
-    def test_rule(self):
-        self.assert_effect(
-            "constraint location regexp%res_[0-9]  rule '#uname' eq node1",
-            """<constraints>
-                <rsc_location id="location-res_0-9" rsc-pattern="res_[0-9]">
-                    <rule id="location-res_0-9-rule" score="INFINITY">
-                        <expression id="location-res_0-9-rule-expr"
-                            operation="eq" attribute="#uname" value="node1"
-                        />
-                    </rule>
-                </rsc_location>
-            </constraints>""",
-            self.stdout()
-        )
-
-
-@skip_unless_location_rsc_pattern
-class LocationTypePatternWithCibUpgrade(LocationTypePattern):
-    empty_cib = rc("cib-empty.xml")
-
-    def stdout(self):
-        return "Cluster CIB has been upgraded to latest version\n"
-
-
-@skip_unless_location_rsc_pattern
-class LocationShowWithPattern(ConstraintBaseTest):
-    # This was written while implementing rsc-pattern to location constraints.
-    # Thus it focuses only the new feature (rsc-pattern) and it is NOT a
-    # complete test of location constraints. Instead it relies on legacy tests
-    # to test location constraints with plain resource name.
-    empty_cib = rc("cib-empty-2.6.xml")
-
-    def fixture(self):
-        self.assert_pcs_success_all([
-            "resource create R1 ocf:heartbeat:Dummy",
-            "resource create R2 ocf:heartbeat:Dummy",
-            "resource create R3 ocf:heartbeat:Dummy",
-
-            "constraint location R1 prefers node1 node2=20",
-            "constraint location R1 avoids node3=30 node4",
-            "constraint location R2 prefers node3 node4=20",
-            "constraint location R2 avoids node1=30 node2",
-            "constraint location regexp%R_[0-9]+ prefers node1 node2=20",
-            "constraint location regexp%R_[0-9]+ avoids node3=30",
-            "constraint location regexp%R_[a-z]+ avoids node3=30",
-
-            "constraint location add my-id1 R3 node1 -INFINITY resource-discovery=never",
-            "constraint location add my-id2 R3 node2 -INFINITY resource-discovery=never",
-            "constraint location add my-id3 regexp%R_[0-9]+ node4 -INFINITY resource-discovery=never",
-
-            "constraint location R1 rule score=-INFINITY date-spec operation=date_spec years=2005",
-            "constraint location R1 rule score=-INFINITY date-spec operation=date_spec years=2007",
-            "constraint location regexp%R_[0-9]+ rule score=-INFINITY date-spec operation=date_spec years=2006",
-            "constraint location regexp%R_[0-9]+ rule score=20 defined pingd",
-        ])
-
-    def test_show(self):
-        #pylint: disable=trailing-whitespace
-        self.fixture()
-        self.assert_pcs_success(
-            "constraint location show --full",
-            outdent(
-            """\
-            Location Constraints:
-              Resource pattern: R_[0-9]+
-                Enabled on: node1 (score:INFINITY) (id:location-R_0-9-node1-INFINITY)
-                Enabled on: node2 (score:20) (id:location-R_0-9-node2-20)
-                Disabled on: node3 (score:-30) (id:location-R_0-9-node3--30)
-                Disabled on: node4 (score:-INFINITY) (resource-discovery=never) (id:my-id3)
-                Constraint: location-R_0-9
-                  Rule: score=-INFINITY  (id:location-R_0-9-rule)
-                    Expression:  (id:location-R_0-9-rule-expr)
-                      Date Spec: years=2006  (id:location-R_0-9-rule-expr-datespec)
-                Constraint: location-R_0-9-1
-                  Rule: score=20  (id:location-R_0-9-1-rule)
-                    Expression: defined pingd  (id:location-R_0-9-1-rule-expr)
-              Resource pattern: R_[a-z]+
-                Disabled on: node3 (score:-30) (id:location-R_a-z-node3--30)
-              Resource: R1
-                Enabled on: node1 (score:INFINITY) (id:location-R1-node1-INFINITY)
-                Enabled on: node2 (score:20) (id:location-R1-node2-20)
-                Disabled on: node3 (score:-30) (id:location-R1-node3--30)
-                Disabled on: node4 (score:-INFINITY) (id:location-R1-node4--INFINITY)
-                Constraint: location-R1
-                  Rule: score=-INFINITY  (id:location-R1-rule)
-                    Expression:  (id:location-R1-rule-expr)
-                      Date Spec: years=2005  (id:location-R1-rule-expr-datespec)
-                Constraint: location-R1-1
-                  Rule: score=-INFINITY  (id:location-R1-1-rule)
-                    Expression:  (id:location-R1-1-rule-expr)
-                      Date Spec: years=2007  (id:location-R1-1-rule-expr-datespec)
-              Resource: R2
-                Enabled on: node3 (score:INFINITY) (id:location-R2-node3-INFINITY)
-                Enabled on: node4 (score:20) (id:location-R2-node4-20)
-                Disabled on: node1 (score:-30) (id:location-R2-node1--30)
-                Disabled on: node2 (score:-INFINITY) (id:location-R2-node2--INFINITY)
-              Resource: R3
-                Disabled on: node1 (score:-INFINITY) (resource-discovery=never) (id:my-id1)
-                Disabled on: node2 (score:-INFINITY) (resource-discovery=never) (id:my-id2)
-            """
-            )
-        )
-
-        self.assert_pcs_success(
-            "constraint location show",
-            outdent(
-            """\
-            Location Constraints:
-              Resource pattern: R_[0-9]+
-                Enabled on: node1 (score:INFINITY)
-                Enabled on: node2 (score:20)
-                Disabled on: node3 (score:-30)
-                Disabled on: node4 (score:-INFINITY) (resource-discovery=never)
-                Constraint: location-R_0-9
-                  Rule: score=-INFINITY
-                    Expression:
-                      Date Spec: years=2006
-                Constraint: location-R_0-9-1
-                  Rule: score=20
-                    Expression: defined pingd
-              Resource pattern: R_[a-z]+
-                Disabled on: node3 (score:-30)
-              Resource: R1
-                Enabled on: node1 (score:INFINITY)
-                Enabled on: node2 (score:20)
-                Disabled on: node3 (score:-30)
-                Disabled on: node4 (score:-INFINITY)
-                Constraint: location-R1
-                  Rule: score=-INFINITY
-                    Expression:
-                      Date Spec: years=2005
-                Constraint: location-R1-1
-                  Rule: score=-INFINITY
-                    Expression:
-                      Date Spec: years=2007
-              Resource: R2
-                Enabled on: node3 (score:INFINITY)
-                Enabled on: node4 (score:20)
-                Disabled on: node1 (score:-30)
-                Disabled on: node2 (score:-INFINITY)
-              Resource: R3
-                Disabled on: node1 (score:-INFINITY) (resource-discovery=never)
-                Disabled on: node2 (score:-INFINITY) (resource-discovery=never)
-            """
-            )
-        )
-
-        self.assert_pcs_success(
-            "constraint location show nodes --full",
-            outdent(
-            # pylint:disable=trailing-whitespace
-            """\
-            Location Constraints:
-              Node: 
-                Allowed to run:
-                  Resource: R1 (location-R1) Score: 0
-                  Resource: R1 (location-R1-1) Score: 0
-                  Resource pattern: R_[0-9]+ (location-R_0-9) Score: 0
-                  Resource pattern: R_[0-9]+ (location-R_0-9-1) Score: 0
-              Node: node1
-                Allowed to run:
-                  Resource: R1 (location-R1-node1-INFINITY) Score: INFINITY
-                  Resource pattern: R_[0-9]+ (location-R_0-9-node1-INFINITY) Score: INFINITY
-                Not allowed to run:
-                  Resource: R2 (location-R2-node1--30) Score: -30
-                  Resource: R3 (my-id1) (resource-discovery=never) Score: -INFINITY
-              Node: node2
-                Allowed to run:
-                  Resource: R1 (location-R1-node2-20) Score: 20
-                  Resource pattern: R_[0-9]+ (location-R_0-9-node2-20) Score: 20
-                Not allowed to run:
-                  Resource: R2 (location-R2-node2--INFINITY) Score: -INFINITY
-                  Resource: R3 (my-id2) (resource-discovery=never) Score: -INFINITY
-              Node: node3
-                Allowed to run:
-                  Resource: R2 (location-R2-node3-INFINITY) Score: INFINITY
-                Not allowed to run:
-                  Resource: R1 (location-R1-node3--30) Score: -30
-                  Resource pattern: R_[0-9]+ (location-R_0-9-node3--30) Score: -30
-                  Resource pattern: R_[a-z]+ (location-R_a-z-node3--30) Score: -30
-              Node: node4
-                Allowed to run:
-                  Resource: R2 (location-R2-node4-20) Score: 20
-                Not allowed to run:
-                  Resource: R1 (location-R1-node4--INFINITY) Score: -INFINITY
-                  Resource pattern: R_[0-9]+ (my-id3) (resource-discovery=never) Score: -INFINITY
-              Resource pattern: R_[0-9]+
-                Constraint: location-R_0-9
-                  Rule: score=-INFINITY
-                    Expression:
-                      Date Spec: years=2006
-                Constraint: location-R_0-9-1
-                  Rule: score=20
-                    Expression: defined pingd
-              Resource: R1
-                Constraint: location-R1
-                  Rule: score=-INFINITY
-                    Expression:
-                      Date Spec: years=2005
-                Constraint: location-R1-1
-                  Rule: score=-INFINITY
-                    Expression:
-                      Date Spec: years=2007
-            """
-            )
-        )
-
-        self.assert_pcs_success(
-            "constraint location show nodes node2",
-            outdent(
-            """\
-            Location Constraints:
-              Node: node2
-                Allowed to run:
-                  Resource: R1 (location-R1-node2-20) Score: 20
-                  Resource pattern: R_[0-9]+ (location-R_0-9-node2-20) Score: 20
-                Not allowed to run:
-                  Resource: R2 (location-R2-node2--INFINITY) Score: -INFINITY
-                  Resource: R3 (my-id2) (resource-discovery=never) Score: -INFINITY
-              Resource pattern: R_[0-9]+
-                Constraint: location-R_0-9
-                  Rule: score=-INFINITY
-                    Expression:
-                      Date Spec: years=2006
-                Constraint: location-R_0-9-1
-                  Rule: score=20
-                    Expression: defined pingd
-              Resource: R1
-                Constraint: location-R1
-                  Rule: score=-INFINITY
-                    Expression:
-                      Date Spec: years=2005
-                Constraint: location-R1-1
-                  Rule: score=-INFINITY
-                    Expression:
-                      Date Spec: years=2007
-            """
-            )
-        )
-
-        self.assert_pcs_success(
-            "constraint location show resources regexp%R_[0-9]+",
-            outdent(
-            """\
-            Location Constraints:
-              Resource pattern: R_[0-9]+
-                Enabled on: node1 (score:INFINITY)
-                Enabled on: node2 (score:20)
-                Disabled on: node3 (score:-30)
-                Disabled on: node4 (score:-INFINITY) (resource-discovery=never)
-                Constraint: location-R_0-9
-                  Rule: score=-INFINITY
-                    Expression:
-                      Date Spec: years=2006
-                Constraint: location-R_0-9-1
-                  Rule: score=20
-                    Expression: defined pingd
-            """
-            )
-        )
-
-
-class Bundle(ConstraintEffect):
-    empty_cib = rc("cib-empty-2.8.xml")
-
-    def setUp(self):
-        super(Bundle, self).setUp()
-        self.fixture_bundle("B")
-
-    def fixture_primitive(self, name, bundle=None):
-        #pylint:disable=arguments-differ
-        if not bundle:
-            super(Bundle, self).fixture_primitive(name)
-            return
-        self.assert_pcs_success(
-            "resource create {0} ocf:heartbeat:Dummy bundle {1}".format(
-                name, bundle
-            )
-        )
-
-    def fixture_bundle(self, name):
-        self.assert_pcs_success(
-            (
-                "resource bundle create {0} container docker image=pcs:test "
-                "network control-port=1234"
-            ).format(name)
-        )
-
-
-@skip_unless_pacemaker_supports_bundle
-class BundleLocation(Bundle):
-    def test_bundle_prefers(self):
-        self.assert_effect(
-            "constraint location B prefers node1",
-            """
-                <constraints>
-                    <rsc_location id="location-B-node1-INFINITY" node="node1"
-                        rsc="B" score="INFINITY"
-                    />
-                </constraints>
-            """,
-            output=LOCATION_NODE_VALIDATION_SKIP_WARNING
-        )
-
-    def test_bundle_avoids(self):
-        self.assert_effect(
-            "constraint location B avoids node1",
-            """
-                <constraints>
-                    <rsc_location id="location-B-node1--INFINITY" node="node1"
-                        rsc="B" score="-INFINITY"
-                    />
-                </constraints>
-            """,
-            output=LOCATION_NODE_VALIDATION_SKIP_WARNING
-        )
-
-    def test_bundle_location(self):
-        self.assert_effect(
-            "constraint location add id B node1 100",
-            """
-                <constraints>
-                    <rsc_location id="id" node="node1" rsc="B" score="100" />
-                </constraints>
-            """,
-            output=LOCATION_NODE_VALIDATION_SKIP_WARNING
-        )
-
-    def test_primitive_prefers(self):
-        self.fixture_primitive("R", "B")
-        self.assert_pcs_fail(
-            "constraint location R prefers node1",
-            "Error: R is a bundle resource, you should use the bundle id: B "
-                "when adding constraints. Use --force to override.\n"
-        )
-
-    def test_primitive_prefers_force(self):
-        self.fixture_primitive("R", "B")
-        self.assert_effect(
-            "constraint location R prefers node1 --force",
-            """
-                <constraints>
-                    <rsc_location id="location-R-node1-INFINITY" node="node1"
-                        rsc="R" score="INFINITY"
-                    />
-                </constraints>
-            """,
-            output=LOCATION_NODE_VALIDATION_SKIP_WARNING
-        )
-
-    def test_primitive_avoids(self):
-        self.fixture_primitive("R", "B")
-        self.assert_pcs_fail(
-            "constraint location R avoids node1",
-            "Error: R is a bundle resource, you should use the bundle id: B "
-                "when adding constraints. Use --force to override.\n"
-        )
-
-    def test_primitive_avoids_force(self):
-        self.fixture_primitive("R", "B")
-        self.assert_effect(
-            "constraint location R avoids node1 --force",
-            """
-                <constraints>
-                    <rsc_location id="location-R-node1--INFINITY" node="node1"
-                        rsc="R" score="-INFINITY"
-                    />
-                </constraints>
-            """,
-            output=LOCATION_NODE_VALIDATION_SKIP_WARNING
-        )
-
-    def test_primitive_location(self):
-        self.fixture_primitive("R", "B")
-        self.assert_pcs_fail(
-            "constraint location add id R node1 100",
-            "Error: R is a bundle resource, you should use the bundle id: B "
-                "when adding constraints. Use --force to override.\n"
-        )
-
-    def test_primitive_location_force(self):
-        self.fixture_primitive("R", "B")
-        self.assert_effect(
-            "constraint location add id R node1 100 --force",
-            """
-                <constraints>
-                    <rsc_location id="id" node="node1" rsc="R" score="100" />
-                </constraints>
-            """,
-            output=LOCATION_NODE_VALIDATION_SKIP_WARNING
-        )
-
-
-@skip_unless_pacemaker_supports_bundle
-class BundleColocation(Bundle):
-    def setUp(self):
-        super(BundleColocation, self).setUp()
-        self.fixture_primitive("X")
-
-    def test_bundle(self):
-        self.assert_effect(
-            "constraint colocation add B with X",
-            """
-                <constraints>
-                    <rsc_colocation id="colocation-B-X-INFINITY"
-                        rsc="B" with-rsc="X" score="INFINITY" />
-                </constraints>
-            """
-        )
-
-    def test_primitive(self):
-        self.fixture_primitive("R", "B")
-        self.assert_pcs_fail(
-            "constraint colocation add R with X",
-            "Error: R is a bundle resource, you should use the bundle id: B "
-                "when adding constraints. Use --force to override.\n"
-        )
-
-    def test_primitive_force(self):
-        self.fixture_primitive("R", "B")
-        self.assert_effect(
-            "constraint colocation add R with X --force",
-            """
-                <constraints>
-                    <rsc_colocation id="colocation-R-X-INFINITY"
-                        rsc="R" with-rsc="X" score="INFINITY" />
-                </constraints>
-            """
-        )
-
-    def test_bundle_set(self):
-        self.assert_effect(
-            "constraint colocation set B X",
-            """
-                <constraints>
-                    <rsc_colocation id="pcs_rsc_colocation_set_B_X"
-                        score="INFINITY"
-                    >
-                        <resource_set id="pcs_rsc_set_B_X">
-                            <resource_ref id="B" />
-                            <resource_ref id="X" />
-                        </resource_set>
-                    </rsc_colocation>
-                </constraints>
-            """
-        )
-
-    def test_primitive_set(self):
-        self.fixture_primitive("R", "B")
-        self.assert_pcs_fail(
-            "constraint colocation set R X",
-            "Error: R is a bundle resource, you should use the bundle id: B "
-                "when adding constraints, use --force to override\n"
-        )
-
-    def test_primitive_set_force(self):
-        self.fixture_primitive("R", "B")
-        self.assert_effect(
-            "constraint colocation set R X --force",
-            """
-                <constraints>
-                    <rsc_colocation id="pcs_rsc_colocation_set_R_X"
-                        score="INFINITY"
-                    >
-                        <resource_set id="pcs_rsc_set_R_X">
-                            <resource_ref id="R" />
-                            <resource_ref id="X" />
-                        </resource_set>
-                    </rsc_colocation>
-                </constraints>
-            """,
-            "Warning: R is a bundle resource, you should use the bundle id: B when adding constraints\n"
-        )
-
-
-@skip_unless_pacemaker_supports_bundle
-class BundleOrder(Bundle):
-    def setUp(self):
-        super(BundleOrder, self).setUp()
-        self.fixture_primitive("X")
-
-    def test_bundle(self):
-        self.assert_effect(
-            "constraint order B then X",
-            """
-                <constraints>
-                    <rsc_order id="order-B-X-mandatory"
-                        first="B" first-action="start"
-                        then="X" then-action="start" />
-                </constraints>
-            """,
-            "Adding B X (kind: Mandatory) (Options: first-action=start "
-                "then-action=start)\n"
-        )
-
-    def test_primitive(self):
-        self.fixture_primitive("R", "B")
-        self.assert_pcs_fail(
-            "constraint order R then X",
-            "Error: R is a bundle resource, you should use the bundle id: B "
-                "when adding constraints. Use --force to override.\n"
-        )
-
-    def test_primitive_force(self):
-        self.fixture_primitive("R", "B")
-        self.assert_effect(
-            "constraint order R then X --force",
-            """
-                <constraints>
-                    <rsc_order id="order-R-X-mandatory"
-                        first="R" first-action="start"
-                        then="X" then-action="start" />
-                </constraints>
-            """,
-            "Adding R X (kind: Mandatory) (Options: first-action=start "
-                "then-action=start)\n"
-        )
-
-    def test_bundle_set(self):
-        self.assert_effect(
-            "constraint order set B X",
-            """
-                <constraints>
-                    <rsc_order id="pcs_rsc_order_set_B_X">
-                        <resource_set id="pcs_rsc_set_B_X">
-                            <resource_ref id="B" />
-                            <resource_ref id="X" />
-                        </resource_set>
-                    </rsc_order>
-                </constraints>
-            """
-        )
-
-    def test_primitive_set(self):
-        self.fixture_primitive("R", "B")
-        self.assert_pcs_fail(
-            "constraint order set R X",
-            "Error: R is a bundle resource, you should use the bundle id: B "
-                "when adding constraints, use --force to override\n"
-        )
-
-    def test_primitive_set_force(self):
-        self.fixture_primitive("R", "B")
-        self.assert_effect(
-            "constraint order set R X --force",
-            """
-                <constraints>
-                    <rsc_order id="pcs_rsc_order_set_R_X">
-                        <resource_set id="pcs_rsc_set_R_X">
-                            <resource_ref id="R" />
-                            <resource_ref id="X" />
-                        </resource_set>
-                    </rsc_order>
-                </constraints>
-            """,
-            "Warning: R is a bundle resource, you should use the bundle id: B "
-                "when adding constraints\n"
-        )
-
-
-@skip_unless_pacemaker_supports_bundle
-class BundleTicket(Bundle):
-    def setUp(self):
-        super(BundleTicket, self).setUp()
-
-    def test_bundle(self):
-        self.assert_effect(
-            "constraint ticket add T B",
-            """
-                <constraints>
-                    <rsc_ticket id="ticket-T-B" rsc="B" ticket="T" />
-                </constraints>
-            """
-        )
-
-    def test_primitive(self):
-        self.fixture_primitive("R", "B")
-        self.assert_pcs_fail(
-            "constraint ticket add T R",
-            "Error: R is a bundle resource, you should use the bundle id: B "
-                "when adding constraints, use --force to override\n"
-        )
-
-    def test_primitive_force(self):
-        self.fixture_primitive("R", "B")
-        self.assert_effect(
-            "constraint ticket add T R --force",
-            """
-                <constraints>
-                    <rsc_ticket id="ticket-T-R" rsc="R" ticket="T" />
-                </constraints>
-            """,
-            "Warning: R is a bundle resource, you should use the bundle id: B "
-                "when adding constraints\n"
-        )
-
-    def test_bundle_set(self):
-        self.assert_effect(
-            "constraint ticket set B setoptions ticket=T",
-            """
-                <constraints>
-                    <rsc_ticket id="pcs_rsc_ticket_set_B" ticket="T">
-                        <resource_set id="pcs_rsc_set_B">
-                            <resource_ref id="B" />
-                        </resource_set>
-                    </rsc_ticket>
-                </constraints>
-            """
-        )
-
-    def test_primitive_set(self):
-        self.fixture_primitive("R", "B")
-        self.assert_pcs_fail(
-            "constraint ticket set R setoptions ticket=T",
-            "Error: R is a bundle resource, you should use the bundle id: B "
-                "when adding constraints, use --force to override\n"
-        )
-
-    def test_primitive_set_force(self):
-        self.fixture_primitive("R", "B")
-        self.assert_effect(
-            "constraint ticket set R setoptions ticket=T --force",
-            """
-                <constraints>
-                    <rsc_ticket id="pcs_rsc_ticket_set_R" ticket="T">
-                        <resource_set id="pcs_rsc_set_R">
-                            <resource_ref id="R" />
-                        </resource_set>
-                    </rsc_ticket>
-                </constraints>
-            """,
-            "Warning: R is a bundle resource, you should use the bundle id: B "
-                "when adding constraints\n"
         )

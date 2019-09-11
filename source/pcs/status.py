@@ -2,72 +2,76 @@ from __future__ import (
     absolute_import,
     division,
     print_function,
+    unicode_literals,
 )
 
 import sys
 import os
 
 from pcs import (
-    settings,
     resource,
     usage,
     utils,
 )
-from pcs.qdevice import qdevice_status_cmd
-from pcs.quorum import quorum_status_cmd
-from pcs.cli.booth.command import status as booth_status_cmd
-from pcs.cli.common.console_report import indent
-from pcs.cli.common.errors import CmdLineInputError
+# from pcs.qdevice import qdevice_status_cmd
+# from pcs.quorum import quorum_status_cmd
+# from pcs.cli.common.errors import CmdLineInputError
 from pcs.lib.errors import LibraryError
-from pcs.lib.pacemaker.state import ClusterState
-from pcs.lib.pacemaker.values import is_false
-from pcs.lib.resource_agent import _STONITH_ACTION_REPLACED_BY
-from pcs.lib.sbd import get_sbd_service_name
+from pcs.lib.pacemaker_state import ClusterState
 
-def status_cmd(lib, argv, modifiers):
-    if len(argv) < 1:
+def status_cmd(argv):
+    if len(argv) == 0:
         full_status()
         sys.exit(0)
 
-    sub_cmd, argv_next = argv[0], argv[1:]
-    try:
-        if sub_cmd == "help":
-            usage.status(argv_next)
-        elif sub_cmd == "booth":
-            booth_status_cmd(lib, argv_next, modifiers)
-        elif sub_cmd == "corosync":
-            corosync_status()
-        elif sub_cmd == "cluster":
-            cluster_status(argv_next)
-        elif sub_cmd == "groups":
-            resource.resource_group_list(argv_next)
-        elif sub_cmd == "nodes":
-            nodes_status(argv_next)
-        elif sub_cmd == "pcsd":
-            cluster_pcsd_status(argv_next)
-        elif sub_cmd == "qdevice":
-            qdevice_status_cmd(lib, argv_next, modifiers)
-        elif sub_cmd == "quorum":
-            quorum_status_cmd(lib, argv_next, modifiers)
-        elif sub_cmd == "resources":
-            resource.resource_show(argv_next)
-        elif sub_cmd == "xml":
-            xml_status()
-        else:
-            raise CmdLineInputError()
-    except LibraryError as e:
-        utils.process_library_reports(e.args)
-    except CmdLineInputError as e:
-        utils.exit_on_cmdline_input_errror(e, "status", sub_cmd)
+    sub_cmd = argv.pop(0)
+    if (sub_cmd == "help"):
+        usage.status(argv)
+    elif (sub_cmd == "resources"):
+        resource.resource_show(argv)
+    elif (sub_cmd == "groups"):
+        resource.resource_group_list(argv)
+    elif (sub_cmd == "cluster"):
+        cluster_status(argv)
+    elif (sub_cmd == "nodes"):
+        nodes_status(argv)
+    elif (sub_cmd == "pcsd"):
+        cluster_pcsd_status(argv)
+    elif (sub_cmd == "xml"):
+        xml_status()
+    elif (sub_cmd == "corosync"):
+        corosync_status()
+    # elif sub_cmd == "qdevice":
+    #     try:
+    #         qdevice_status_cmd(
+    #             utils.get_library_wrapper(),
+    #             argv,
+    #             utils.get_modificators()
+    #         )
+    #     except LibraryError as e:
+    #         utils.process_library_reports(e.args)
+    #     except CmdLineInputError as e:
+    #         utils.exit_on_cmdline_input_errror(e, "status", sub_cmd)
+    # elif sub_cmd == "quorum":
+    #     try:
+    #         quorum_status_cmd(
+    #             utils.get_library_wrapper(),
+    #             argv,
+    #             utils.get_modificators()
+    #         )
+    #     except LibraryError as e:
+    #         utils.process_library_reports(e.args)
+    #     except CmdLineInputError as e:
+    #         utils.exit_on_cmdline_input_errror(e, "status", sub_cmd)
+    else:
+        usage.status()
+        sys.exit(1)
 
 def full_status():
     if "--hide-inactive" in utils.pcs_options and "--full" in utils.pcs_options:
         utils.err("you cannot specify both --hide-inactive and --full")
 
-    monitor_command = [
-        os.path.join(settings.pacemaker_binaries, "crm_mon"),
-        "--one-shot"
-    ]
+    monitor_command = ["crm_mon", "--one-shot"]
     if "--hide-inactive" not in utils.pcs_options:
         monitor_command.append('--inactive')
     if "--full" in utils.pcs_options:
@@ -75,19 +79,18 @@ def full_status():
             ["--show-detail", "--show-node-attributes", "--failcounts"]
         )
 
-    stdout, stderr, retval = utils.cmd_runner().run(monitor_command)
+    output, retval = utils.run(monitor_command)
+
     if (retval != 0):
         utils.err("cluster is not currently running on this node")
-
-    warnings = []
-    if stderr.strip():
-        warnings.extend(stderr.strip().splitlines())
 
     if not utils.usefile or "--corosync_conf" in utils.pcs_options:
         cluster_name = utils.getClusterName()
         print("Cluster name: %s" % cluster_name)
 
-    warnings.extend(status_stonith_check())
+    if utils.stonithCheck():
+        print("WARNING: no stonith devices and stonith-enabled is not false")
+
     if (
         not utils.usefile
         and
@@ -95,111 +98,15 @@ def full_status():
         and
         utils.corosyncPacemakerNodeCheck()
     ):
-        warnings.append(
-            "Corosync and pacemaker node names do not match (IPs used in setup?)"
-        )
-    if warnings:
-        print()
-        print("WARNINGS:")
-        print("\n".join(warnings))
-        print()
+        print("WARNING: corosync and pacemaker node names do not match (IPs used in setup?)")
 
-    print(stdout)
-
-    if "--full" in utils.pcs_options:
-        tickets, retval = utils.run(["crm_ticket", "-L"])
-        if retval != 0:
-            print("WARNING: Unable to get information about tickets")
-            print()
-        elif tickets:
-            print("Tickets:")
-            print("\n".join(indent(tickets.split("\n"))))
+    print(output)
 
     if not utils.usefile:
         if  "--full" in utils.pcs_options and utils.hasCorosyncConf():
             print_pcsd_daemon_status()
             print()
         utils.serviceStatus("  ")
-
-def status_stonith_check():
-    # We should read the default value from pacemaker. However that may slow
-    # pcs down as we need to run 'pengine metadata' to get it.
-    stonith_enabled = True
-    stonith_devices = []
-    stonith_devices_id_action = []
-    stonith_devices_id_method_cycle = []
-    sbd_running = False
-
-    cib = utils.get_cib_dom()
-    for conf in cib.getElementsByTagName("configuration"):
-        for crm_config in conf.getElementsByTagName("crm_config"):
-            for nvpair in crm_config.getElementsByTagName("nvpair"):
-                if (
-                    nvpair.getAttribute("name") == "stonith-enabled"
-                    and
-                    is_false(nvpair.getAttribute("value"))
-                ):
-                    stonith_enabled = False
-                    break
-            if not stonith_enabled:
-                break
-        for resource in conf.getElementsByTagName("primitive"):
-            if resource.getAttribute("class") == "stonith":
-                stonith_devices.append(resource)
-                for attribs in resource.getElementsByTagName(
-                    "instance_attributes"
-                ):
-                    for nvpair in attribs.getElementsByTagName("nvpair"):
-                        if (
-                            nvpair.getAttribute("name") == "action"
-                            and
-                            nvpair.getAttribute("value")
-                        ):
-                            stonith_devices_id_action.append(
-                                resource.getAttribute("id")
-                            )
-                        if (
-                            nvpair.getAttribute("name") == "method"
-                            and
-                            nvpair.getAttribute("value") == "cycle"
-                        ):
-                            stonith_devices_id_method_cycle.append(
-                                resource.getAttribute("id")
-                            )
-
-    if not utils.usefile:
-        # check if SBD daemon is running
-        try:
-            sbd_running = utils.is_service_running(
-                utils.cmd_runner(),
-                get_sbd_service_name()
-            )
-        except LibraryError:
-            pass
-
-    warnings = []
-    if stonith_enabled and not stonith_devices and not sbd_running:
-        warnings.append("No stonith devices and stonith-enabled is not false")
-
-    if stonith_devices_id_action:
-        warnings.append(
-            "Following stonith devices have the 'action' option set, "
-            "it is recommended to set {0} instead: {1}".format(
-                ", ".join(
-                    ["'{0}'".format(x) for x in _STONITH_ACTION_REPLACED_BY]
-                ),
-                ", ".join(sorted(stonith_devices_id_action))
-            )
-        )
-    if stonith_devices_id_method_cycle:
-        warnings.append(
-            "Following stonith devices have the 'method' option set "
-            "to 'cycle' which is potentially dangerous, please consider using "
-            "'onoff': {0}".format(
-                ", ".join(sorted(stonith_devices_id_method_cycle))
-            )
-        )
-    return warnings
 
 # Parse crm_mon for status
 def nodes_status(argv):
@@ -358,13 +265,20 @@ def xml_status():
         utils.err("running crm_mon, is pacemaker running?")
     print(output, end="")
 
+def is_service_running(service):
+    if utils.is_systemctl():
+        dummy_output, retval = utils.run(["systemctl", "status", service])
+    else:
+        dummy_output, retval = utils.run(["service", service, "status"])
+    return retval == 0
+
 def print_pcsd_daemon_status():
     print("PCSD Status:")
     if os.getuid() == 0:
         cluster_pcsd_status([], True)
     else:
         err_msgs, exitcode, std_out, dummy_std_err = utils.call_local_pcsd(
-            ['status', 'pcsd']
+            ['status', 'pcsd'], True
         )
         if err_msgs:
             for msg in err_msgs:
@@ -398,7 +312,6 @@ def check_nodes(node_list, prefix=""):
         ))
         status_list.append(returncode)
 
-    utils.read_token_file() # cache node tokens
     utils.run_parallel(
         utils.create_task_list(report, utils.checkAuthorization, node_list)
     )

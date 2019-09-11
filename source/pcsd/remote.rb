@@ -9,21 +9,15 @@ require 'tempfile'
 
 require 'pcs.rb'
 require 'resource.rb'
-require 'settings.rb'
 require 'config.rb'
 require 'cfgsync.rb'
 require 'cluster_entity.rb'
 require 'permissions.rb'
 require 'auth.rb'
-require 'pcsd_file'
-require 'pcsd_remove_file'
-require 'pcsd_action_command'
-require 'pcsd_exchange_format.rb'
 
 # Commands for remote access
 def remote(params, request, auth_user)
   remote_cmd_without_pacemaker = {
-      :capabilities => method(:capabilities),
       :status => method(:node_status),
       :status_all => method(:status_all),
       :cluster_status => method(:cluster_status_remote),
@@ -42,7 +36,6 @@ def remote(params, request, auth_user)
       :set_configs => method(:set_configs),
       :set_certs => method(:set_certs),
       :pcsd_restart => method(:remote_pcsd_restart),
-      :pcsd_instance_signature => method(:pcsd_instance_signature),
       :get_permissions => method(:get_permissions_remote),
       :set_permissions => method(:set_permissions_remote),
       :cluster_start => method(:cluster_start),
@@ -93,9 +86,6 @@ def remote(params, request, auth_user)
       :booth_set_config => method(:booth_set_config),
       :booth_save_files => method(:booth_save_files),
       :booth_get_config => method(:booth_get_config),
-      :put_file => method(:put_file),
-      :remove_file => method(:remove_file),
-      :manage_services => method(:manage_services),
 
   }
   remote_cmd_with_pacemaker = {
@@ -103,7 +93,6 @@ def remote(params, request, auth_user)
       :resource_start => method(:resource_start),
       :resource_stop => method(:resource_stop),
       :resource_cleanup => method(:resource_cleanup),
-      :resource_refresh => method(:resource_refresh),
       :update_resource => method(:update_resource),
       :update_fence_device => method(:update_fence_device),
       :get_avail_resource_agents => method(:get_avail_resource_agents),
@@ -159,16 +148,6 @@ def remote(params, request, auth_user)
   rescue NotImplementedException => e
     return [501, "#{e}"]
   end
-end
-
-def capabilities(params, request, auth_user)
-  return JSON.generate({
-    :pcsd_capabilities => CAPABILITIES_PCSD,
-  })
-end
-
-def param_to_bool(obj)
-  return ['true', '1', 'on'].include?(obj)
 end
 
 # provides remote cluster status to a local gui
@@ -233,16 +212,33 @@ def cluster_status_remote(params, request, auth_user)
   return JSON.generate(status)
 end
 
-def _cluster_start_stop(action, params, request, auth_user)
-  if not ['start', 'stop'].include?(action)
-    return [400, "Action can be 'start' or 'stop', got '#{action}'"]
+def cluster_start(params, request, auth_user)
+  if params[:name]
+    code, response = send_request_with_token(
+      auth_user, params[:name], 'cluster_start', true
+    )
+  else
+    if not allowed_for_local_cluster(auth_user, Permissions::WRITE)
+      return 403, 'Permission denied'
+    end
+    $logger.info "Starting Daemons"
+    output, stderr, retval = run_cmd(auth_user, PCS, 'cluster', 'start')
+    $logger.debug output
+    if retval != 0
+      return [400, (output + stderr).join]
+    else
+      return output
+    end
   end
+end
+
+def cluster_stop(params, request, auth_user)
   if params[:name]
     params_without_name = params.reject {|key, value|
       key == "name" or key == :name
     }
     code, response = send_request_with_token(
-      auth_user, params[:name], "cluster_#{action}", true, params_without_name
+      auth_user, params[:name], 'cluster_stop', true, params_without_name
     )
   else
     if not allowed_for_local_cluster(auth_user, Permissions::WRITE)
@@ -256,29 +252,17 @@ def _cluster_start_stop(action, params, request, auth_user)
         options << "--corosync"
       end
     end
-    if action == "stop"
-      options << "--force" if params["force"]
-      $logger.info "Stopping Daemons"
-    else
-      $logger.info "Starting Daemons"
-    end
+    options << "--force" if params["force"]
+    $logger.info "Stopping Daemons"
     stdout, stderr, retval = run_cmd(
-      auth_user, PCS, 'cluster', action, *options
+      auth_user, PCS, "cluster", "stop", *options
     )
     if retval != 0
-      return [400, (stdout + stderr).join]
+      return [400, stderr.join]
     else
       return stdout.join
     end
   end
-end
-
-def cluster_start(params, request, auth_user)
-  return _cluster_start_stop('start', params, request, auth_user)
-end
-
-def cluster_stop(params, request, auth_user)
-  return _cluster_start_stop('stop', params, request, auth_user)
 end
 
 def config_backup(params, request, auth_user)
@@ -645,8 +629,8 @@ def set_certs(params, request, auth_user)
       return [400, ssl_errors.join]
     end
     begin
-      write_file_lock(CRT_FILE, 0600, ssl_cert)
-      write_file_lock(KEY_FILE, 0600, ssl_key)
+      write_file_lock(CRT_FILE, 0700, ssl_cert)
+      write_file_lock(KEY_FILE, 0700, ssl_key)
     rescue => e
       # clean the files if we ended in the middle
       # the files will be regenerated on next pcsd start
@@ -779,14 +763,7 @@ end
 
 def remote_pcsd_restart(params, request, auth_user)
   pcsd_restart()
-  return JSON.generate({
-    :success => true,
-    :instance_signature => DAEMON_INSTANCE_SIGNATURE,
-  })
-end
-
-def pcsd_instance_signature(params, request, auth_user)
-  return [200, DAEMON_INSTANCE_SIGNATURE]
+  return [200, 'success']
 end
 
 def get_sw_versions(params, request, auth_user)
@@ -814,12 +791,6 @@ def remote_node_available(params, request, auth_user)
       :pacemaker_remote => true,
     })
   end
-  if pacemaker_running?()
-    return JSON.generate({
-      :node_available => false,
-      :pacemaker_running => true,
-    })
-  end
   return JSON.generate({:node_available => true})
 end
 
@@ -837,13 +808,8 @@ def remote_add_node(params, request, auth_user, all=false)
     if params[:new_ring1addr] != nil
       node += ',' + params[:new_ring1addr]
     end
-    device_list = []
-    if params[:devices].kind_of?(Array)
-      device_list = params[:devices]
-    end
     retval, output = add_node(
-      auth_user, node, all, auto_start, params[:watchdog], device_list,
-      param_to_bool(params[:no_watchdog_validation]),
+      auth_user, node, all, auto_start, params[:watchdog]
     )
   end
 
@@ -972,12 +938,9 @@ def setup_cluster(params, request, auth_user)
   end
   nodes_options = nodes + options
   nodes_options += options_udp if transport_udp
-  if ['0', '1'].include?(params[:encryption])
-      nodes_options << "--encryption=#{params[:encryption]}"
-  end
   stdout, stderr, retval = run_cmd(
-    auth_user, PCS, "cluster", "setup", "--enable", "--start", "--async",
-    "--name",  params[:clustername], *nodes_options
+    auth_user, PCS, "cluster", "setup", "--enable", "--start",
+    "--name", params[:clustername], *nodes_options
   )
   if retval != 0
     return [
@@ -1020,7 +983,7 @@ def node_status(params, request, auth_user)
       'status?redirected=1',
       false,
       params.select { |k,_|
-        [:version, :operations, :skip_auth_check].include?(k)
+        [:version, :operations].include?(k)
       }
     )
   end
@@ -1041,22 +1004,20 @@ def node_status(params, request, auth_user)
 
   node = ClusterEntity::Node.load_current_node(crm_dom)
 
-  if params[:skip_auth_check] != '1'
-    _,_,not_authorized_nodes = check_gui_status_of_nodes(
-      auth_user,
-      status[:known_nodes],
-      false,
-      3
-    )
+  _,_,not_authorized_nodes = check_gui_status_of_nodes(
+    auth_user,
+    status[:known_nodes],
+    false,
+    3
+  )
 
-    if not_authorized_nodes.length > 0
-      node.warning_list << {
-        :message => 'Not authorized against node(s) ' +
-          not_authorized_nodes.join(', '),
-        :type => 'nodes_not_authorized',
-        :node_list => not_authorized_nodes,
-      }
-    end
+  if not_authorized_nodes.length > 0
+    node.warning_list << {
+      :message => 'Not authorized against node(s) ' +
+        not_authorized_nodes.join(', '),
+      :type => 'nodes_not_authorized',
+      :node_list => not_authorized_nodes,
+    }
   end
 
   version = params[:version] || '1'
@@ -1357,16 +1318,16 @@ end
 def auth(params, request, auth_user)
   token = PCSAuth.validUser(params['username'],params['password'], true)
   # If we authorized to this machine, attempt to authorize everywhere
-  nodes = {}
+  node_list = []
   if token and params["bidirectional"]
     params.each { |k,v|
       if k.start_with?("node-")
-        nodes[v] = params["port-#{v}"]
+        node_list.push(v)
       end
     }
-    if nodes.length > 0
+    if node_list.length > 0
       pcs_auth(
-        auth_user, nodes, params['username'], params['password'],
+        auth_user, node_list, params['username'], params['password'],
         params["force"] == "1"
       )
     end
@@ -1441,24 +1402,6 @@ def resource_cleanup(params, request, auth_user)
   end
 end
 
-def resource_refresh(params, request, auth_user)
-  if not allowed_for_local_cluster(auth_user, Permissions::WRITE)
-    return 403, 'Permission denied'
-  end
-  cmd = [PCS, "resource", "refresh", params[:resource]]
-  if params[:full] == '1'
-    cmd << "--full"
-  end
-  stdout, stderr, retval = run_cmd(auth_user, *cmd)
-  if retval == 0
-    return JSON.generate({"success" => "true"})
-  else
-    return JSON.generate(
-      {"error" => "true", "stdout" => stdout, "stderror" => stderr}
-    )
-  end
-end
-
 def resource_start(params, request, auth_user)
   if not allowed_for_local_cluster(auth_user, Permissions::WRITE)
     return 403, 'Permission denied'
@@ -1493,13 +1436,6 @@ def update_resource (params, request, auth_user)
         cmd << params[:in_group_reference_resource_id]
       end
       resource_group = params[:resource_group]
-    end
-    if params[:resource_type] == "ocf:pacemaker:remote" and not cmd.include?("--force")
-      # Workaround for Error: this command is not sufficient for create remote
-      # connection, use 'pcs cluster node add-remote', use --force to override.
-      # It is not possible to specify meta attributes so we don't need to take
-      # care of those.
-      cmd << "--force"
     end
     out, stderr, retval = run_cmd(auth_user, *cmd)
     if retval != 0
@@ -1609,7 +1545,8 @@ def get_avail_resource_agents(params, request, auth_user)
   if not allowed_for_local_cluster(auth_user, Permissions::READ)
     return 403, 'Permission denied'
   end
-  return JSON.generate(getResourceAgents(auth_user).map{|a| [a, {}]}.to_h)
+  agents = getResourceAgents(auth_user)
+  return JSON.generate(agents)
 end
 
 def get_avail_fence_agents(params, request, auth_user)
@@ -1650,7 +1587,7 @@ def remove_resource(params, request, auth_user)
         out, err, retval = run_cmd(user, *(cmd + [resource]))
         if retval != 0
           unless (
-            (out + err).join('').include?(' does not exist') and
+            (out + err).join('').include?('unable to find a resource') and
             no_error_if_not_exists
           )
             errors += "Unable to stop resource '#{resource}': #{err.join('')}"
@@ -2111,16 +2048,7 @@ def get_cluster_tokens(params, request, auth_user)
   on, off = get_nodes
   nodes = on + off
   nodes.uniq!
-  token_file_data = read_token_file()
-  tokens = token_file_data.tokens.select {|k,v| nodes.include?(k)}
-  if params["with_ports"] != '1'
-    return [200, JSON.generate(tokens)]
-  end
-  data = {
-    :tokens => tokens,
-    :ports => token_file_data.ports.select {|k,v| nodes.include?(k)},
-  }
-  return [200, JSON.generate(data)]
+  return [200, JSON.generate(get_tokens_of_nodes(nodes))]
 end
 
 def save_tokens(params, request, auth_user)
@@ -2130,23 +2058,18 @@ def save_tokens(params, request, auth_user)
   end
 
   new_tokens = {}
-  new_ports = {}
 
   params.each{|nodes|
     if nodes[0].start_with?"node:" and nodes[0].length > 5
       node = nodes[0][5..-1]
-      new_tokens[node] = nodes[1]
-      port = (params["port:#{node}"] || '').strip
-      if port == ''
-        port = nil
-      end
-      new_ports[node] = port
+      token = nodes[1]
+      new_tokens[node] = token
     end
   }
 
   tokens_cfg = Cfgsync::PcsdTokens.from_file()
   sync_successful, sync_responses = Cfgsync::save_sync_new_tokens(
-    tokens_cfg, new_tokens, get_corosync_nodes(), $cluster_name, new_ports
+    tokens_cfg, new_tokens, get_corosync_nodes(), $cluster_name
   )
 
   if sync_successful
@@ -2394,44 +2317,11 @@ def check_sbd(param, request, auth_user)
     }
   }
   watchdog = param[:watchdog]
-  if not watchdog.to_s.empty?
-    stdout, stderr, ret_val = run_cmd(
-      auth_user, PCS, 'stonith', 'sbd', 'watchdog', 'list_json'
-    )
-    if ret_val != 0
-      return [400, "Unable to get list of watchdogs: #{stderr.join("\n")}"]
-    end
-    begin
-      available_watchdogs = JSON.parse(stdout.join("\n"))
-      exists = available_watchdogs.include?(watchdog)
-      out[:watchdog] = {
-        :path => watchdog,
-        :exist => exists,
-        :is_supported => (
-          # this method is not reliable so all watchdog devices listed by SBD
-          # will be listed as supported for now
-          # exists and available_watchdogs[watchdog]['caution'] == nil
-          exists
-        ),
-      }
-    rescue JSON::ParserError
-      return [400, "Unable to get list of watchdogs: unable to parse JSON"]
-    end
-  end
-  begin
-    device_list = JSON.parse(param[:device_list])
-    if device_list and device_list.respond_to?('each')
-      out[:device_list] = []
-      device_list.each { |device|
-        out[:device_list] << {
-          :path => device,
-          :exist => File.exists?(device),
-          :block_device => File.blockdev?(device),
-        }
-      }
-    end
-  rescue JSON::ParserError
-    return [400, 'Invalid input data format']
+  if watchdog
+    out[:watchdog] = {
+      :path => watchdog,
+      :exist => File.exist?(watchdog)
+    }
   end
   return [200, JSON.generate(out)]
 end
@@ -2451,14 +2341,18 @@ def set_sbd_config(param, request, auth_user)
     file.flock(File::LOCK_EX)
     file.write(config)
   rescue => e
-    return pcsd_error("Unable to save SBD configuration: #{e}")
+    msg = "Unable to save SBD configuration: #{e}"
+    $logger.error(msg)
+    return [400, msg]
   ensure
     if file
       file.flock(File::LOCK_UN)
       file.close()
     end
   end
-  return pcsd_success('SBD configuration saved.')
+  msg = 'SBD configuration saved.'
+  $logger.info(msg)
+  return [200, msg]
 end
 
 def get_sbd_config(param, request, auth_user)
@@ -2472,7 +2366,9 @@ def get_sbd_config(param, request, auth_user)
     file.flock(File::LOCK_SH)
     out = file.readlines()
   rescue => e
-    return pcsd_error("Unable to get SBD configuration: #{e}")
+    msg = "Unable to get SBD configuration: #{e}"
+    $logger.error(msg)
+    return [400, msg]
   ensure
     if file
       file.flock(File::LOCK_UN)
@@ -2487,9 +2383,13 @@ def sbd_disable(param, request, auth_user)
     return 403, 'Permission denied'
   end
   if disable_service(get_sbd_service_name())
-    return pcsd_success('SBD disabled')
+    msg = 'SBD disabled'
+    $logger.info(msg)
+    return [200, msg]
   else
-    return pcsd_error("Disabling SBD failed")
+    msg = 'Disabling SBD failed'
+    $logger.error(msg)
+    return [400, msg]
   end
 end
 
@@ -2498,9 +2398,13 @@ def sbd_enable(param, request, auth_user)
     return 403, 'Permission denied'
   end
   if enable_service(get_sbd_service_name())
-    return pcsd_success('SBD enabled')
+    msg = 'SBD enabled'
+    $logger.info(msg)
+    return [200, msg]
   else
-    return pcsd_error("Enabling SBD failed")
+    msg = 'Enabling SBD failed'
+    $logger.error(msg)
+    return [400, msg]
   end
 end
 
@@ -2539,12 +2443,8 @@ def remote_enable_sbd(params, request, auth_user)
 
   arg_list = []
 
-  if param_to_bool(params[:ignore_offline_nodes])
+  if ['true', '1', 'on'].include?(params[:ignore_offline_nodes])
     arg_list << '--skip-offline'
-  end
-
-  if param_to_bool(params[:no_watchdog_validation])
-    arg_list << '--no-watchdog-validation'
   end
 
   params[:watchdog].each do |node, watchdog|
@@ -2680,9 +2580,13 @@ def qdevice_client_disable(param, request, auth_user)
     return 403, 'Permission denied'
   end
   if disable_service('corosync-qdevice')
-    return pcsd_success('corosync-qdevice disabled')
+    msg = 'corosync-qdevice disabled'
+    $logger.info(msg)
+    return [200, msg]
   else
-    return pcsd_error("Disabling corosync-qdevice failed")
+    msg = 'Disabling corosync-qdevice failed'
+    $logger.error(msg)
+    return [400, msg]
   end
 end
 
@@ -2691,11 +2595,17 @@ def qdevice_client_enable(param, request, auth_user)
     return 403, 'Permission denied'
   end
   if not is_service_enabled?('corosync')
-    return pcsd_success('corosync is not enabled, skipping')
+    msg = 'corosync is not enabled, skipping'
+    $logger.info(msg)
+    return [200, msg]
   elsif enable_service('corosync-qdevice')
-    return pcsd_success('corosync-qdevice enabled')
+    msg = 'corosync-qdevice enabled'
+    $logger.info(msg)
+    return [200, msg]
   else
-    return pcsd_error("Enabling corosync-qdevice failed")
+    msg = 'Enabling corosync-qdevice failed'
+    $logger.error(msg)
+    return [400, msg]
   end
 end
 
@@ -2704,9 +2614,13 @@ def qdevice_client_stop(param, request, auth_user)
     return 403, 'Permission denied'
   end
   if stop_service('corosync-qdevice')
-    return pcsd_success('corosync-qdevice stopped')
+    msg = 'corosync-qdevice stopped'
+    $logger.info(msg)
+    return [200, msg]
   else
-    return pcsd_error("Stopping corosync-qdevice failed")
+    msg = 'Stopping corosync-qdevice failed'
+    $logger.error(msg)
+    return [400, msg]
   end
 end
 
@@ -2715,11 +2629,17 @@ def qdevice_client_start(param, request, auth_user)
     return 403, 'Permission denied'
   end
   if not is_service_running?('corosync')
-    return pcsd_success('corosync is not running, skipping')
+    msg = 'corosync is not running, skipping'
+    $logger.info(msg)
+    return [200, msg]
   elsif start_service('corosync-qdevice')
-    return pcsd_success('corosync-qdevice started')
+    msg = 'corosync-qdevice started'
+    $logger.info(msg)
+    return [200, msg]
   else
-    return pcsd_error("Starting corosync-qdevice failed")
+    msg = 'Starting corosync-qdevice failed'
+    $logger.error(msg)
+    return [400, msg]
   end
 end
 
@@ -2766,118 +2686,98 @@ def unmanage_resource(param, request, auth_user)
 end
 
 def booth_set_config(params, request, auth_user)
-  begin
-    check_permissions(auth_user, Permissions::WRITE)
-    data = check_request_data_for_json(params, auth_user)
-
-    PcsdExchangeFormat::validate_item_map_is_Hash('files', data)
-    PcsdExchangeFormat::validate_item_is_Hash('file', :config, data[:config])
-    if data[:authfile]
-      PcsdExchangeFormat::validate_item_is_Hash('file', :config, data[:config])
-    end
-
-    action_results = {
-      :config => PcsdExchangeFormat::run_action(
-        PcsdFile::TYPES,
-        "file",
-        :config,
-        data[:config].merge({
-          :type => "booth_config",
-          :rewrite_existing => true
-        })
-      )
-    }
-
-    if data[:authfile]
-      action_results[:authfile] = PcsdExchangeFormat::run_action(
-        PcsdFile::TYPES,
-        "file",
-        :authfile,
-        data[:authfile].merge({
-          :type => "booth_authfile",
-          :rewrite_existing => true
-        })
-      )
-    end
-
-    success_codes = [:written, :rewritten]
-    failed_results = action_results.select{|key, result|
-      !success_codes.include?(result[:code])
-    }
-
-    if failed_results.empty?
-      return pcsd_success('Booth configuration saved.')
-    end
-
-    return pcsd_error("Unable to save booth configuration: #{
-      failed_results.reduce([]){|memo, (key, result)|
-        memo << "#{key}: #{result[:code]}: #{result[:message]}"
-      }.join(";")
-    }")
-  rescue PcsdRequestException => e
-    return e.code, e.message
-  rescue PcsdExchangeFormat::Error => e
-    return 400, "Invalid input data format: #{e.message}"
-  rescue => e
-    return pcsd_error("Unable to save booth configuration: #{e.message}")
+  unless allowed_for_local_cluster(auth_user, Permissions::WRITE)
+    return 403, 'Permission denied'
   end
+  begin
+    unless params[:data_json]
+      return [400, "Missing required parameter 'data_json'"]
+    end
+    data = JSON.parse(params[:data_json], {:symbolize_names => true})
+  rescue JSON::ParserError
+    return [400, 'Invalid input data format']
+  end
+  config = data[:config]
+  authfile = data[:authfile]
+  return [400, 'Invalid input data format'] unless (
+    config and config[:name] and config[:data]
+  )
+  return [400, 'Invalid input data format'] if (
+    authfile and (not authfile[:name] or not authfile[:data])
+  )
+  begin
+    write_booth_config(config[:name], config[:data])
+    if authfile
+      write_booth_authfile(authfile[:name], authfile[:data])
+    end
+  rescue InvalidFileNameException => e
+    return [400, "Invalid format of config/key file name '#{e.message}'"]
+  rescue => e
+    msg = "Unable to save booth configuration: #{e.message}"
+    $logger.error(msg)
+    return [400, msg]
+  end
+  msg = 'Booth configuration saved.'
+  $logger.info(msg)
+  return [200, msg]
 end
 
 def booth_save_files(params, request, auth_user)
+  unless allowed_for_local_cluster(auth_user, Permissions::WRITE)
+    return 403, 'Permission denied'
+  end
   begin
-    check_permissions(auth_user, Permissions::WRITE)
-    data = check_request_data_for_json(params, auth_user)
-    rewrite_existing = (
-      params.include?('rewrite_existing') || params.include?(:rewrite_existing)
-    )
-
-    action_results = Hash[data.each_with_index.map{|file, i|
-      PcsdExchangeFormat::validate_item_is_Hash('file', i, file)
-      [
-        i,
-        PcsdExchangeFormat::run_action(
-          PcsdFile::TYPES,
-          'file',
-          i,
-          file.merge({
-            :rewrite_existing => rewrite_existing,
-            :type => file[:is_authfile] ? "booth_authfile" : "booth_config"
-          })
-        )
-      ]
-    }]
-
-    results = {:existing => [], :saved => [], :failed => {}}
-
-    code_result_map = {
-      :written => :saved,
-      :rewritten => :saved,
-      :same_content => :saved,
-      :conflict => :existing,
-    }
-
-    action_results.each{|i, result|
-      name = data[i][:name]
-
-      if code_result_map.has_key?(result[:code])
-        results[code_result_map[result[:code]]] << name
-
-      elsif result[:code] == :unexpected
-        results[:failed][name] = result[:message]
-
-      else
-        results[:failed][name] = "Unknown process file result:"+
-          "code: '#{result[:code]}': message: '#{result[:message]}'"
-
+    data = JSON.parse(params[:data_json], {:symbolize_names => true})
+    data.each { |file|
+      unless file[:name] and file[:data]
+        return [400, 'Invalid input data format']
+      end
+      if file[:name].include?('/')
+        return [400, "Invalid file name format '#{file[:name]}'"]
       end
     }
-
-    return [200, JSON.generate(results)]
-  rescue PcsdRequestException => e
-    return e.code, e.message
-  rescue PcsdExchangeFormat::Error => e
-    return 400, "Invalid input data format: #{e.message}"
+  rescue JSON::ParserError, NoMethodError
+    return [400, 'Invalid input data format']
   end
+  rewrite_existing = (
+  params.include?('rewrite_existing') || params.include?(:rewrite_existing)
+  )
+
+  conflict_files = []
+  data.each { |file|
+    next unless File.file?(File.join(BOOTH_CONFIG_DIR, file[:name]))
+    if file[:is_authfile]
+      cur_data = read_booth_authfile(file[:name])
+    else
+      cur_data = read_booth_config(file[:name])
+    end
+    if cur_data != file[:data]
+      conflict_files << file[:name]
+    end
+  }
+
+  write_failed = {}
+  saved_files = []
+  data.each { |file|
+    next if conflict_files.include?(file[:name]) and not rewrite_existing
+    begin
+      if file[:is_authfile]
+        write_booth_authfile(file[:name], file[:data])
+      else
+        write_booth_config(file[:name], file[:data])
+      end
+      saved_files << file[:name]
+    rescue => e
+      msg = "Unable to save file (#{file[:name]}): #{e.message}"
+      $logger.error(msg)
+      write_failed[file[:name]] = e
+    end
+  }
+  return [200, JSON.generate({
+    :existing => conflict_files,
+    :saved => saved_files,
+    :failed => write_failed
+  })]
 end
 
 def booth_get_config(params, request, auth_user)
@@ -2922,73 +2822,6 @@ def booth_get_config(params, request, auth_user)
     })]
   rescue => e
     return [400, "Unable to read booth config/key file: #{e.message}"]
-  end
-end
-
-def put_file(params, request, auth_user)
-  begin
-    check_permissions(auth_user, Permissions::WRITE)
-
-    files = check_request_data_for_json(params, auth_user)
-    PcsdExchangeFormat::validate_item_map_is_Hash('files', files)
-
-    return pcsd_success(
-      JSON.generate({"files" => Hash[files.map{|id, file_data|
-        PcsdExchangeFormat::validate_item_is_Hash('file', id, file_data)
-        [id, PcsdExchangeFormat::run_action(
-          PcsdFile::TYPES, 'file', id, file_data
-        )]
-      }]})
-    )
-  rescue PcsdRequestException => e
-    return e.code, e.message
-  rescue PcsdExchangeFormat::Error => e
-    return 400, "Invalid input data format: #{e.message}"
-  end
-end
-
-def remove_file(params, request, auth_user)
-  begin
-    check_permissions(auth_user, Permissions::WRITE)
-
-    files = check_request_data_for_json(params, auth_user)
-    PcsdExchangeFormat::validate_item_map_is_Hash('files', files)
-
-    return pcsd_success(
-      JSON.generate({"files" => Hash[files.map{|id, file_data|
-        PcsdExchangeFormat::validate_item_is_Hash('file', id, file_data)
-        [id, PcsdExchangeFormat::run_action(
-          PcsdRemoveFile::TYPES, 'file', id, file_data
-        )]
-      }]})
-    )
-  rescue PcsdRequestException => e
-    return e.code, e.message
-  rescue PcsdExchangeFormat::Error => e
-    return 400, "Invalid input data format: #{e.message}"
-  end
-end
-
-
-def manage_services(params, request, auth_user)
-  begin
-    check_permissions(auth_user, Permissions::WRITE)
-
-    actions = check_request_data_for_json(params, auth_user)
-    PcsdExchangeFormat::validate_item_map_is_Hash('actions', actions)
-
-    return pcsd_success(
-      JSON.generate({"actions" => Hash[actions.map{|id, action_data|
-        PcsdExchangeFormat::validate_item_is_Hash("action", id, action_data)
-        [id, PcsdExchangeFormat::run_action(
-          PcsdActionCommand::TYPES, "action", id, action_data
-        )]
-      }]})
-    )
-  rescue PcsdRequestException => e
-    return e.code, e.message
-  rescue PcsdExchangeFormat::Error => e
-    return 400, "Invalid input data format: #{e.message}"
   end
 end
 
@@ -3129,40 +2962,4 @@ def update_recipient(params, request, auth_user)
     return [400, "Unable to update recipient: #{stderr.join("\n")}"]
   end
   return [200, 'Recipient updated']
-end
-
-def pcsd_success(msg)
-  $logger.info(msg)
-  return [200, msg]
-end
-
-def pcsd_error(msg)
-  $logger.error(msg)
-  return [400, msg]
-end
-
-class PcsdRequestException < StandardError
-  attr_accessor :code
-
-  def initialize(message = nil, code = 400)
-    super(message)
-    self.code = code
-  end
-end
-
-def check_permissions(auth_user, permission)
-  unless allowed_for_local_cluster(auth_user, Permissions::WRITE)
-    raise PcsdRequestException.new('Permission denied', 403)
-  end
-end
-
-def check_request_data_for_json(params, auth_user)
-  unless params[:data_json]
-    raise PcsdRequestException.new("Missing required parameter 'data_json'")
-  end
-  begin
-    return JSON.parse(params[:data_json], {:symbolize_names => true})
-  rescue JSON::ParserError
-    raise PcsdRequestException.new('Invalid input data format')
-  end
 end

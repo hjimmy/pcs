@@ -2,11 +2,14 @@ from __future__ import (
     absolute_import,
     division,
     print_function,
+    unicode_literals,
 )
 
 import os
 import sys
 import subprocess
+import ssl
+import inspect
 import xml.dom.minidom
 from xml.dom.minidom import parseString, parse
 import xml.etree.ElementTree as ET
@@ -22,34 +25,19 @@ import base64
 import threading
 import logging
 
-from pcs import settings, usage
 
-from pcs.common import (
-    pcs_pycurl as pycurl,
-    report_codes,
+from pcs import settings, usage
+from pcs.cli.common.reports import (
+    process_library_reports,
+    LibraryReportProcessorToConsole as LibraryReportProcessorToConsole,
 )
 from pcs.common.tools import (
     join_multilines,
     simple_cache,
 )
-
-from pcs.cli.common import (
-    console_report,
-    middleware,
-)
-from pcs.cli.common.env_cli import Env
-from pcs.cli.common.lib_wrapper import Library
-from pcs.cli.common.reports import (
-    build_report_message,
-    process_library_reports,
-    LibraryReportProcessorToConsole as LibraryReportProcessorToConsole,
-)
-from pcs.cli.booth.command import DEFAULT_BOOTH_NAME
-import pcs.cli.booth.env
-
 from pcs.lib import reports, sbd
 from pcs.lib.env import LibraryEnvironment
-from pcs.lib.errors import LibraryError, ReportListAnalyzer
+from pcs.lib.errors import LibraryError
 from pcs.lib.external import (
     CommandRunner,
     disable_service,
@@ -57,30 +45,36 @@ from pcs.lib.external import (
     enable_service,
     EnableServiceError,
     is_cman_cluster as lib_is_cman_cluster,
-    is_proxy_set,
     is_service_enabled,
     is_service_running,
     is_systemctl,
+    _service,
+    _systemctl,
 )
-from pcs.lib.communication.nodes import (
-    availability_checker_node,
-    PrecheckNewNode,
-)
-from pcs.lib.communication.tools import run as run_com_cmd
+import pcs.lib.resource_agent as lib_ra
 import pcs.lib.corosync.config_parser as corosync_conf_parser
 from pcs.lib.corosync.config_facade import ConfigFacade as corosync_conf_facade
-from pcs.lib.pacemaker.live import (
-    EXITCODE_CIB_SCHEMA_IS_THE_LATEST_AVAILABLE,
-    has_wait_for_idle_support,
-)
-from pcs.lib.pacemaker.state import ClusterState
-from pcs.lib.pacemaker.values import(
-    is_boolean,
-    is_score as is_score_value,
-    timeout_to_seconds as get_timeout_seconds,
+from pcs.lib.pacemaker import has_resource_wait_support
+from pcs.lib.pacemaker_state import ClusterState
+from pcs.lib.pacemaker_values import(
     validate_id,
+    is_boolean,
+    timeout_to_seconds as get_timeout_seconds,
+    is_score_value,
 )
+from pcs.cli.common import middleware
+from pcs.cli.common.env import Env
+from pcs.cli.common.lib_wrapper import Library
+from pcs.cli.common.reports import build_report_message
+from pcs.cli.booth.command import DEFAULT_BOOTH_NAME
+import pcs.cli.booth.env
 
+try:
+    # python2
+    from httplib import HTTPException
+except ImportError:
+    # python3
+    from http.client import HTTPException
 try:
     # python2
     from urllib import urlencode as urllib_urlencode
@@ -88,14 +82,34 @@ except ImportError:
     # python3
     from urllib.parse import urlencode as urllib_urlencode
 try:
-    # python 3
-    from subprocess import DEVNULL
+    # python2
+    from urllib2 import (
+        build_opener as urllib_build_opener,
+        install_opener as urllib_install_opener,
+        HTTPCookieProcessor as urllib_HTTPCookieProcessor,
+        HTTPSHandler as urllib_HTTPSHandler,
+        HTTPError as urllib_HTTPError,
+        URLError as urllib_URLError
+    )
 except ImportError:
-    # python 2
-    DEVNULL = open(os.devnull, "r")
+    # python3
+    from urllib.request import (
+        build_opener as urllib_build_opener,
+        install_opener as urllib_install_opener,
+        HTTPCookieProcessor as urllib_HTTPCookieProcessor,
+        HTTPSHandler as urllib_HTTPSHandler
+    )
+    from urllib.error import (
+        HTTPError as urllib_HTTPError,
+        URLError as urllib_URLError
+    )
 
 
-PYTHON2 = (sys.version_info.major == 2)
+
+
+PYTHON2 = sys.version[0] == "2"
+
+DEFAULT_RESOURCE_ACTIONS = ["monitor", "start", "stop", "promote", "demote"]
 
 # usefile & filename variables are set in pcs module
 usefile = False
@@ -127,40 +141,16 @@ def checkAndUpgradeCIB(major,minor,rev):
     cmajor, cminor, crev = getValidateWithVersion(get_cib_dom())
     if cmajor > major or (cmajor == major and cminor > minor) or (cmajor == major and cminor == minor and crev >= rev):
         return False
-    cluster_upgrade(error_on_latest_schema=False)
-    return True
-
-def cluster_upgrade(error_on_latest_schema=True):
-    output, retval = run(["cibadmin", "--upgrade", "--force"])
-    if retval == 0:
-        print("Cluster CIB has been upgraded to latest version")
-    elif retval == EXITCODE_CIB_SCHEMA_IS_THE_LATEST_AVAILABLE:
-        message = "Cluster CIB schema is already the latest version"
-        # For "pcs cluster cib-upgrade" we keep the previous behavior of
-        # exiting with 1. For automatic upgrades initiated by pcs commands we
-        # keep going so pcs has a chance to test the resulting schema version
-        # and report to the user.
-        if error_on_latest_schema:
-            err(message)
-        else:
-            print(message)
     else:
-        err("unable to upgrade cluster: %s" % output)
+        cluster_upgrade()
+        return True
 
-def cluster_upgrade_to_version(required_version):
-    checkAndUpgradeCIB(*required_version)
-    dom = get_cib_dom()
-    current_version = getValidateWithVersion(dom)
-    if current_version < required_version:
-        err(
-            console_report.CODE_TO_MESSAGE_BUILDER_MAP[
-                report_codes.CIB_UPGRADE_FAILED_TO_MINIMAL_REQUIRED_VERSION
-            ]({
-                "required_version": ".".join([str(x) for x in required_version]),
-                "current_version": ".".join([str(x) for x in current_version]),
-            })
-        )
-    return dom
+def cluster_upgrade():
+    output, retval = run(["cibadmin", "--upgrade", "--force"])
+    if retval != 0:
+        err("unable to upgrade cluster: %s" % output)
+    print("Cluster CIB has been upgraded to latest version")
+
 
 # Check status of node
 def checkStatus(node):
@@ -169,16 +159,6 @@ def checkStatus(node):
 # Check and see if we're authorized (faster than a status check)
 def checkAuthorization(node):
     return sendHTTPRequest(node, 'remote/check_auth', None, False, False)
-
-def getPcsdInstanceSignature(node):
-    return sendHTTPRequest(
-        node, 'remote/pcsd_instance_signature', None, False, False
-    )
-
-def getPcsdCapabilities(node):
-    return sendHTTPRequest(
-        node, 'remote/capabilities', printResult=False, printSuccess=False
-    )
 
 def get_uid_gid_file_name(uid, gid):
     return "pcs-uidgid-%s-%s" % (uid, gid)
@@ -255,35 +235,11 @@ def remove_uid_gid_file(uid,gid):
     return file_removed
 # Returns a dictionary {'nodeA':'tokenA'}
 def readTokens():
-    return read_token_file()["tokens"]
-
-@simple_cache
-def read_token_file():
-    data = {
-        "tokens": {},
-        "ports": {},
-    }
+    tokens = {}
     output, retval = run_pcsdcli("read_tokens")
     if retval == 0 and output['status'] == 'ok' and output['data']:
-        data = output['data']
-    return data
-
-def repeat_if_timeout(send_http_request_function, repeat_count=15):
-    def repeater(node, *args, **kwargs):
-        repeats_left = repeat_count
-        while True:
-            retval, output = send_http_request_function(node, *args, **kwargs)
-            if (
-                retval != 2 or "Operation timed out" not in output
-                or
-                repeats_left < 1
-            ):
-                # did not timed out OR repeat limit exceeded
-                return retval, output
-            repeats_left = repeats_left - 1
-            if "--debug" in pcs_options:
-                print("{0}: {1}, trying again...". format(node, output))
-    return repeater
+        tokens = output['data']
+    return tokens
 
 # Set the corosync.conf file on the specified node
 def getCorosyncConfig(node):
@@ -306,33 +262,8 @@ def getPacemakerNodeStatus(node):
         node, "remote/pacemaker_node_status", None, False, False
     )
 
-def startPacemaker(node, quiet=False, timeout=None):
-    return startCluster(
-        node, quiet=quiet, timeout=timeout, pacemaker=True, corosync=False
-    )
-
-def startCorosync(node, quiet=False, timeout=None):
-    return startCluster(
-        node, quiet=quiet, timeout=timeout, pacemaker=False, corosync=True
-    )
-
-def startCluster(
-    node, quiet=False, timeout=None, pacemaker=True, corosync=True
-):
-    data = dict()
-    if pacemaker and not corosync:
-        data["component"] = "pacemaker"
-    elif corosync and not pacemaker:
-        data["component"] = "corosync"
-    data = urllib_urlencode(data)
-    return sendHTTPRequest(
-        node,
-        "remote/cluster_start",
-        data,
-        printResult=False,
-        printSuccess=not quiet,
-        timeout=timeout
-    )
+def startCluster(node, quiet=False):
+    return sendHTTPRequest(node, 'remote/cluster_start', None, False, not quiet)
 
 def stopPacemaker(node, quiet=False, force=True):
     return stopCluster(
@@ -346,23 +277,14 @@ def stopCorosync(node, quiet=False, force=True):
 
 def stopCluster(node, quiet=False, pacemaker=True, corosync=True, force=True):
     data = dict()
-    timeout = None
     if pacemaker and not corosync:
         data["component"] = "pacemaker"
-        timeout = 2 * 60
     elif corosync and not pacemaker:
         data["component"] = "corosync"
     if force:
         data["force"] = 1
     data = urllib_urlencode(data)
-    return sendHTTPRequest(
-        node,
-        'remote/cluster_stop',
-        data,
-        printResult=False,
-        printSuccess=not quiet,
-        timeout=timeout
-    )
+    return sendHTTPRequest(node, 'remote/cluster_stop', data, False, not quiet)
 
 def enableCluster(node):
     return sendHTTPRequest(node, 'remote/cluster_enable', None, False, True)
@@ -385,48 +307,24 @@ def resumeConfigSyncing(node):
     data = urllib_urlencode({"sync_thread_resume": 1})
     return sendHTTPRequest(node, "remote/set_sync_options", data, False, False)
 
-def canAddNodeToCluster(node_communicator, target):
-    """
-    Return tuple with two parts. The first part is information if the node can
-    be added to a cluster. The second part is a relevant explanation for first
-    part.
-
-    NodeCommunicator node_communicator provide connection to the node
-    NodeAddresses node contain destination for request
-    """
-    report_list = []
-    com_cmd = PrecheckNewNode(report_list, availability_checker_node)
-    com_cmd.add_request(target)
-    run_com_cmd(node_communicator, com_cmd)
-
-    analyzer = ReportListAnalyzer(report_list)
-    if not analyzer.error_list:
-        return True, ""
-
-    first_problem = analyzer.error_list[0]
-
-    report_message_map = {
-        report_codes.NODE_COMMUNICATION_ERROR_NOT_AUTHORIZED:
-           "unable to authenticate to node"
-        ,
-        report_codes.CANNOT_ADD_NODE_IS_IN_CLUSTER:
-            "node is already in a cluster"
-        ,
-        report_codes.INVALID_RESPONSE_FORMAT:
-            "response parsing error"
-        ,
-        report_codes.CANNOT_ADD_NODE_IS_RUNNING_SERVICE:
-             "node is running pacemaker_remote"
-        ,
-    }
-
-    if first_problem.code in report_message_map:
-        return False, report_message_map[first_problem.code]
-
-    return False, "error checking node availability{0}".format(
-        ": {0}".format(first_problem.info["reason"])
-            if "reason" in first_problem.info else ""
+def canAddNodeToCluster(node):
+    retval, output = sendHTTPRequest(
+        node, 'remote/node_available', None, False, False
     )
+    if retval == 0:
+        try:
+            myout = json.loads(output)
+            if "notauthorized" in myout and myout["notauthorized"] == "true":
+                return (False, "unable to authenticate to node")
+            if "node_available" in myout and myout["node_available"] == True:
+                return (True, "")
+            elif myout.get("pacemaker_remote", False):
+                return (False, "node is running pacemaker_remote")
+            else:
+                return (False, "node is already in a cluster")
+        except ValueError:
+            return (False, "response parsing error")
+    return (False, "error checking node availability: {0}".format(output))
 
 def addLocalNode(node, node_to_add, ring1_addr=None):
     options = {'new_nodename': node_to_add}
@@ -442,7 +340,8 @@ def addLocalNode(node, node_to_add, ring1_addr=None):
         except ValueError:
             return 1, output
         return retval2, output
-    return 1, output
+    else:
+        return 1, output
 
 def removeLocalNode(node, node_to_remove, pacemaker_remove=False):
     data = urllib_urlencode({'remove_nodename':node_to_remove, 'pacemaker_remove':pacemaker_remove})
@@ -453,8 +352,8 @@ def removeLocalNode(node, node_to_remove, pacemaker_remove=False):
         except ValueError:
             return 1,output
         return 0, myout
-    return 1, output
-
+    else:
+        return 1, output
 
 # Send an HTTP request to a node return a tuple with status, data
 # If status is 0 then data contains server response
@@ -465,121 +364,32 @@ def removeLocalNode(node, node_to_remove, pacemaker_remove=False):
 # 2 = No response,
 # 3 = Auth Error
 # 4 = Permission denied
-def sendHTTPRequest(
-    host, request, data=None, printResult=True, printSuccess=True, timeout=None
-):
-    token_file = read_token_file()
-    port = token_file["ports"].get(host)
-    if port is None:
-        port = settings.pcsd_default_port
-    url = "https://{host}:{port}/{request}".format(
-        host=host, request=request, port=port
-    )
+def sendHTTPRequest(host, request, data = None, printResult = True, printSuccess = True):
+    url = 'https://' + host + ':2224/' + request
+    # enable self-signed certificates
+    # https://www.python.org/dev/peps/pep-0476/
+    # http://bugs.python.org/issue21308
+    if (
+        hasattr(ssl, "_create_unverified_context")
+        and
+        "context" in inspect.getargspec(urllib_HTTPSHandler.__init__).args
+    ):
+        opener = urllib_build_opener(
+            urllib_HTTPSHandler(context=ssl._create_unverified_context()),
+            urllib_HTTPCookieProcessor()
+        )
+    else:
+        opener = urllib_build_opener(urllib_HTTPCookieProcessor())
+
+    tokens = readTokens()
     if "--debug" in pcs_options:
         print("Sending HTTP Request to: " + url)
         print("Data: {0}".format(data))
-
-    def __debug_callback(data_type, debug_data):
-        prefixes = {
-            pycurl.DEBUG_TEXT: b"* ",
-            pycurl.DEBUG_HEADER_IN: b"< ",
-            pycurl.DEBUG_HEADER_OUT: b"> ",
-            pycurl.DEBUG_DATA_IN: b"<< ",
-            pycurl.DEBUG_DATA_OUT: b">> ",
-        }
-        if data_type in prefixes:
-            debug_output.write(prefixes[data_type])
-            debug_output.write(debug_data)
-            if not debug_data.endswith(b"\n"):
-                debug_output.write(b"\n")
-
-    output = BytesIO()
-    debug_output = BytesIO()
-    cookies = __get_cookie_list(host, token_file["tokens"])
-    if not timeout:
-        timeout = settings.default_request_timeout
-    if "--request-timeout" in pcs_options:
-        timeout = pcs_options["--request-timeout"]
-
-    handler = pycurl.Curl()
-    handler.setopt(pycurl.PROTOCOLS, pycurl.PROTO_HTTPS)
-    handler.setopt(pycurl.URL, url.encode("utf-8"))
-    handler.setopt(pycurl.WRITEFUNCTION, output.write)
-    handler.setopt(pycurl.VERBOSE, 1)
-    handler.setopt(pycurl.NOSIGNAL, 1) # required for multi-threading
-    handler.setopt(pycurl.DEBUGFUNCTION, __debug_callback)
-    handler.setopt(pycurl.TIMEOUT_MS, int(timeout * 1000))
-    handler.setopt(pycurl.SSL_VERIFYHOST, 0)
-    handler.setopt(pycurl.SSL_VERIFYPEER, 0)
-    handler.setopt(pycurl.HTTPHEADER, ["Expect: "])
-    if cookies:
-        handler.setopt(pycurl.COOKIE, ";".join(cookies).encode("utf-8"))
+    # python3 requires data to by bytes not str
     if data:
-        handler.setopt(pycurl.COPYPOSTFIELDS, data.encode("utf-8"))
-    try:
-        handler.perform()
-        response_data = output.getvalue().decode("utf-8")
-        response_code = handler.getinfo(pycurl.RESPONSE_CODE)
-        if printResult or printSuccess:
-            print(host + ": " + response_data.strip())
-        if "--debug" in pcs_options:
-            print("Response Code: {0}".format(response_code))
-            print("--Debug Response Start--\n{0}".format(response_data))
-            print("--Debug Response End--")
-            print("Communication debug info for calling: {0}".format(url))
-            print("--Debug Communication Output Start--")
-            print(debug_output.getvalue().decode("utf-8", "ignore"))
-            print("--Debug Communication Output End--")
-            print()
+        data = data.encode("utf-8")
 
-        if response_code == 401:
-            output = (
-                3,
-                (
-                    "Unable to authenticate to {node} - (HTTP error: {code}), "
-                    "try running 'pcs cluster auth'"
-                ).format(node=host, code=response_code)
-            )
-        elif response_code == 403:
-            output = (
-                4,
-                "{node}: Permission denied - (HTTP error: {code})".format(
-                    node=host, code=response_code
-                )
-            )
-        elif response_code >= 400:
-            output = (
-                1,
-                "Error connecting to {node} - (HTTP error: {code})".format(
-                    node=host, code=response_code
-                )
-            )
-        else:
-            output = (0, response_data)
-
-        if printResult and output[0] != 0:
-            print(output[1])
-
-        return output
-    except pycurl.error as e:
-        if is_proxy_set(os.environ):
-            print(
-                "Warning: Proxy is set in environment variables, try "
-                "disabling it"
-            )
-        dummy_errno, reason = e.args
-        if "--debug" in pcs_options:
-            print("Response Reason: {0}".format(reason))
-        msg = (
-            "Unable to connect to {host}, try setting higher timeout in "
-            "--request-timeout option ({reason})"
-        ).format(host=host, reason=reason)
-        if printResult:
-            print(msg)
-        return (2, msg)
-
-
-def __get_cookie_list(host, tokens):
+    # cookies
     cookies = []
     if host in tokens:
         cookies.append("token=" + tokens[host])
@@ -594,12 +404,72 @@ def __get_cookie_list(host, tokens):
                     value = re.sub(r"[^!-~]", "", value).replace(";", "")
                 else:
                     # python3 requires the value to be bytes not str
-                    value = base64.b64encode(
-                        value.encode("utf8")
-                    ).decode("utf-8")
+                    value = base64.b64encode(value.encode("utf8"))
                 cookies.append("{0}={1}".format(name, value))
-    return cookies
+    if cookies:
+        opener.addheaders.append(('Cookie', ";".join(cookies)))
 
+    # send the request
+    urllib_install_opener(opener)
+    try:
+        result = opener.open(url,data)
+        # python3 returns bytes not str
+        html = result.read().decode("utf-8")
+        if printResult or printSuccess:
+            print(host + ": " + html.strip())
+        if "--debug" in pcs_options:
+            print("Response Code: 0")
+
+            print("--Debug Response Start--\n{0}".format(html), end="")
+            print("--Debug Response End--")
+            print()
+        return (0,html)
+    except urllib_HTTPError as e:
+        if "--debug" in pcs_options:
+            print("Response Code: " + str(e.code))
+            html = e.read().decode("utf-8")
+            print("--Debug Response Start--\n{0}".format(html), end="")
+            print("--Debug Response End--")
+        if e.code == 401:
+            output = (
+                3,
+                "Unable to authenticate to {node} - (HTTP error: {code}), try running 'pcs cluster auth'".format(
+                    node=host, code=e.code
+                )
+            )
+        elif e.code == 403:
+            output = (
+                4,
+                "{node}: Permission denied - (HTTP error: {code})".format(
+                    node=host, code=e.code
+                )
+            )
+        else:
+            output = (
+                1,
+                "Error connecting to {node} - (HTTP error: {code})".format(
+                    node=host, code=e.code
+                )
+            )
+        if printResult:
+            print(output[1])
+        return output
+    except urllib_URLError as e:
+        return __handle_HTTP_connection_error(host, str(e.reason), printResult)
+    except HTTPException:
+        return __handle_HTTP_connection_error(
+            host, "Connection error", printResult
+        )
+
+def __handle_HTTP_connection_error(host, reason,  print_result):
+    if "--debug" in pcs_options:
+        print("Response Reason: {0}".format(reason))
+    msg = "Unable to connect to {host} ({reason})".format(
+        host=host, reason=reason
+    )
+    if print_result:
+        print(msg)
+    return (2, msg)
 
 def getNodesFromCorosyncConf(conf_text=None):
     if is_rhel6():
@@ -864,9 +734,9 @@ def addNodeToClusterConf(node):
 
     return True
 
-def removeNodeFromCorosync(node_expression):
+def removeNodeFromCorosync(node):
     removed_node = False
-    node0, node1 = parse_multiring_node(node_expression)
+    node0, node1 = parse_multiring_node(node)
 
     corosync_conf = getCorosyncConfParsed()
     for nodelist in corosync_conf.get_sections("nodelist"):
@@ -1012,15 +882,6 @@ def get_cluster_conf_cman_options():
 def subprocess_setup():
     signal.signal(signal.SIGPIPE, signal.SIG_DFL)
 
-def touch_cib_file(filename):
-    if not os.path.isfile(filename):
-        try:
-            write_empty_cib(filename)
-        except EnvironmentError as e:
-            err(
-                "Unable to write to file: '{0}': '{1}'".format(filename, str(e))
-            )
-
 # Run command, with environment and return (output, retval)
 # DEPRECATED, please use lib.external.CommandRunner via utils.cmd_runner()
 def run(
@@ -1034,14 +895,15 @@ def run(
     env_var["LC_ALL"] = "C"
     if usefile:
         env_var["CIB_file"] = filename
-        touch_cib_file(filename)
+
+        if not os.path.isfile(filename):
+            try:
+                write_empty_cib(filename)
+            except IOError:
+                err("Unable to write to file: " + filename)
 
     command = args[0]
-    if (
-        command[0:3] == "crm"
-        or
-        command in ["cibadmin", "cman_tool", "iso8601", "stonith_admin"]
-    ):
+    if command[0:3] == "crm" or command in ["cibadmin", "cman_tool", "iso8601"]:
         args[0] = settings.pacemaker_binaries + command
     elif command[0:8] == "corosync":
         args[0] = settings.corosync_binaries + command
@@ -1059,7 +921,7 @@ def run(
         if string_for_stdin != None:
             stdin_pipe = subprocess.PIPE
         else:
-            stdin_pipe = DEVNULL
+            stdin_pipe = None
 
         p = subprocess.Popen(
             args,
@@ -1093,7 +955,7 @@ def cmd_runner():
     env_vars.update(os.environ)
     env_vars["LC_ALL"] = "C"
     return CommandRunner(
-        logging.getLogger("pcs"),
+        logging.getLogger("old_cli"),
         get_report_processor(),
         env_vars
     )
@@ -1104,48 +966,35 @@ def run_pcsdcli(command, data=None):
     env_var = dict()
     if "--debug" in pcs_options:
         env_var["PCSD_DEBUG"] = "true"
-    if "--request-timeout" in pcs_options:
-        env_var["PCSD_NETWORK_TIMEOUT"] = str(pcs_options["--request-timeout"])
+    pcs_dir = os.path.realpath(os.path.dirname(sys.argv[0]))
+    if pcs_dir == "/usr/sbin":
+        pcsd_dir_path = settings.pcsd_exec_location
     else:
-        env_var["PCSD_NETWORK_TIMEOUT"] = str(settings.default_request_timeout)
-    pcsd_dir_path = settings.pcsd_exec_location
+        pcsd_dir_path = os.path.join(pcs_dir, '../pcsd')
     pcsdcli_path = os.path.join(pcsd_dir_path, 'pcsd-cli.rb')
     gem_home = os.path.join(pcsd_dir_path, 'vendor/bundle/ruby')
     env_var["GEM_HOME"] = gem_home
-    stdout, dummy_stderr, retval = cmd_runner().run(
+    output, retval = run(
         ["/usr/bin/ruby", "-I" + pcsd_dir_path, pcsdcli_path, command],
-        json.dumps(data),
-        env_var
+        string_for_stdin=json.dumps(data),
+        env_extend=env_var
     )
     try:
-        output_json = json.loads(stdout)
+        output_json = json.loads(output)
         for key in ['status', 'text', 'data']:
             if key not in output_json:
                 output_json[key] = None
-
-        output = "".join(output_json['log'])
-        # check if some requests timed out, if so print message about it
-        if "error: operation_timedout" in output:
-            print("Error: Operation timed out")
-        # check if there are any connection failures due to proxy in pcsd and
-        # print warning if so
-        proxy_msg = (
-            'Proxy is set in environment variables, try disabling it'
-        )
-        if proxy_msg in output:
-            print("Warning: {0}".format(proxy_msg))
-
     except ValueError:
         output_json = {
             'status': 'bad_json_output',
-            'text': stdout,
+            'text': output,
             'data': None,
         }
     return output_json, retval
 
 def auth_nodes_do(nodes, username, password, force, local):
     pcsd_data = {
-        'nodes': nodes,
+        'nodes': list(set(nodes)),
         'username': username,
         'password': password,
         'force': force,
@@ -1199,7 +1048,7 @@ def auth_nodes_do(nodes, username, password, force, local):
     err('Unable to communicate with pcsd')
 
 
-def call_local_pcsd(argv, std_in=None):
+def call_local_pcsd(argv, interactive_auth=False, std_in=None):
     # some commands cannot be run under a non-root account
     # so we pass those commands to locally running pcsd to execute them
     # returns [list_of_errors, exit_code, stdout, stderr]
@@ -1212,14 +1061,22 @@ def call_local_pcsd(argv, std_in=None):
     code, output = sendHTTPRequest(
         "localhost", "run_pcs", data_send, False, False
     )
+
+    # authenticate against local pcsd and run again
+    if interactive_auth and 3 == code: # not authenticated
+        print('Please authenticate yourself to the local pcsd')
+        username = get_terminal_input('Username: ')
+        password = get_terminal_password()
+        auth_nodes_do(["localhost"], username, password, True, True)
+        print()
+        code, output = sendHTTPRequest(
+            "localhost", "run_pcs", data_send, False, False
+        )
+
     if 3 == code: # not authenticated
-        return [
-            [
-                "Unable to authenticate against the local pcsd. Run the same "
-                "command as root or authenticate yourself to the local pcsd "
-                "using command 'pcs client local-auth'"
-            ], 1, '', ''
-        ]
+        # don't advise to run 'pcs cluster auth' as that is not used to auth
+        # to localhost
+        return [['Unable to authenticate to the local pcsd'], 1, '', '']
     if 0 != code: # http error connecting to localhost
         return [[output], 1, '', '']
 
@@ -1268,20 +1125,13 @@ def run_parallel(worker_list, wait_seconds=1):
 
 def create_task(report, action, node, *args, **kwargs):
     def worker():
-        sleep = kwargs.pop("__sleep", 0)
-        if sleep:
-            time.sleep(sleep)
         returncode, output = action(node, *args, **kwargs)
         report(node, returncode, output)
     return worker
 
 def create_task_list(report, action, node_list, *args, **kwargs):
-    sleep_step = kwargs.pop("__sleep_step", 0)
     return [
-        create_task(
-            report, action, node, *args, __sleep=(index * sleep_step), **kwargs
-        )
-        for index, node in enumerate(node_list)
+        create_task(report, action, node, *args, **kwargs) for node in node_list
     ]
 
 def parallel_for_nodes(action, node_list, *args, **kwargs):
@@ -1362,18 +1212,16 @@ def dom_get_resource_clone_ms_parent(dom, resource_id):
         or
         dom_get_group(dom, resource_id)
     )
-    if resource:
-        return dom_elem_get_resource_clone_ms_parent(resource)
-    return None
+    return dom_elem_get_resource_clone_ms_parent(resource)
 
 def dom_elem_get_resource_clone_ms_parent(resource):
-    return dom_get_parent_by_tag_names(resource, ["clone", "master"])
-
-def dom_get_resource_bundle_parent(dom, resource_id):
-    resource = dom_get_resource(dom, resource_id)
-    if resource:
-        return dom_get_parent_by_tag_names(resource, ["bundle"])
-    return None
+    clone = resource
+    while True:
+        if not isinstance(clone, xml.dom.minidom.Element):
+            return None
+        if clone.tagName in ["clone", "master"]:
+            return clone
+        clone = clone.parentNode
 
 def dom_get_master(dom, master_id):
     for master in dom.getElementsByTagName("master"):
@@ -1391,22 +1239,6 @@ def dom_get_group(dom, group_id):
     for group in dom.getElementsByTagName("group"):
         if group.getAttribute("id") == group_id:
             return group
-    return None
-
-def dom_get_bundle(dom, bundle_id):
-    for bundle in dom.getElementsByTagName("bundle"):
-        if bundle.getAttribute("id") == bundle_id:
-            return bundle
-    return None
-
-def dom_get_resource_bundle(bundle_el):
-    for child in bundle_el.childNodes:
-        if (
-            child.nodeType == xml.dom.minidom.Node.ELEMENT_NODE
-            and
-            child.tagName == "primitive"
-        ):
-            return child
     return None
 
 def dom_get_group_clone(dom, group_id):
@@ -1465,11 +1297,9 @@ def validate_constraint_resource(dom, resource_id):
         dom_get_clone(dom, resource_id)
         or
         dom_get_master(dom, resource_id)
-        or
-        dom_get_bundle(dom, resource_id)
     )
     if resource_el:
-        # clones, masters and bundles are always valid
+        # clone and master is always valid
         return True, "", resource_id
 
     resource_el = (
@@ -1480,18 +1310,17 @@ def validate_constraint_resource(dom, resource_id):
     if not resource_el:
         return False, "Resource '%s' does not exist" % resource_id, None
 
-    clone_el = (
-        dom_get_resource_clone_ms_parent(dom, resource_id)
-        or
-        dom_get_resource_bundle_parent(dom, resource_id)
-    )
+    clone_el = dom_get_resource_clone_ms_parent(dom, resource_id)
     if not clone_el:
-        # a primitive and a group is valid if not in a clone nor a master nor a
-        # bundle
+        # primitive and group is valid if not in clone nor master
         return True, "", resource_id
 
     if "--force" in pcs_options:
-        return True, "", clone_el.getAttribute("id")
+        return (
+            True,
+            "",
+            clone_el.getAttribute("id") if clone_el else resource_id
+        )
 
     if clone_el.tagName == "clone":
         return (
@@ -1505,14 +1334,6 @@ def validate_constraint_resource(dom, resource_id):
         return (
             False,
             "%s is a master/slave resource, you should use the master id: %s "
-                "when adding constraints. Use --force to override."
-                % (resource_id, clone_el.getAttribute("id")),
-            clone_el.getAttribute("id")
-        )
-    if clone_el.tagName == "bundle":
-        return (
-            False,
-            "%s is a bundle resource, you should use the bundle id: %s "
                 "when adding constraints. Use --force to override."
                 % (resource_id, clone_el.getAttribute("id")),
             clone_el.getAttribute("id")
@@ -1566,12 +1387,12 @@ def dom_get_child_by_tag_name(dom_el, tag_name):
         return children[0]
     return None
 
-def dom_get_parent_by_tag_names(dom_el, tag_names):
+def dom_get_parent_by_tag_name(dom_el, tag_name):
     parent = dom_el.parentNode
     while parent:
         if not isinstance(parent, xml.dom.minidom.Element):
             return None
-        if parent.tagName in tag_names:
+        if parent.tagName == tag_name:
             return parent
         parent = parent.parentNode
     return None
@@ -1585,7 +1406,6 @@ def dom_attrs_to_list(dom_el, with_id=False):
         attributes.append("(id:%s)" % (dom_el.getAttribute("id")))
     return attributes
 
-# moved to pcs.lib.pacemaker.state
 def get_resource_for_running_check(cluster_state, resource_id, stopped=False):
     for clone in cluster_state.getElementsByTagName("clone"):
         if clone.getAttribute("id") == resource_id:
@@ -1616,8 +1436,6 @@ def get_resource_for_running_check(cluster_state, resource_id, stopped=False):
             resource_id = elem.getAttribute("id")
     return resource_id
 
-# moved to pcs.lib.pacemaker.state
-# see pcs.lib.commands.resource for usage
 def resource_running_on(resource, passed_state=None, stopped=False):
     nodes_started = []
     nodes_master = []
@@ -1675,15 +1493,56 @@ def resource_running_on(resource, passed_state=None, stopped=False):
         "nodes_slave": nodes_slave,
     }
 
-def agent_action_to_cmdline_format(action):
-    op = [action["name"]]
-    for key in action.keys():
-        if key != "name" and action[key] != "0":
-            op.append("{0}={1}".format(key, action[key]))
-    return op
+def filter_default_op_from_actions(resource_actions):
+    filtered = []
+    for action in resource_actions:
+        if action.get("name", "") not in DEFAULT_RESOURCE_ACTIONS:
+            continue
+        new_action = dict([
+            (name, value)
+            for name, value in action.items()
+            if name != "depth"
+        ])
+        filtered.append(new_action)
+    return filtered
+
+# Given a resource agent (ocf:heartbeat:XXX) return an list of default
+# operations or an empty list if unable to find any default operations
+def get_default_op_values(full_agent_name):
+    default_ops = []
+    try:
+        if full_agent_name.startswith("stonith:"):
+            metadata = lib_ra.StonithAgent(
+                cmd_runner(),
+                full_agent_name[len("stonith:"):]
+            )
+        else:
+            metadata = lib_ra.ResourceAgent(
+                cmd_runner(),
+                full_agent_name
+            )
+        actions = filter_default_op_from_actions(metadata.get_actions())
+
+        for action in actions:
+            op = [action["name"]]
+            for key in action.keys():
+                if key != "name" and action[key] != "0":
+                    op.append("{0}={1}".format(key, action[key]))
+            default_ops.append(op)
+    except lib_ra.UnableToGetAgentMetadata:
+        return []
+    except lib_ra.ResourceAgentError as e:
+        process_library_reports(
+            [lib_ra.resource_agent_error_to_report_item(e)]
+        )
+    except LibraryError as e:
+        process_library_reports(e.args)
+
+    return default_ops
+
 
 def check_pacemaker_supports_resource_wait():
-    if not has_wait_for_idle_support(cmd_runner()):
+    if not has_resource_wait_support(cmd_runner()):
         err("crm_resource does not support --wait, please upgrade pacemaker")
 
 def validate_wait_get_timeout(need_cib_support=True):
@@ -1723,20 +1582,16 @@ def get_cib(scope=None):
             err("unable to get cib")
     return output
 
-def get_cib_dom(cib_xml=None):
-    if cib_xml is None:
-        cib_xml = get_cib()
+def get_cib_dom():
     try:
-        dom = parseString(cib_xml)
+        dom = parseString(get_cib())
         return dom
     except:
         err("unable to get cib")
 
-def get_cib_etree(cib_xml=None):
-    if cib_xml is None:
-        cib_xml = get_cib()
+def get_cib_etree():
     try:
-        root = ET.fromstring(cib_xml)
+        root = ET.fromstring(get_cib())
         return root
     except:
         err("unable to get cib")
@@ -1754,7 +1609,7 @@ def is_etree(var):
     )
 
 # Replace only configuration section of cib with dom passed
-def replace_cib_configuration(dom):
+def replace_cib_configuration(dom, cib_upgraded=False):
     if is_etree(dom):
         #etree returns string in bytes: b'xml'
         #python 3 removed .encode() from byte strings
@@ -1765,7 +1620,11 @@ def replace_cib_configuration(dom):
         new_dom = dom.toxml()
     else:
         new_dom = dom
-    cmd = ["cibadmin", "--replace", "-V", "--xml-pipe", "-o", "configuration"]
+    cmd = ["cibadmin", "--replace", "-V", "--xml-pipe"]
+    if cib_upgraded:
+        print("CIB has been upgraded to the latest schema version.")
+    else:
+        cmd += ["-o", "configuration"]
     output, retval = run(cmd, False, new_dom)
     if retval != 0:
         err("Unable to update cib\n"+output)
@@ -1942,6 +1801,20 @@ def set_cib_property(prop, value, cib_dom=None):
     if update_cib:
         replace_cib_configuration(crm_config)
 
+def setAttribute(a_type, a_name, a_value, exit_on_error=False):
+    args = ["crm_attribute", "--type", a_type, "--attr-name", a_name,
+            "--attr-value", a_value]
+
+    if a_value == "":
+        args.append("-D")
+
+    output, retval = run(args)
+    if retval != 0:
+        if exit_on_error:
+            err(output)
+        else:
+            print(output)
+
 def getTerminalSize(fd=1):
     """
     Returns height and width of current terminal. First tries to get
@@ -1970,7 +1843,8 @@ def get_terminal_input(message=None):
     try:
         if PYTHON2:
             return raw_input("")
-        return input("")
+        else:
+            return input("")
     except EOFError:
         return ""
     except KeyboardInterrupt:
@@ -1987,31 +1861,52 @@ def get_terminal_password(message="Password: "):
     else:
         return get_terminal_input(message)
 
-def get_user_and_pass():
-    username = (
-        pcs_options["-u"] if "-u" in pcs_options
-        else get_terminal_input("Username: ")
-    )
-    password = (
-        pcs_options["-p"] if "-p" in pcs_options
-        else get_terminal_password()
-    )
-    return username, password
-
 # Returns an xml dom containing the current status of the cluster
 # DEPRECATED, please use ClusterState(getClusterStateXml()) instead
 def getClusterState():
     return parseString(getClusterStateXml())
 
-# DEPRECATED, please use lib.pacemaker.live.get_cluster_status_xml in new code
+# DEPRECATED, please use lib.pacemaker.get_cluster_status_xml in new code
 def getClusterStateXml():
-    xml, returncode = run(
-        ["crm_mon", "--one-shot", "--as-xml", "--inactive"],
-        ignore_stderr=True
-    )
+    xml, returncode = run(["crm_mon", "--one-shot", "--as-xml", "--inactive"])
     if returncode != 0:
         err("error running crm_mon, is pacemaker running?")
     return xml
+
+# Returns true if stonith-enabled is not false/off & no stonith devices exist
+# So if the cluster can't start due to missing stonith devices return true
+def stonithCheck():
+    et = get_cib_etree()
+    cps = et.find("configuration/crm_config/cluster_property_set")
+    if cps != None:
+        for prop in cps.findall(str("nvpair")):
+            if 'name' in prop.attrib and prop.attrib["name"] == "stonith-enabled":
+                if prop.attrib["value"] == "off" or \
+                        prop.attrib["value"] == "false":
+                    return False
+
+    xpath_list = (
+        "configuration/resources/primitive",
+        "configuration/resources/group/primitive",
+        "configuration/resources/clone/primitive",
+        "configuration/resources/clone/group/primitive",
+        "configuration/resources/master/primitive",
+        "configuration/resources/master/group/primitive",
+    )
+    for xpath in xpath_list:
+        for p in et.findall(str(xpath)):
+            if ("class" in p.attrib) and (p.attrib["class"] == "stonith"):
+                return False
+
+    if not usefile:
+        # check if SBD daemon is running
+        try:
+            if is_service_running(cmd_runner(), sbd.get_sbd_service_name()):
+                return False
+        except LibraryError:
+            pass
+
+    return True
 
 def getCorosyncNodesID(allow_failure=False):
     if os.getuid() == 0:
@@ -2031,7 +1926,7 @@ def getCorosyncNodesID(allow_failure=False):
         (output, retval) = run(['corosync-cmapctl', '-b', 'nodelist.node'])
     else:
         err_msgs, retval, output, dummy_std_err = call_local_pcsd(
-            ['status', 'nodes', 'corosync-id']
+            ['status', 'nodes', 'corosync-id'], True
         )
         if err_msgs and not allow_failure:
             for msg in err_msgs:
@@ -2067,7 +1962,7 @@ def getPacemakerNodesID(allow_failure=False):
         (output, retval) = run(['crm_node', '-l'])
     else:
         err_msgs, retval, output, dummy_std_err = call_local_pcsd(
-            ['status', 'nodes', 'pacemaker-id']
+            ['status', 'nodes', 'pacemaker-id'], True
         )
         if err_msgs and not allow_failure:
             for msg in err_msgs:
@@ -2298,23 +2193,17 @@ def disableServices():
 def start_service(service):
     if is_systemctl():
         stdout, stderr, retval = cmd_runner().run([
-            settings.systemctl_binary, "start", service
+            _systemctl, "start", service
         ])
     else:
-        stdout, stderr, retval = cmd_runner().run([
-            settings.service_binary, service, "start"
-        ])
+        stdout, stderr, retval = cmd_runner().run([_service, service, "start"])
     return join_multilines([stderr, stdout]), retval
 
 def stop_service(service):
     if is_systemctl():
-        stdout, stderr, retval = cmd_runner().run([
-            settings.systemctl_binary, "stop", service
-        ])
+        stdout, stderr, retval = cmd_runner().run([_systemctl, "stop", service])
     else:
-        stdout, stderr, retval = cmd_runner().run([
-            settings.service_binary, service, "stop"
-        ])
+        stdout, stderr, retval = cmd_runner().run([_service, service, "stop"])
     return join_multilines([stderr, stdout]), retval
 
 def write_file(path, data, permissions=0o644, binary=False):
@@ -2580,13 +2469,13 @@ def is_node_stop_cause_quorum_loss(quorum_info, local=True, node_list=None):
     return votes_after_stop < quorum_info["quorum"]
 
 def dom_prepare_child_element(dom_element, tag_name, id):
+    dom = dom_element.ownerDocument
     child_elements = []
     for child in dom_element.childNodes:
         if child.nodeType == child.ELEMENT_NODE and child.tagName == tag_name:
             child_elements.append(child)
 
     if len(child_elements) == 0:
-        dom = dom_element.ownerDocument
         child_element = dom.createElement(tag_name)
         child_element.setAttribute("id", find_unique_id(dom, id))
         dom_element.appendChild(child_element)
@@ -2594,56 +2483,7 @@ def dom_prepare_child_element(dom_element, tag_name, id):
         child_element = child_elements[0]
     return child_element
 
-def dom_update_nvset(dom_element, nvpair_tuples, tag_name, id_candidate):
-    # Do not ever remove the nvset element, even if it is empty. There may be
-    # ACLs set in pacemaker which allow "write" for nvpairs (adding, changing
-    # and removing) but not nvsets. In such a case, removing the nvset would
-    # cause the whole change to be rejected by pacemaker with a "permission
-    # denied" message.
-    # https://bugzilla.redhat.com/show_bug.cgi?id=1642514
-    if not nvpair_tuples:
-        return
-
-    only_removing = True
-    for name, value in nvpair_tuples:
-        if value != "":
-            only_removing = False
-            break
-
-    nvset_element_list = [
-        child
-        for child in dom_element.childNodes
-        if child.nodeType == child.ELEMENT_NODE and child.tagName == tag_name
-    ]
-
-    # Do not create new nvset if we are only removing values from it.
-    if not nvset_element_list and only_removing:
-        return
-
-    if not nvset_element_list:
-        dom = dom_element.ownerDocument
-        nvset_element = dom.createElement(tag_name)
-        nvset_element.setAttribute("id", find_unique_id(dom, id_candidate))
-        dom_element.appendChild(nvset_element)
-    else:
-        nvset_element = nvset_element_list[0]
-
-    for name, value in nvpair_tuples:
-        dom_update_nv_pair(
-            nvset_element,
-            name,
-            value,
-            nvset_element.getAttribute("id") + "-"
-        )
-
 def dom_update_nv_pair(dom_element, name, value, id_prefix=""):
-    # Do not ever remove the nvset element, even if it is empty. There may be
-    # ACLs set in pacemaker which allow "write" for nvpairs (adding, changing
-    # and removing) but not nvsets. In such a case, removing the nvset would
-    # cause the whole change to be rejected by pacemaker with a "permission
-    # denied" message.
-    # https://bugzilla.redhat.com/show_bug.cgi?id=1642514
-
     dom = dom_element.ownerDocument
     element_found = False
     for el in dom_element.getElementsByTagName("nvpair"):
@@ -2680,36 +2520,39 @@ def is_int(val):
         return False
 
 def dom_update_utilization(dom_element, attributes, id_prefix=""):
-    attr_tuples = []
+    utilization = dom_prepare_child_element(
+        dom_element,
+        "utilization",
+        id_prefix + dom_element.getAttribute("id") + "-utilization"
+    )
+
     for name, value in sorted(attributes.items()):
         if value != "" and not is_int(value):
             err(
                 "Value of utilization attribute must be integer: "
                 "'{0}={1}'".format(name, value)
             )
-        attr_tuples.append((name, value))
-    dom_update_nvset(
-        dom_element,
-        attr_tuples,
-        "utilization",
-        id_prefix + dom_element.getAttribute("id") + "-utilization"
-    )
+        dom_update_nv_pair(
+            utilization,
+            name,
+            value.strip(),
+            utilization.getAttribute("id") + "-"
+        )
 
 def dom_update_meta_attr(dom_element, attributes):
-    dom_update_nvset(
+    meta_attributes = dom_prepare_child_element(
         dom_element,
-        attributes,
         "meta_attributes",
         dom_element.getAttribute("id") + "-meta_attributes"
     )
 
-def dom_update_instance_attr(dom_element, attributes):
-    dom_update_nvset(
-        dom_element,
-        attributes,
-        "instance_attributes",
-        dom_element.getAttribute("id") + "-instance_attributes"
-    )
+    for name, value in attributes:
+        dom_update_nv_pair(
+            meta_attributes,
+            name,
+            value,
+            meta_attributes.getAttribute("id") + "-"
+        )
 
 def get_utilization(element, filter_name=None):
     utilization = {}
@@ -2746,13 +2589,14 @@ def is_valid_cib_value(type, value, enum_options=[]):
     type = type.lower()
     if type == "enum":
         return value in enum_options
-    if type == "boolean":
+    elif type == "boolean":
         return is_boolean(value)
-    if type == "integer":
+    elif type == "integer":
         return is_score(value)
-    if type == "time":
+    elif type == "time":
         return get_timeout_seconds(value) is not None
-    return True
+    else:
+        return True
 
 
 def get_cluster_property_default(prop_def_dict, prop):
@@ -2889,14 +2733,13 @@ def get_lib_env():
             err("Unable to read %s: %s" % (conf, e.strerror))
 
     return LibraryEnvironment(
-        logging.getLogger("pcs"),
+        logging.getLogger("old_cli"),
         get_report_processor(),
         user,
         groups,
         cib_data,
         corosync_conf_data,
-        token_file_data_getter=read_token_file,
-        request_timeout=pcs_options.get("--request-timeout"),
+        auth_tokens_getter=readTokens,
     )
 
 def get_cli_env():
@@ -2914,14 +2757,13 @@ def get_cli_env():
     env = Env()
     env.user = user
     env.groups = groups
-    env.token_file_data_getter = read_token_file
+    env.auth_tokens_getter = readTokens
     env.debug = "--debug" in pcs_options
-    env.request_timeout = pcs_options.get("--request-timeout")
     return env
 
 def get_middleware_factory():
     return middleware.create_middleware_factory(
-        cib=middleware.cib(filename if usefile else None, touch_cib_file),
+        cib=middleware.cib(usefile, get_cib, replace_cib_configuration),
         corosync_conf_existing=middleware.corosync_conf_existing(
             pcs_options.get("--corosync_conf", None)
         ),
@@ -2939,7 +2781,7 @@ def get_library_wrapper():
     return Library(get_cli_env(), get_middleware_factory())
 
 
-def get_modifiers():
+def get_modificators():
     #please keep in mind that this is not final implemetation
     #beside missing support of other possible options, cases may arise that can
     #not be solved using a dict - for example "wait" - maybe there will be
@@ -2947,33 +2789,21 @@ def get_modifiers():
     #there is possible create class extending dict, so dict like access in
     #commands is not an issue
     return {
-        "after": pcs_options.get("--after", None),
-        "all": "--all" in pcs_options,
-        "async": "--async" in pcs_options,
         "autocorrect": "--autocorrect" in pcs_options,
         "autodelete": "--autodelete" in pcs_options,
-        "before": pcs_options.get("--before", None),
         "corosync_conf": pcs_options.get("--corosync_conf", None),
         "describe": "--nodesc" not in pcs_options,
-        "device": pcs_options.get("--device", []),
-        "disabled": "--disabled" in pcs_options,
         "enable": "--enable" in pcs_options,
-        "encryption": pcs_options.get("--encryption", "0"),
         "force": "--force" in pcs_options,
         "full": "--full" in pcs_options,
-        "group": pcs_options.get("--group", None),
-        "monitor": "--monitor" in pcs_options,
         "name": pcs_options.get("--name", None),
-        "no-default-ops": "--no-default-ops" in pcs_options,
         "skip_offline_nodes": "--skip-offline" in pcs_options,
         "start": "--start" in pcs_options,
-        "wait": pcs_options.get("--wait", False),
         "watchdog": pcs_options.get("--watchdog", []),
-        "no_watchdog_validation": "--no-watchdog-validation" in pcs_options,
     }
 
 def exit_on_cmdline_input_errror(error, main_name, usage_name):
-    if error and error.message:
+    if error.message:
         err(error.message)
     else:
         usage.show(main_name, [usage_name])

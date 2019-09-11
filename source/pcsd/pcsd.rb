@@ -43,10 +43,7 @@ begin
   end
 rescue Errno::ENOENT
   secret = generate_cookie_secret()
-  # File.open(path, mode, options)
-  # File.open(path, mode, perm, options)
-  # In order to set permissions, the method must be called with 4 arguments.
-  File.open(COOKIE_FILE, 'w', 0600, {}) {|f| f.write(secret)}
+  File.open(COOKIE_FILE, 'w', 0700) {|f| f.write(secret)}
 end
 
 session_lifetime = ENV['PCSD_SESSION_LIFETIME'].to_i()
@@ -108,23 +105,16 @@ end
 
 configure do
   DISABLE_GUI = (
-    ENV['PCSD_DISABLE_GUI'] and ENV['PCSD_DISABLE_GUI'].downcase == 'true'
+    ENV['PCSD_DISABLE_GUI'] and ENV['PCSD_DISABLE_GUI'].downcase == 'false'
   )
-  PCS = get_pcs_path()
-  # File.open(path, mode, options)
-  # File.open(path, mode, perm, options)
-  # In order to set permissions, the method must be called with 4 arguments.
-  logger = File.open("/var/log/pcsd/pcsd.log", "a+", 0600, {})
+  PCS = get_pcs_path(File.expand_path(File.dirname(__FILE__)))
+  logger = File.open("/var/log/pcsd/pcsd.log", "a+", 0600)
   STDOUT.reopen(logger)
   STDERR.reopen(logger)
   STDOUT.sync = true
   STDERR.sync = true
   $logger = configure_logger('/var/log/pcsd/pcsd.log')
   $semaphore_cfgsync = Mutex.new
-
-  capabilities, capabilities_pcsd = get_capabilities($logger)
-  CAPABILITIES = capabilities.freeze
-  CAPABILITIES_PCSD = capabilities_pcsd.freeze
 end
 
 set :logging, true
@@ -132,47 +122,30 @@ set :run, false
 
 $thread_cfgsync = Thread.new {
   while true
-    node_connected = true
     $semaphore_cfgsync.synchronize {
+      $logger.debug('Config files sync thread started')
       if Cfgsync::ConfigSyncControl.sync_thread_allowed?()
-        $logger.info('Config files sync thread started')
         begin
           # do not sync if this host is not in a cluster
           cluster_name = get_cluster_name()
-          cluster_nodes = get_corosync_nodes()
-          if cluster_name and !cluster_name.empty?() and cluster_nodes and cluster_nodes.count > 1
+          if cluster_name and !cluster_name.empty?()
             $logger.debug('Config files sync thread fetching')
             fetcher = Cfgsync::ConfigFetcher.new(
-              PCSAuth.getSuperuserAuth(),
-              Cfgsync::get_cfg_classes(),
-              cluster_nodes,
-              cluster_name
+              PCSAuth.getSuperuserAuth(), Cfgsync::get_cfg_classes(),
+              get_corosync_nodes(), cluster_name
             )
-            cfgs_to_save, _, node_connected = fetcher.fetch()
+            cfgs_to_save, _ = fetcher.fetch()
             cfgs_to_save.each { |cfg_to_save|
               cfg_to_save.save()
             }
-            $logger.info('Config files sync thread finished')
-          else
-            $logger.info(
-              'Config files sync skipped, this host does not seem to be in ' +
-              'a cluster of at least 2 nodes'
-            )
           end
         rescue => e
           $logger.warn("Config files sync thread exception: #{e}")
         end
-      else
-        $logger.info('Config files sync is disabled or paused, skipping')
       end
+      $logger.debug('Config files sync thread finished')
     }
-    if node_connected
-      sleep(Cfgsync::ConfigSyncControl.sync_thread_interval())
-    else
-      sleep(
-        Cfgsync::ConfigSyncControl.sync_thread_interval_previous_not_connected()
-      )
-    end
+    sleep(Cfgsync::ConfigSyncControl.sync_thread_interval())
   end
 }
 
@@ -233,9 +206,6 @@ helpers do
       end
       if param == "disabled"
         meta_options << 'meta' << 'target-role=Stopped'
-      end
-      if param == "force" and val
-        param_line << "--force"
       end
     }
     return param_line + meta_options
@@ -353,18 +323,6 @@ post '/run_pcs' do
       'only_superuser' => false,
       'permissions' => Permissions::FULL,
     },
-    ['quorum', 'device', 'status', '...'] => {
-      'only_superuser' => false,
-      'permissions' => Permissions::READ,
-    },
-    ['quorum', 'status', '...'] => {
-      'only_superuser' => false,
-      'permissions' => Permissions::READ,
-    },
-    ['status', 'corosync', '...'] => {
-      'only_superuser' => false,
-      'permissions' => Permissions::READ,
-    },
     ['status', 'nodes', 'corosync-id', '...'] => {
       'only_superuser' => false,
       'permissions' => Permissions::READ,
@@ -376,10 +334,6 @@ post '/run_pcs' do
     ['status', 'pcsd', '...'] => {
       'only_superuser' => false,
       'permissions' => nil,
-    },
-    ['status', 'quorum', '...'] => {
-      'only_superuser' => false,
-      'permissions' => Permissions::READ,
     },
   }
   allowed = false
@@ -514,7 +468,7 @@ already been added to pcsd.  You may not add two clusters with the same name int
 
       # auth begin
       retval, out = send_request_with_token(
-        PCSAuth.getSuperuserAuth(), node, '/get_cluster_tokens', false, {'with_ports' => '1'}
+        PCSAuth.getSuperuserAuth(), node, '/get_cluster_tokens'
       )
       if retval == 404 # backward compatibility layer
         warning_messages << "Unable to do correct authentication of cluster because it is running old version of pcs/pcsd."
@@ -523,24 +477,14 @@ already been added to pcsd.  You may not add two clusters with the same name int
           return 400, "Unable to get authentication info from cluster '#{status['cluster_name']}'."
         end
         begin
-          data = JSON.parse(out)
-          expected_keys = ['tokens', 'ports']
-          if expected_keys.all? {|i| data.has_key?(i) and data[i].class == Hash}
-            # new format
-            new_tokens = data["tokens"] || {}
-            new_ports = data["ports"] || {}
-          else
-            # old format
-            new_tokens = data
-            new_ports = {}
-          end
+          new_tokens = JSON.parse(out)
         rescue
           return 400, "Unable to get authentication info from cluster '#{status['cluster_name']}'."
         end
 
         sync_config = Cfgsync::PcsdTokens.from_file()
         pushed, _ = Cfgsync::save_sync_new_tokens(
-          sync_config, new_tokens, get_corosync_nodes(), $cluster_name, new_ports
+          sync_config, new_tokens, get_corosync_nodes(), $cluster_name
         )
         if not pushed
           return 400, "Configuration conflict detected.\n\nSome nodes had a newer configuration than the local node. Local node's configuration was updated.  Please repeat the last action if appropriate."
@@ -603,16 +547,10 @@ already been added to pcsd.  You may not add two clusters with the same name int
     }
 
     # first we need to authenticate nodes to each other
-    token_file_data = read_token_file()
-    tokens_data = add_prefix_to_keys(
-      token_file_data.tokens.select {|k,v| @nodes.include?(k)}, "node:"
-    )
-    ports_data = add_prefix_to_keys(
-      token_file_data.ports.select {|k,v| @nodes.include?(k)}, "port:"
-    )
+    tokens = add_prefix_to_keys(get_tokens_of_nodes(@nodes), "node:")
     @nodes.each {|n|
       retval, out = send_request_with_token(
-        auth_user, n, "/save_tokens", true, tokens_data.merge(ports_data)
+        auth_user, n, "/save_tokens", true, tokens
       )
       if retval == 404 # backward compatibility layer
         warning_messages << "Unable to do correct authentication of cluster on node '#{n}', because it is running old version of pcs/pcsd."
@@ -635,8 +573,7 @@ already been added to pcsd.  You may not add two clusters with the same name int
       {
         :clustername => @cluster_name,
         :nodes => @nodes_rrp.join(';'),
-        :options => options.to_json,
-        :encryption => params[:encryption],
+        :options => options.to_json
       },
       true,
       nil,
@@ -664,7 +601,7 @@ already been added to pcsd.  You may not add two clusters with the same name int
         return 400, "Configuration conflict detected.\n\nSome nodes had a newer configuration than the local node. Local node's configuration was updated.  Please repeat the last action if appropriate."
       end
     else
-      return 400, "Unable to create new cluster. If one or more of the nodes belong to a cluster already, remove such nodes from their clusters. If you are sure the nodes are not a part of any cluster, run 'pcs cluster destroy' on such nodes to remove current cluster configuration.\n\n#{node_to_send_to}: #{out}"
+      return 400, "Unable to create new cluster. If cluster already exists on one or more of the nodes run 'pcs cluster destroy' on all nodes to remove current cluster configuration.\n\n#{node_to_send_to}: #{out}"
     end
 
     return warning_messages.join("\n\n")
@@ -688,28 +625,22 @@ already been added to pcsd.  You may not add two clusters with the same name int
 
   get '/manage/check_pcsd_status' do
     auth_user = PCSAuth.sessionToAuthUser(session)
-    node_list = []
-    if params[:nodes] != nil and params[:nodes] != ''
-      node_list = params[:nodes].split(',')
-    end
-    ports = {}
-    node_list.each { |node|
-      port = (params["port-#{node}"] || '').strip
-      ports[node] = port != '' ? port : nil
-    }
     node_results = {}
-    online, offline, notauthorized = check_gui_status_of_nodes(
-      auth_user, node_list, false, 10, ports
-    )
-    online.each { |node|
-      node_results[node] = 'Online'
-    }
-    offline.each { |node|
-      node_results[node] = 'Offline'
-    }
-    notauthorized.each { |node|
-      node_results[node] = 'Unable to authenticate'
-    }
+    if params[:nodes] != nil and params[:nodes] != ''
+      node_array = params[:nodes].split(',')
+      online, offline, notauthorized = check_gui_status_of_nodes(
+        auth_user, node_array
+      )
+      online.each { |node|
+        node_results[node] = 'Online'
+      }
+      offline.each { |node|
+        node_results[node] = 'Offline'
+      }
+      notauthorized.each { |node|
+        node_results[node] = 'Unable to authenticate'
+      }
+    end
     return JSON.generate(node_results)
   end
 
@@ -744,7 +675,6 @@ already been added to pcsd.  You may not add two clusters with the same name int
     auth_user = PCSAuth.sessionToAuthUser(session)
     node_auth_error = {}
     new_tokens = {}
-    new_ports = {}
     threads = []
     params.each { |node|
       threads << Thread.new {
@@ -755,26 +685,18 @@ already been added to pcsd.  You may not add two clusters with the same name int
           else
             pass = node[1]
           end
-          port = (params["port-#{nodename}"] || '').strip
-          if port == ''
-            port = nil
-          end
           data = {
             'node-0' => nodename,
             'username' => SUPERUSER,
             'password' => pass,
             'force' => 1,
-            "port-#{nodename}" => port,
           }
           node_auth_error[nodename] = 1
-          code, response = send_request(
-            auth_user, nodename, 'auth', true, data, true, nil, nil, nil, port
-          )
+          code, response = send_request(auth_user, nodename, 'auth', true, data)
           if 200 == code
             token = response.strip
             if not token.empty?
               new_tokens[nodename] = token
-              new_ports[nodename] = port
               node_auth_error[nodename] = 0
             end
           end
@@ -783,11 +705,11 @@ already been added to pcsd.  You may not add two clusters with the same name int
     }
     threads.each { |t| t.join }
 
-    if not new_tokens.empty? or not new_ports.empty?
+    if not new_tokens.empty?
       cluster_nodes = get_corosync_nodes()
       tokens_cfg = Cfgsync::PcsdTokens.from_file()
       sync_successful, sync_responses = Cfgsync::save_sync_new_tokens(
-        tokens_cfg, new_tokens, cluster_nodes, $cluster_name, new_ports
+        tokens_cfg, new_tokens, cluster_nodes, $cluster_name
       )
     end
 
@@ -861,9 +783,7 @@ already been added to pcsd.  You may not add two clusters with the same name int
     if @nodes == []
       redirect '/manage/'
     end
-    @resource_agent_structures = get_resource_agents_avail(auth_user, params) \
-      .map{|agent_name| get_resource_agent_name_structure(agent_name)} \
-      .select{|structure| structure != nil}
+    @resource_agents = get_resource_agents_avail(auth_user, params)
     @stonith_agents = get_stonith_agents_avail(auth_user, params)
     erb :nodes, :layout => :main
   end
@@ -1052,7 +972,7 @@ already been added to pcsd.  You may not add two clusters with the same name int
       else
         definition = JSON.parse(out)
       end
-
+  
       definition.each { |name, prop|
         prop['value'] = properties[name]
       }
@@ -1242,17 +1162,11 @@ already been added to pcsd.  You may not add two clusters with the same name int
     end
 
     nodes = get_cluster_nodes(clustername)
-    token_file_data = read_token_file()
-    tokens_data = add_prefix_to_keys(
-      token_file_data.tokens.select {|k,v| nodes.include?(k)}, "node:"
-    )
-    ports_data = add_prefix_to_keys(
-      token_file_data.ports.select {|k,v| nodes.include?(k)}, "port:"
-    )
+    tokens_data = add_prefix_to_keys(get_tokens_of_nodes(nodes), "node:")
 
     retval, out = send_cluster_request_with_token(
       PCSAuth.getSuperuserAuth(), clustername, "/save_tokens", true,
-      tokens_data.merge(ports_data), true
+      tokens_data, true
     )
     if retval == 404
       return [400, "Old version of PCS/PCSD is running on cluster nodes. Fixing authentication is not supported. Use 'pcs cluster auth' command to authenticate the nodes."]
@@ -1273,8 +1187,7 @@ already been added to pcsd.  You may not add two clusters with the same name int
       end
     end
 
-    token_file_data = read_token_file()
-    tokens = token_file_data.tokens
+    tokens = read_tokens
 
     if not tokens.include? new_node
       return [400, "New node is not authenticated."]
@@ -1283,10 +1196,7 @@ already been added to pcsd.  You may not add two clusters with the same name int
     # Save the new node token on all nodes in a cluster the new node is beeing
     # added to. Send the token to one node and let the cluster nodes synchronize
     # it by themselves.
-    token_data = {
-      "node:#{new_node}" => tokens[new_node],
-      "port:#{new_node}" => token_file_data.ports[new_node],
-    }
+    token_data = {"node:#{new_node}" => tokens[new_node]}
     retval, out = send_cluster_request_with_token(
       # new node doesn't have config with permissions yet
       PCSAuth.getSuperuserAuth(), clustername, '/save_tokens', true, token_data

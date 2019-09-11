@@ -1,14 +1,10 @@
 [Unit]
 Description=PCS GUI and remote configuration interface
-Documentation=man:pcsd(8)
-Documentation=man:pcs(8)
-Requires=network-online.target
-After=network-online.target
 
 [Service]
 EnvironmentFile=/etc/sysconfig/pcsd
 Environment=GEM_HOME=/usr/lib/pcsd/vendor/bundle/ruby
-ExecStart=/usr/lib/pcsd/pcsd
+ExecStart=/usr/lib/pcsd/pcsd > /dev/null &
 Type=notify
 
 [Install]
