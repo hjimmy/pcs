@@ -1,4 +1,4 @@
-name="pcs"
+name="tgha"
 version="0.9.167"
 fullname=$name-$version
 cp -rf  source $fullname
