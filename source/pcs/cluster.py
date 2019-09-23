@@ -1,9 +1,7 @@
-from __future__ import (
-    absolute_import,
-    division,
-    print_function,
-    unicode_literals,
-)
+from __future__ import absolute_import
+from __future__ import division
+from __future__ import print_function
+from __future__ import unicode_literals
 
 import os
 import subprocess
@@ -13,8 +11,8 @@ import socket
 import tempfile
 import datetime
 import json
-import time
 import xml.dom.minidom
+import threading
 try:
     # python2
     from commands import getstatusoutput
@@ -22,46 +20,19 @@ except ImportError:
     # python3
     from subprocess import getstatusoutput
 
-from pcs import (
-    constraint,
-    node,
-    pcsd,
-    # quorum,
-    resource,
-    settings,
-    status,
-    stonith,
-    usage,
-    utils,
-)
-from pcs.utils import parallel_for_nodes
-from pcs.common import report_codes
-from pcs.cli.common.reports import process_library_reports, build_report_message
-from pcs.lib import (
-    pacemaker as lib_pacemaker,
-    sbd as lib_sbd,
-    reports as lib_reports,
-)
-from pcs.lib.booth import sync as booth_sync
-from pcs.lib.nodes_task import check_corosync_offline_on_nodes
-from pcs.lib.commands.quorum import _add_device_model_net
-from pcs.lib.corosync import (
-    config_parser as corosync_conf_utils,
-    qdevice_net,
-)
-from pcs.lib.corosync.config_facade import ConfigFacade as corosync_conf_facade
-from pcs.lib.errors import (
-    LibraryError,
-    ReportItemSeverity,
-)
-from pcs.lib.external import (
-    disable_service,
-    is_systemctl,
-    NodeCommunicationException,
-    node_communicator_exception_to_report_item,
-)
-from pcs.lib.node import NodeAddresses
-from pcs.lib.tools import environment_file_to_dict
+import settings
+import usage
+import utils
+import corosync_conf as corosync_conf_utils
+import pcsd
+import status
+import prop
+import resource
+import stonith
+import constraint
+
+
+pcs_dir = os.path.dirname(os.path.realpath(__file__))
 
 def cluster_cmd(argv):
     if len(argv) == 0:
@@ -83,7 +54,7 @@ def cluster_cmd(argv):
     elif (sub_cmd == "status"):
         status.cluster_status(argv)
     elif (sub_cmd == "pcsd-status"):
-        status.cluster_pcsd_status(argv)
+        cluster_gui_status(argv)
     elif (sub_cmd == "certkey"):
         cluster_certkey(argv)
     elif (sub_cmd == "auth"):
@@ -105,9 +76,9 @@ def cluster_cmd(argv):
     elif (sub_cmd == "kill"):
         kill_cluster(argv)
     elif (sub_cmd == "standby"):
-        node.node_standby(argv)
+        node_standby(argv)
     elif (sub_cmd == "unstandby"):
-        node.node_standby(argv, False)
+        node_standby(argv, False)
     elif (sub_cmd == "enable"):
         if "--all" in utils.pcs_options:
             enable_cluster_all()
@@ -125,7 +96,7 @@ def cluster_cmd(argv):
     elif (sub_cmd == "cib-push"):
         cluster_push(argv)
     elif (sub_cmd == "cib-upgrade"):
-        utils.cluster_upgrade()
+        cluster_upgrade()
     elif (sub_cmd == "edit"):
         cluster_edit(argv)
     elif (sub_cmd == "node"):
@@ -144,12 +115,12 @@ def cluster_cmd(argv):
         cluster_verify(argv)
     elif (sub_cmd == "report"):
         cluster_report(argv)
-    # elif (sub_cmd == "quorum"):
-    #     if argv and argv[0] == "unblock":
-    #         quorum.quorum_unblock_cmd(argv[1:])
-    #     else:
-    #         usage.cluster()
-    #         sys.exit(1)
+    elif (sub_cmd == "quorum"):
+        if argv and argv[0] == "unblock":
+            cluster_quorum_unblock(argv[1:])
+        else:
+            usage.cluster(["quorum"])
+            sys.exit(1)
     else:
         usage.cluster()
         sys.exit(1)
@@ -218,7 +189,7 @@ def auth_nodes(nodes):
         if password == None:
             password = utils.get_terminal_password()
 
-        utils.auth_nodes_do(
+        auth_nodes_do(
             set_nodes, username, password, '--force' in utils.pcs_options,
             '--local' in utils.pcs_options
         )
@@ -226,9 +197,109 @@ def auth_nodes(nodes):
         for node in set_nodes:
             print(node + ": Already authorized")
 
+def auth_nodes_do(nodes, username, password, force, local):
+    pcsd_data = {
+        'nodes': list(set(nodes)),
+        'username': username,
+        'password': password,
+        'force': force,
+        'local': local,
+    }
+    output, retval = utils.run_pcsdcli('auth', pcsd_data)
+    if retval == 0 and output['status'] == 'access_denied':
+        utils.err('Access denied')
+    if retval == 0 and output['status'] == 'ok' and output['data']:
+        failed = False
+        try:
+            if not output['data']['sync_successful']:
+                utils.err(
+                    "Some nodes had a newer tokens than the local node. "
+                    + "Local node's tokens were updated. "
+                    + "Please repeat the authentication if needed."
+                )
+            for node, result in output['data']['auth_responses'].items():
+                if result['status'] == 'ok':
+                    print("{0}: Authorized".format(node))
+                elif result['status'] == 'already_authorized':
+                    print("{0}: Already authorized".format(node))
+                elif result['status'] == 'bad_password':
+                    utils.err(
+                        "{0}: Username and/or password is incorrect".format(node),
+                        False
+                    )
+                    failed = True
+                elif result['status'] == 'noresponse':
+                    utils.err("Unable to communicate with {0}".format(node), False)
+                    failed = True
+                else:
+                    utils.err("Unexpected response from {0}".format(node), False)
+                    failed = True
+            if output['data']['sync_nodes_err']:
+                utils.err(
+                    (
+                        "Unable to synchronize and save tokens on nodes: {0}. "
+                        + "Are they authorized?"
+                    ).format(
+                        ", ".join(output['data']['sync_nodes_err'])
+                    ),
+                    False
+                )
+                failed = True
+        except:
+            utils.err('Unable to communicate with pcsd')
+        if failed:
+            sys.exit(1)
+        return
+    utils.err('Unable to communicate with pcsd')
+
+# If no arguments get current cluster node status, otherwise get listed
+# nodes status
+def cluster_gui_status(argv,dont_exit = False):
+    bad_nodes = False
+    if len(argv) == 0:
+        nodes = utils.getNodesFromCorosyncConf()
+        if len(nodes) == 0:
+            if utils.is_rhel6():
+                utils.err("no nodes found in cluster.conf")
+            else:
+                utils.err("no nodes found in corosync.conf")
+        bad_nodes = check_nodes(nodes, "  ")
+    else:
+        bad_nodes = check_nodes(argv, "  ")
+    if bad_nodes and not dont_exit:
+        sys.exit(2)
+
 def cluster_certkey(argv):
     return pcsd.pcsd_certkey(argv)
 
+# Check and see if pcsd is running on the nodes listed
+def check_nodes(nodes, prefix = ""):
+    bad_nodes = False
+    if not utils.is_rhel6():
+        pm_nodes = utils.getPacemakerNodesID(True)
+        cs_nodes = utils.getCorosyncNodesID(True)
+    for node in nodes:
+        status = utils.checkAuthorization(node)
+
+        if not utils.is_rhel6():
+            if node not in pm_nodes.values():
+                for n_id, n in cs_nodes.items():
+                    if node == n and n_id in pm_nodes:
+                        real_node_name = pm_nodes[n_id]
+                        if real_node_name == "(null)":
+                            real_node_name = "*Unknown*"
+                        node = real_node_name +  " (" + node + ")"
+                        break
+
+        if status[0] == 0:
+            print(prefix + node + ": Online")
+        elif status[0] == 3:
+            print(prefix + node + ": Unable to authenticate")
+            bad_nodes = True
+        else:
+            print(prefix + node + ": Offline")
+            bad_nodes = True
+    return bad_nodes
 
 def cluster_setup(argv):
     if len(argv) < 2:
@@ -237,11 +308,6 @@ def cluster_setup(argv):
 
     is_rhel6 = utils.is_rhel6()
     cluster_name = argv[0]
-    wait = False
-    wait_timeout = None
-    if "--start" in utils.pcs_options and "--wait" in utils.pcs_options:
-        wait_timeout = utils.validate_wait_get_timeout(False)
-        wait = True
 
     # get nodes' addresses
     udpu_rrp = False
@@ -286,18 +352,14 @@ def cluster_setup(argv):
 
     # parse, validate and complete options
     if is_rhel6:
-        options, messages = cluster_setup_parse_options_cman(
-            utils.pcs_options,
-            "--force" in utils.pcs_options
-        )
+        options, messages = cluster_setup_parse_options_cman(utils.pcs_options)
     else:
         options, messages = cluster_setup_parse_options_corosync(
-            utils.pcs_options,
-            "--force" in utils.pcs_options
+            utils.pcs_options
         )
     if udpu_rrp and "rrp_mode" not in options["transport_options"]:
         options["transport_options"]["rrp_mode"] = "passive"
-    process_library_reports(messages)
+    cluster_setup_print_messages(messages)
 
     # prepare config file
     if is_rhel6:
@@ -315,7 +377,7 @@ def cluster_setup(argv):
             options["totem_options"],
             options["quorum_options"]
         )
-    process_library_reports(messages)
+    cluster_setup_print_messages(messages)
 
     # setup on the local node
     if "--local" in utils.pcs_options:
@@ -351,8 +413,6 @@ def cluster_setup(argv):
             start_cluster([])
         if "--enable" in utils.pcs_options:
             enable_cluster([])
-        if wait:
-            wait_for_nodes_started([], wait_timeout)
 
     # setup on remote nodes
     else:
@@ -421,11 +481,8 @@ def cluster_setup(argv):
         # sync certificates as the last step because it restarts pcsd
         print()
         pcsd.pcsd_sync_certs([], exit_after_error=False)
-        if wait:
-            print()
-            wait_for_nodes_started(primary_addr_list, wait_timeout)
 
-def cluster_setup_parse_options_corosync(options, force=False):
+def cluster_setup_parse_options_corosync(options):
     messages = []
     parsed = {
         "transport_options": {
@@ -434,41 +491,42 @@ def cluster_setup_parse_options_corosync(options, force=False):
         "totem_options": {},
         "quorum_options": {},
     }
-    severity = ReportItemSeverity.WARNING if force else ReportItemSeverity.ERROR
-    forceable = None if force else report_codes.FORCE_OPTIONS
 
     transport = "udpu"
     if "--transport" in options:
         transport = options["--transport"]
-        allowed_transport = ("udp", "udpu")
-        if transport not in allowed_transport:
-            messages.append(lib_reports.invalid_option_value(
-                "transport",
-                transport,
-                allowed_transport,
-                severity,
-                forceable
-            ))
+        if transport not in ("udp", "udpu"):
+            messages.append({
+                "text": "unknown transport '{0}'".format(transport),
+                "type": "error",
+                "forceable": True,
+            })
     parsed["transport_options"]["transport"] = transport
 
     if transport == "udpu" and ("--addr0" in options or "--addr1" in options):
-        messages.append(lib_reports.rrp_addresses_transport_mismatch())
+        messages.append({
+            "text": "--addr0 and --addr1 can only be used with --transport=udp",
+            "type": "error",
+            "forceable": False,
+        })
+
     rrpmode = None
     if "--rrpmode" in options or "--addr0" in options:
         rrpmode = "passive"
         if "--rrpmode" in options:
             rrpmode = options["--rrpmode"]
-        allowed_rrpmode = ("passive", "active")
-        if rrpmode not in allowed_rrpmode:
-            messages.append(lib_reports.invalid_option_value(
-                "RRP mode",
-                rrpmode,
-                allowed_rrpmode,
-                severity,
-                forceable
-            ))
+        if rrpmode not in ("passive", "active"):
+            messages.append({
+                "text": "{0} is an unknown RRP mode".format(rrpmode),
+                "type": "error",
+                "forceable": True,
+            })
         if rrpmode == "active":
-            messages.append(lib_reports.rrp_active_not_supported(force))
+            messages.append({
+                "text": "using a RRP mode of 'active' is not supported or tested",
+                "type": "error",
+                "forceable": True,
+            })
     if rrpmode:
         parsed["transport_options"]["rrp_mode"] = rrpmode
 
@@ -525,15 +583,18 @@ def cluster_setup_parse_options_corosync(options, force=False):
     for opt_name in (
         "--wait_for_all", "--auto_tie_breaker", "--last_man_standing"
     ):
-        allowed_values = ("0", "1")
-        if opt_name in options and options[opt_name] not in allowed_values:
-            messages.append(lib_reports.invalid_option_value(
-                opt_name, options[opt_name], allowed_values
-            ))
+        if opt_name in options and options[opt_name] not in ("0", "1"):
+            messages.append({
+                "text": "'{0}' is not a valid value for {1}, use 0 or 1".format(
+                    options[opt_name], opt_name
+                ),
+                "type": "error",
+                "forceable": False,
+            })
 
     return parsed, messages
 
-def cluster_setup_parse_options_cman(options, force=False):
+def cluster_setup_parse_options_cman(options):
     messages = []
     parsed = {
         "transport_options": {
@@ -541,8 +602,6 @@ def cluster_setup_parse_options_cman(options, force=False):
         },
         "totem_options": {},
     }
-    severity = ReportItemSeverity.WARNING if force else ReportItemSeverity.ERROR
-    forceable = None if force else report_codes.FORCE_OPTIONS
 
     broadcast = ("--broadcast0" in options) or ("--broadcast1" in options)
     if broadcast:
@@ -554,43 +613,59 @@ def cluster_setup_parse_options_cman(options, force=False):
         if "--broadcast1" not in options:
             ring_missing_broadcast = "1"
         if ring_missing_broadcast:
-            messages.append(lib_reports.cman_broadcast_all_rings())
+            messages.append({
+                "text": (
+                    "Enabling broadcast for ring {0} as RHEL 6 does not support "
+                    + "broadcast in only one ring"
+                ).format(ring_missing_broadcast),
+                "type": "warning",
+                "forceable": False,
+            })
     else:
         transport = "udp"
         if "--transport" in options:
             transport = options["--transport"]
-            allowed_transport = ("udp", "udpu")
-            if transport not in allowed_transport:
-                messages.append(lib_reports.invalid_option_value(
-                    "transport",
-                    transport,
-                    allowed_transport,
-                    severity,
-                    forceable
-                ))
+            if transport not in ("udp", "udpu"):
+                messages.append({
+                    "text": "unknown transport '{0}'".format(transport),
+                    "type": "error",
+                    "forceable": True,
+                })
     parsed["transport_options"]["transport"] = transport
 
     if transport == "udpu":
-        messages.append(lib_reports.cman_udpu_restart_required())
+        messages.append({
+            "text": (
+                "Using udpu transport on a RHEL 6 cluster, "
+                + "cluster restart is required after node add or remove"
+            ),
+            "type": "warning",
+            "forceable": False,
+        })
     if transport == "udpu" and ("--addr0" in options or "--addr1" in options):
-        messages.append(lib_reports.rrp_addresses_transport_mismatch())
+        messages.append({
+            "text": "--addr0 and --addr1 can only be used with --transport=udp",
+            "type": "error",
+            "forceable": False,
+        })
 
     rrpmode = None
     if "--rrpmode" in options or "--addr0" in options:
         rrpmode = "passive"
         if "--rrpmode" in options:
             rrpmode = options["--rrpmode"]
-        allowed_rrpmode = ("passive", "active")
-        if rrpmode not in allowed_rrpmode:
-            messages.append(lib_reports.invalid_option_value(
-                "RRP mode",
-                rrpmode,
-                allowed_rrpmode,
-                severity,
-                forceable
-            ))
+        if rrpmode not in ("passive", "active"):
+            messages.append({
+                "text": "{0} is an unknown RRP mode".format(rrpmode),
+                "type": "error",
+                "forceable": True,
+            })
         if rrpmode == "active":
-            messages.append(lib_reports.rrp_active_not_supported(force))
+            messages.append({
+                "text": "using a RRP mode of 'active' is not supported or tested",
+                "type": "error",
+                "forceable": True,
+            })
     if rrpmode:
         parsed["transport_options"]["rrp_mode"] = rrpmode
 
@@ -633,7 +708,14 @@ def cluster_setup_parse_options_cman(options, force=False):
     )
     for opt_name in ignored_options_names:
         if opt_name in options:
-            messages.append(lib_reports.cman_ignored_option(opt_name))
+            text = "{0} ignored as it is not supported on RHEL 6 clusters".format(
+                opt_name
+            )
+            messages.append({
+                "text": text,
+                "type": "warning",
+                "forceable": False,
+            })
 
     return parsed, messages
 
@@ -846,14 +928,43 @@ def cluster_setup_create_cluster_conf(
         output, retval = utils.run(cmd_prefix + cmd_item["cmd"])
         if retval != 0:
             if output:
-                messages.append(lib_reports.common_info(output))
-            messages.append(lib_reports.common_error(cmd_item["err"]))
+                messages.append({
+                    "text": output,
+                    "type": "plain",
+                })
+            messages.append({
+                "text": cmd_item["err"],
+                "type": "error",
+                "forceable": False,
+            })
             conf_temp.close()
             return "", messages
     conf_temp.seek(0)
     cluster_conf = conf_temp.read()
     conf_temp.close()
     return cluster_conf, messages
+
+def cluster_setup_print_messages(messages):
+    critical_error = False
+    for msg in messages:
+        if msg["type"] == "error":
+            if msg["forceable"] and "--force" in utils.pcs_options:
+                # Let the user know what may be wrong even when --force is used,
+                # as it may be used for override early errors hiding later
+                # errors otherwise.
+                print("Warning: " + msg["text"])
+                continue
+            text = msg["text"]
+            if msg["forceable"]:
+                text += ", use --force to override"
+            critical_error = True
+            utils.err(text, False)
+        elif msg["type"] == "warning":
+            print("Warning: " + msg["text"])
+        else:
+            print(msg["text"])
+    if critical_error:
+        sys.exit(1)
 
 def get_local_network():
     args = ["/sbin/ip", "route"]
@@ -866,123 +977,42 @@ def get_local_network():
         utils.err("unable to determine network address, is interface up?")
 
 def start_cluster(argv):
-    wait = False
-    wait_timeout = None
-    if "--wait" in utils.pcs_options:
-        wait_timeout = utils.validate_wait_get_timeout(False)
-        wait = True
-
     if len(argv) > 0:
         start_cluster_nodes(argv)
-        if wait:
-            wait_for_nodes_started(argv, wait_timeout)
         return
 
     print("Starting Cluster...")
-    service_list = []
-    if utils.is_cman_cluster():
+    if utils.is_rhel6():
 #   Verify that CMAN_QUORUM_TIMEOUT is set, if not, then we set it to 0
         retval, output = getstatusoutput('source /etc/sysconfig/cman ; [ -z "$CMAN_QUORUM_TIMEOUT" ]')
         if retval == 0:
             with open("/etc/sysconfig/cman", "a") as cman_conf_file:
                 cman_conf_file.write("\nCMAN_QUORUM_TIMEOUT=0\n")
 
-        output, retval = utils.start_service("cman")
+        output, retval = utils.run(["service", "cman","start"])
         if retval != 0:
             print(output)
             utils.err("unable to start cman")
     else:
-        service_list.append("corosync")
-        if utils.need_to_handle_qdevice_service():
-            service_list.append("corosync-qdevice")
-    service_list.append("pacemaker")
-    for service in service_list:
-        output, retval = utils.start_service(service)
+        output, retval = utils.run(["service", "corosync","start"])
         if retval != 0:
             print(output)
-            utils.err("unable to start {0}".format(service))
-    if wait:
-        wait_for_nodes_started([], wait_timeout)
+            utils.err("unable to start corosync")
+    output, retval = utils.run(["service", "pacemaker", "start"])
+    if retval != 0:
+        print(output)
+        utils.err("unable to start pacemaker")
 
 def start_cluster_all():
-    wait = False
-    wait_timeout = None
-    if "--wait" in utils.pcs_options:
-        wait_timeout = utils.validate_wait_get_timeout(False)
-        wait = True
-
-    all_nodes = utils.getNodesFromCorosyncConf()
-    start_cluster_nodes(all_nodes)
-
-    if wait:
-        wait_for_nodes_started(all_nodes, wait_timeout)
+    start_cluster_nodes(utils.getNodesFromCorosyncConf())
 
 def start_cluster_nodes(nodes):
-    node_errors = parallel_for_nodes(utils.startCluster, nodes, quiet=True)
-    if node_errors:
-        utils.err(
-            "unable to start all nodes\n" + "\n".join(node_errors.values())
-        )
-
-def is_node_fully_started(node_status):
-    return (
-        "online" in node_status and "pending" in node_status
-        and
-        node_status["online"] and not node_status["pending"]
-    )
-
-def wait_for_local_node_started(stop_at, interval):
-    try:
-        while True:
-            node_status = lib_pacemaker.get_local_node_status(
-                utils.cmd_runner()
-            )
-            if is_node_fully_started(node_status):
-                return 0, "Started"
-            if datetime.datetime.now() > stop_at:
-                return 1, "Waiting timeout"
-            time.sleep(interval)
-    except LibraryError as e:
-        return 1, "Unable to get node status: {0}".format(
-            "\n".join([build_report_message(item) for item in e.args])
-        )
-
-def wait_for_remote_node_started(node, stop_at, interval):
-    while True:
-        code, output = utils.getPacemakerNodeStatus(node)
-        # HTTP error, permission denied or unable to auth
-        # there is no point in trying again as it won't get magically fixed
-        if code in [1, 3, 4]:
-            return 1, output
-        if code == 0:
-            try:
-                status = json.loads(output)
-                if (is_node_fully_started(status)):
-                    return 0, "Started"
-            except (ValueError, KeyError):
-                # this won't get fixed either
-                return 1, "Unable to get node status"
-        if datetime.datetime.now() > stop_at:
-            return 1, "Waiting timeout"
-        time.sleep(interval)
-
-def wait_for_nodes_started(node_list, timeout=None):
-    timeout = 60 * 15 if timeout is None else timeout
-    interval = 2
-    stop_at = datetime.datetime.now() + datetime.timedelta(seconds=timeout)
-    print("Waiting for node(s) to start...")
-    if not node_list:
-        code, output = wait_for_local_node_started(stop_at, interval)
-        if code != 0:
-            utils.err(output)
-        else:
-            print(output)
-    else:
-        node_errors = parallel_for_nodes(
-            wait_for_remote_node_started, node_list, stop_at, interval
-        )
-        if node_errors:
-            utils.err("unable to verify all nodes have started")
+    threads = dict()
+    for node in nodes:
+        threads[node] = NodeStartThread(node)
+    error_list = utils.run_node_threads(threads)
+    if error_list:
+        utils.err("unable to start all nodes\n" + "\n".join(error_list))
 
 def stop_cluster_all():
     stop_cluster_nodes(utils.getNodesFromCorosyncConf())
@@ -997,7 +1027,7 @@ def stop_cluster_nodes(nodes):
         )
 
     stopping_all = set(nodes) >= set(all_nodes)
-    if "--force" not in utils.pcs_options and not stopping_all:
+    if not "--force" in utils.pcs_options and not stopping_all:
         error_list = []
         for node in nodes:
             retval, data = utils.get_remote_quorumtool_output(node)
@@ -1035,52 +1065,64 @@ def stop_cluster_nodes(nodes):
                 + "\n".join(error_list)
             )
 
-    was_error = False
-    node_errors = parallel_for_nodes(utils.stopPacemaker, nodes, quiet=True)
-    accessible_nodes = [
-        node for node in nodes if node not in node_errors.keys()
-    ]
-    if node_errors:
-        utils.err(
-            "unable to stop all nodes\n" + "\n".join(node_errors.values()),
-            exit_after_error=not accessible_nodes
-        )
-        was_error = True
+    threads = dict()
+    for node in nodes:
+        threads[node] = NodeStopPacemakerThread(node)
+    error_list = utils.run_node_threads(threads)
+    if error_list:
+        utils.err("unable to stop all nodes\n" + "\n".join(error_list))
 
-    for node in node_errors.keys():
-        print("{0}: Not stopping cluster - node is unreachable".format(node))
+    threads = dict()
+    for node in nodes:
+        threads[node] = NodeStopCorosyncThread(node)
+    error_list = utils.run_node_threads(threads)
+    if error_list:
+        utils.err("unable to stop all nodes\n" + "\n".join(error_list))
 
-    node_errors = parallel_for_nodes(
-        utils.stopCorosync,
-        accessible_nodes,
-        quiet=True
-    )
-    if node_errors:
-        utils.err(
-            "unable to stop all nodes\n" + "\n".join(node_errors.values())
-        )
-    if was_error:
-        utils.err("unable to stop all nodes")
+def node_standby(argv,standby=True):
+    if len(argv) > 1:
+        if standby:
+            usage.cluster(["standby"])
+        else:
+            usage.cluster(["unstandby"])
+        sys.exit(1)
+
+    nodes = utils.getNodesFromPacemaker()
+
+    if "--all" not in utils.pcs_options:
+        options_node = []
+        if argv:
+            if argv[0] not in nodes:
+                utils.err(
+                    "node '%s' does not appear to exist in configuration"
+                    % argv[0]
+                )
+            else:
+                options_node = ["-N", argv[0]]
+        if standby:
+            utils.run(["crm_standby", "-v", "on"] + options_node)
+        else:
+            utils.run(["crm_standby", "-D"] + options_node)
+    else:
+        for node in nodes:
+            if standby:
+                utils.run(["crm_standby", "-v", "on", "-N", node])
+            else:
+                utils.run(["crm_standby", "-D", "-N", node])
 
 def enable_cluster(argv):
     if len(argv) > 0:
         enable_cluster_nodes(argv)
         return
 
-    try:
-        utils.enableServices()
-    except LibraryError as e:
-        process_library_reports(e.args)
+    utils.enableServices()
 
 def disable_cluster(argv):
     if len(argv) > 0:
         disable_cluster_nodes(argv)
         return
 
-    try:
-        utils.disableServices()
-    except LibraryError as e:
-        process_library_reports(e.args)
+    utils.disableServices()
 
 def enable_cluster_all():
     enable_cluster_nodes(utils.getNodesFromCorosyncConf())
@@ -1098,36 +1140,31 @@ def disable_cluster_nodes(nodes):
     if len(error_list) > 0:
         utils.err("unable to disable all nodes\n" + "\n".join(error_list))
 
-def destroy_cluster(argv, keep_going=False):
+def destroy_cluster(argv):
     if len(argv) > 0:
         # stop pacemaker and resources while cluster is still quorate
-        nodes = argv
-        node_errors = parallel_for_nodes(utils.stopPacemaker, nodes, quiet=True)
+        threads = dict()
+        for node in argv:
+            threads[node] = NodeStopPacemakerThread(node)
+        error_list = utils.run_node_threads(threads)
         # proceed with destroy regardless of errors
         # destroy will stop any remaining cluster daemons
-        node_errors = parallel_for_nodes(utils.destroyCluster, nodes, quiet=True)
-        if node_errors:
-            if keep_going:
-                print(
-                    "Warning: unable to destroy cluster\n"
-                    +
-                    "\n".join(node_errors.values())
-                )
-            else:
-                utils.err(
-                    "unable to destroy cluster\n"
-                    + "\n".join(node_errors.values())
-                )
+        threads = dict()
+        for node in argv:
+            threads[node] = NodeDestroyThread(node)
+        error_list = utils.run_node_threads(threads)
+        if error_list:
+            utils.err("unable to destroy cluster\n" + "\n".join(error_list))
 
 def stop_cluster(argv):
     if len(argv) > 0:
         stop_cluster_nodes(argv)
         return
 
-    if "--force" not in utils.pcs_options:
+    if not "--force" in utils.pcs_options:
         if utils.is_rhel6():
-            output_status, dummy_retval = utils.run(["cman_tool", "status"])
-            output_nodes, dummy_retval = utils.run([
+            output_status, retval = utils.run(["cman_tool", "status"])
+            output_nodes, retval = utils.run([
                 "cman_tool", "nodes", "-F", "id,type,votes,name"
             ])
             if output_status == output_nodes:
@@ -1137,7 +1174,7 @@ def stop_cluster(argv):
                 output = output_status + "\n---Votes---\n" + output_nodes
             quorum_info = utils.parse_cman_quorum_info(output)
         else:
-            output, dummy_retval = utils.run(["corosync-quorumtool", "-p", "-s"])
+            output, retval = utils.run(["corosync-quorumtool", "-p", "-s"])
             # retval is 0 on success if node is not in partition with quorum
             # retval is 1 on error OR on success if node has quorum
             quorum_info = utils.parse_quorumtool_output(output)
@@ -1166,18 +1203,7 @@ def stop_cluster(argv):
 
 def stop_cluster_pacemaker():
     print("Stopping Cluster (pacemaker)...")
-    if not is_systemctl():
-        command = ["service", "pacemaker", "stop"]
-        # If --skip-cman is not specified, pacemaker init script will stop cman
-        # and corosync as well. That way some of the nodes may stop cman before
-        # others stop pacemaker, which leads to quorum loss. We need to keep
-        # quorum until all pacemaker resources are stopped as some of them may
-        # need quorum to be able to stop.
-        if utils.is_cman_cluster():
-            command.append("--skip-cman")
-    else:
-        command = ["systemctl", "stop", "pacemaker"]
-    output, retval = utils.run(command)
+    output, retval = utils.run(["service", "pacemaker","stop"])
     if retval != 0:
         print(output)
         utils.err("unable to stop pacemaker")
@@ -1185,37 +1211,21 @@ def stop_cluster_pacemaker():
 def stop_cluster_corosync():
     if utils.is_rhel6():
         print("Stopping Cluster (cman)...")
-        output, retval = utils.stop_service("cman")
+        output, retval = utils.run(["service", "cman","stop"])
         if retval != 0:
             print(output)
             utils.err("unable to stop cman")
     else:
         print("Stopping Cluster (corosync)...")
-        service_list = []
-        if utils.need_to_handle_qdevice_service():
-            service_list.append("corosync-qdevice")
-        service_list.append("corosync")
-        for service in service_list:
-            output, retval = utils.stop_service(service)
-            if retval != 0:
-                print(output)
-                utils.err("unable to stop {0}".format(service))
+        output, retval = utils.run(["service", "corosync","stop"])
+        if retval != 0:
+            print(output)
+            utils.err("unable to stop corosync")
 
 def kill_cluster(argv):
-    daemons = [
-        "crmd",
-        "pengine",
-        "attrd",
-        "lrmd",
-        "stonithd",
-        "cib",
-        "pacemakerd",
-        "pacemaker_remoted",
-        # "corosync-qdevice",
-        "corosync",
-    ]
-    dummy_output, dummy_retval = utils.run(["killall", "-9"] + daemons)
-#    if dummy_retval != 0:
+    daemons = ["crmd", "pengine", "attrd", "lrmd", "stonithd", "cib", "pacemakerd", "corosync"]
+    output, retval = utils.run(["killall", "-9"] + daemons)
+#    if retval != 0:
 #        print "Error: unable to execute killall -9"
 #        print output
 #        sys.exit(1)
@@ -1227,9 +1237,6 @@ def cluster_push(argv):
 
     filename = None
     scope = None
-    timeout = None
-    if "--wait" in utils.pcs_options:
-        timeout = utils.validate_wait_get_timeout()
     for arg in argv:
         if "=" not in arg:
             filename = arg
@@ -1265,20 +1272,14 @@ def cluster_push(argv):
     output, retval = utils.run(command)
     if retval != 0:
         utils.err("unable to push cib\n" + output)
-    print("CIB updated")
-    if "--wait" not in utils.pcs_options:
-        return
-    cmd = ["crm_resource", "--wait"]
-    if timeout:
-        cmd.extend(["--timeout", timeout])
-    output, retval = utils.run(cmd)
+    else:
+        print("CIB updated")
+
+def cluster_upgrade():
+    output, retval = utils.run(["cibadmin", "--upgrade", "--force"])
     if retval != 0:
-        msg = []
-        if retval == settings.pacemaker_wait_timeout_status:
-            msg.append("waiting timeout")
-        if output:
-            msg.append("\n" + output)
-        utils.err("\n".join(msg).strip())
+        utils.err("unable to upgrade cluster: %s" % output)
+    print("Cluster CIB has been upgraded to latest version")
 
 def cluster_edit(argv):
     if 'EDITOR' in os.environ:
@@ -1359,46 +1360,15 @@ def get_cib(argv):
             f = open(filename, 'w')
             output = utils.get_cib(scope)
             if output != "":
-                f.write(output)
+                    f.write(output)
             else:
                 utils.err("No data in the CIB")
         except IOError as e:
             utils.err("Unable to write to file '%s', %s" % (filename, e.strerror))
 
-
-def _ensure_cluster_is_offline_if_atb_should_be_enabled(
-    lib_env, node_num_modifier, skip_offline_nodes=False
-):
-    """
-    Check if cluster is offline if auto tie breaker should be enabled.
-    Raises LibraryError if ATB needs to be enabled cluster is not offline.
-
-    lib_env -- LibraryEnvironment
-    node_num_modifier -- number which wil be added to the number of nodes in
-        cluster when determining whenever ATB is needed.
-    skip_offline_nodes -- if True offline nodes will be skipped
-    """
-    if not lib_env.is_cman_cluster:
-        corosync_conf = lib_env.get_corosync_conf()
-        if lib_sbd.atb_has_to_be_enabled(
-            lib_env.cmd_runner(), corosync_conf, node_num_modifier
-        ):
-            print(
-                "Warning: auto_tie_breaker quorum option will be enabled to "
-                "make SBD fencing effecive after this change. Cluster has to "
-                "be offline to be able to make this change."
-            )
-            check_corosync_offline_on_nodes(
-                lib_env.node_communicator(),
-                lib_env.report_processor,
-                corosync_conf.get_nodes(),
-                skip_offline_nodes
-            )
-
-
 def cluster_node(argv):
     if len(argv) != 2:
-        usage.cluster()
+        usage.cluster();
         sys.exit(1)
 
     if argv[0] == "add":
@@ -1406,40 +1376,26 @@ def cluster_node(argv):
     elif argv[0] in ["remove","delete"]:
         add_node = False
     else:
-        usage.cluster()
+        usage.cluster();
         sys.exit(1)
 
     node = argv[1]
     node0, node1 = utils.parse_multiring_node(node)
+
     if not node0:
         utils.err("missing ring 0 address of the node")
-
-    # allow to continue if removing a node with --force
-    if add_node or "--force" not in utils.pcs_options:
-        status, output = utils.checkAuthorization(node0)
-        if status != 0:
-            if status == 2:
-                msg = "pcsd is not running on {0}".format(node0)
-            elif status == 3:
-                msg = (
-                    "{node} is not yet authenticated "
-                    + " (try pcs cluster auth {node})"
-                ).format(node=node0)
-            else:
-                msg = output
-            if not add_node:
-                msg += ", use --force to override"
-            utils.err(msg)
-
-    lib_env = utils.get_lib_env()
-    modifiers = utils.get_modificators()
+    status,output = utils.checkAuthorization(node0)
+    if status == 2:
+        utils.err("pcsd is not running on %s" % node0)
+    elif status == 3:
+        utils.err(
+            "%s is not yet authenticated (try pcs cluster auth %s)"
+            % (node0, node0)
+        )
+    elif status != 0:
+        utils.err(output)
 
     if add_node == True:
-        wait = False
-        wait_timeout = None
-        if "--start" in utils.pcs_options and "--wait" in utils.pcs_options:
-            wait_timeout = utils.validate_wait_get_timeout(False)
-            wait = True
         need_ring1_address = utils.need_ring1_address(utils.getCorosyncConf())
         if not node1 and need_ring1_address:
             utils.err(
@@ -1451,93 +1407,11 @@ def cluster_node(argv):
                 "cluster is not configured for RRP, "
                 "you must not specify ring 1 address for the node"
             )
+        corosync_conf = None
         (canAdd, error) =  utils.canAddNodeToCluster(node0)
         if not canAdd:
             utils.err("Unable to add '%s' to cluster: %s" % (node0, error))
 
-        report_processor = lib_env.report_processor
-        node_communicator = lib_env.node_communicator()
-        node_addr = NodeAddresses(node0, node1)
-
-        # First set up everything else than corosync. Once the new node is
-        # present in corosync.conf / cluster.conf, it's considered part of a
-        # cluster and the node add command cannot be run again. So we need to
-        # minimize the amout of actions (and therefore possible failures) after
-        # adding the node to corosync.
-        try:
-            # qdevice setup
-            if not utils.is_rhel6():
-                conf_facade = corosync_conf_facade.from_string(
-                    utils.getCorosyncConf()
-                )
-                qdevice_model, qdevice_model_options, _ = conf_facade.get_quorum_device_settings()
-                if qdevice_model == "net":
-                    _add_device_model_net(
-                        lib_env,
-                        qdevice_model_options["host"],
-                        conf_facade.get_cluster_name(),
-                        [node_addr],
-                        skip_offline_nodes=False
-                    )
-
-            # sbd setup
-            if lib_sbd.is_sbd_enabled(utils.cmd_runner()):
-                if "--watchdog" not in utils.pcs_options:
-                    watchdog = settings.sbd_watchdog_default
-                    print("Warning: using default watchdog '{0}'".format(
-                        watchdog
-                    ))
-                else:
-                    watchdog = utils.pcs_options["--watchdog"][0]
-
-                _ensure_cluster_is_offline_if_atb_should_be_enabled(
-                    lib_env, 1, modifiers["skip_offline_nodes"]
-                )
-
-                report_processor.process(lib_reports.sbd_check_started())
-                lib_sbd.check_sbd_on_node(
-                    report_processor, node_communicator, node_addr, watchdog
-                )
-                sbd_cfg = environment_file_to_dict(
-                    lib_sbd.get_local_sbd_config()
-                )
-                report_processor.process(
-                    lib_reports.sbd_config_distribution_started()
-                )
-                lib_sbd.set_sbd_config_on_node(
-                    report_processor,
-                    node_communicator,
-                    node_addr,
-                    sbd_cfg,
-                    watchdog
-                )
-                report_processor.process(lib_reports.sbd_enabling_started())
-                lib_sbd.enable_sbd_service_on_node(
-                    report_processor, node_communicator, node_addr
-                )
-            else:
-                report_processor.process(lib_reports.sbd_disabling_started())
-                lib_sbd.disable_sbd_service_on_node(
-                    report_processor, node_communicator, node_addr
-                )
-
-            # booth setup
-            booth_sync.send_all_config_to_node(
-                node_communicator,
-                report_processor,
-                node_addr,
-                rewrite_existing=modifiers["force"],
-                skip_wrong_config=modifiers["force"]
-            )
-        except LibraryError as e:
-            process_library_reports(e.args)
-        except NodeCommunicationException as e:
-            process_library_reports(
-                [node_communicator_exception_to_report_item(e)]
-            )
-
-        # Now add the new node to corosync.conf / cluster.conf
-        corosync_conf = None
         for my_node in utils.getNodesFromCorosyncConf():
             retval, output = utils.addLocalNode(my_node, node0, node1)
             if retval != 0:
@@ -1548,20 +1422,6 @@ def cluster_node(argv):
             else:
                 print("%s: Corosync updated" % my_node)
                 corosync_conf = output
-        if not utils.is_cman_cluster():
-            # When corosync 2 is in use, the procedure for adding a node is:
-            # 1. add the new node to corosync.conf
-            # 2. reload  corosync.conf before the new node is started
-            # 3. start the new node
-            # If done otherwise, membership gets broken a qdevice hangs. Cluster
-            # will recover after a minute or so but still it's a wrong way.
-            # When corosync 1 is in use, the procedure for adding a node is:
-            # 1. add the new node to cluster.conf
-            # 2. start the new node
-            # Starting the node will automaticall reload cluster.conf on all
-            # nodes. If the config is reloaded before the new node is started,
-            # the new node gets fenced by the cluster,
-            output, retval = utils.reloadCorosync()
         if corosync_conf != None:
             # send local cluster pcsd configs to the new node
             # may be used for sending corosync config as well in future
@@ -1585,15 +1445,14 @@ def cluster_node(argv):
                 except:
                     utils.err('Unable to communicate with pcsd')
 
-            print("Setting up corosync...")
             utils.setCorosyncConfig(node0, corosync_conf)
             if "--enable" in utils.pcs_options:
                 retval, err = utils.enableCluster(node0)
                 if retval != 0:
                     print("Warning: enable cluster - {0}".format(err))
             if "--start" in utils.pcs_options or utils.is_rhel6():
-                # Always start the new node on cman cluster in order to reload
-                # cluster.conf (see above).
+                # always start new node on cman cluster
+                # otherwise it will get fenced
                 retval, err = utils.startCluster(node0)
                 if retval != 0:
                     print("Warning: start cluster - {0}".format(err))
@@ -1601,18 +1460,16 @@ def cluster_node(argv):
             pcsd.pcsd_sync_certs([node0], exit_after_error=False)
         else:
             utils.err("Unable to update any nodes")
+        output, retval = utils.reloadCorosync()
         if utils.is_cman_with_udpu_transport():
             print("Warning: Using udpu transport on a RHEL 6 cluster, "
                 + "cluster restart is required to apply node addition")
-        if wait:
-            print()
-            wait_for_nodes_started([node0], wait_timeout)
     else:
         if node0 not in utils.getNodesFromCorosyncConf():
             utils.err(
                 "node '%s' does not appear to exist in configuration" % node0
             )
-        if "--force" not in utils.pcs_options:
+        if not "--force" in utils.pcs_options:
             retval, data = utils.get_remote_quorumtool_output(node0)
             if retval != 0:
                 utils.err(
@@ -1643,16 +1500,9 @@ def cluster_node(argv):
                 )
             # else the node seems to be stopped already, we're ok to proceed
 
-        try:
-            _ensure_cluster_is_offline_if_atb_should_be_enabled(
-                lib_env, -1, modifiers["skip_offline_nodes"]
-            )
-        except LibraryError as e:
-            utils.process_library_reports(e.args)
-
         nodesRemoved = False
         c_nodes = utils.getNodesFromCorosyncConf()
-        destroy_cluster([node0], keep_going=("--force" in utils.pcs_options))
+        destroy_cluster([node0])
         for my_node in c_nodes:
             if my_node == node0:
                 continue
@@ -1702,30 +1552,6 @@ def cluster_localnode(argv):
         else:
             success = utils.removeNodeFromClusterConf(node)
 
-# The removed node might be present in CIB. If it is, pacemaker will show it as
-# offline, no matter it's not in corosync / cman config any longer. We remove
-# the node by running 'crm_node -R <node>' on the node where the remove command
-# was ran. This only works if pacemaker is running. If it's not, we need
-# to remove the node manually from the CIB on all nodes.
-        cib_node_remove = None
-        if utils.usefile:
-            cib_node_remove = utils.filename
-        elif not utils.is_service_running(utils.cmd_runner(), "pacemaker"):
-            cib_node_remove = os.path.join(settings.cib_dir, "cib.xml")
-        if cib_node_remove:
-            original_usefile, original_filename = utils.usefile, utils.filename
-            utils.usefile = True
-            utils.filename = cib_node_remove
-            dummy_output, dummy_retval = utils.run([
-                "cibadmin",
-                "--delete-all",
-                "--force",
-                "--xpath=/cib/configuration/nodes/node[@uname='{0}']".format(
-                    node
-                ),
-            ])
-            utils.usefile, utils.filename = original_usefile, original_filename
-
         if success:
             print("%s: successfully removed!" % node)
         else:
@@ -1751,7 +1577,7 @@ def cluster_uidgid_rhel6(argv, silent_list = False):
         if not found and not silent_list:
             print("No uidgids configured in cluster.conf")
         return
-
+    
     command = argv.pop(0)
     uid=""
     gid=""
@@ -1783,7 +1609,7 @@ def cluster_uidgid_rhel6(argv, silent_list = False):
         # If we make a change, we sync out the changes to all nodes unless we're using -f
         if not utils.usefile:
             sync_nodes(utils.getNodesFromCorosyncConf(), utils.getCorosyncConf())
-
+         
     else:
         usage.cluster(["uidgid"])
         exit(1)
@@ -1838,7 +1664,7 @@ def cluster_uidgid(argv, silent_list = False):
             retval = utils.remove_uid_gid_file(uid,gid)
             if retval == False:
                 utils.err("no uidgid files with uid=%s and gid=%s found" % (uid,gid))
-
+         
     else:
         usage.cluster(["uidgid"])
         exit(1)
@@ -1879,23 +1705,11 @@ def cluster_destroy(argv):
         destroy_cluster(utils.getNodesFromCorosyncConf())
     else:
         print("Shutting down pacemaker/corosync services...")
-        for service in ["pacemaker", "corosync-qdevice", "corosync"]:
-            # Returns an error if a service is not running. It is safe to
-            # ignore it since we want it not to be running anyways.
-            utils.stop_service(service)
+        os.system("service pacemaker stop")
+        os.system("service corosync stop")
         print("Killing any remaining services...")
-        os.system("killall -q -9 corosync corosync-qdevice aisexec heartbeat pacemakerd ccm stonithd ha_logd lrmd crmd pengine attrd pingd mgmtd cib fenced dlm_controld gfs_controld")
-        try:
-            utils.disableServices()
-        except:
-            # previously errors were suppressed in here, let's keep it that way
-            # for now
-            pass
-        try:
-            disable_service(utils.cmd_runner(), lib_sbd.get_sbd_service_name())
-        except:
-            # it's not a big deal if sbd disable fails
-            pass
+        os.system("killall -q -9 corosync aisexec heartbeat pacemakerd ccm stonithd ha_logd lrmd crmd pengine attrd pingd mgmtd cib fenced dlm_controld gfs_controld")
+        utils.disableServices()
 
         print("Removing all cluster configuration files...")
         if utils.is_rhel6():
@@ -1906,12 +1720,6 @@ def cluster_destroy(argv):
                 "pe*.bz2","cib.*"]
         for name in state_files:
             os.system("find /var/lib -name '"+name+"' -exec rm -f \{\} \;")
-        try:
-            qdevice_net.client_destroy()
-        except:
-            # errors from deleting other files are suppressed as well
-            # we do not want to fail if qdevice was not set up
-            pass
 
 def cluster_verify(argv):
     nofilename = True
@@ -1920,7 +1728,7 @@ def cluster_verify(argv):
         nofilename = False
     elif len(argv) > 1:
         usage.cluster("verify")
-
+    
     options = []
     if "-V" in utils.pcs_options:
         options.append("-V")
@@ -2020,13 +1828,75 @@ def cluster_remote_node(argv):
             nvpair.parentNode.removeChild(nvpair)
         dom = constraint.remove_constraints_containing_node(dom, hostname)
         utils.replace_cib_configuration(dom)
-        if not utils.usefile:
-            output, retval = utils.run([
-                "crm_node", "--force", "--remove", hostname
-            ])
-            if retval != 0:
-                utils.err("unable to remove: {0}".format(output))
     else:
         usage.cluster(["remote-node"])
         sys.exit(1)
+
+def cluster_quorum_unblock(argv):
+    if len(argv) > 0:
+        usage.cluster(["quorum", "unblock"])
+        sys.exit(1)
+
+    if utils.is_rhel6():
+        utils.err("operation is not supported on RHEL 6 clusters")
+
+    output, retval = utils.run(
+        ["corosync-cmapctl", "-g", "runtime.votequorum.wait_for_all_status"]
+    )
+    if retval != 0:
+        utils.err("unable to check quorum status")
+    if output.split("=")[-1].strip() != "1":
+        utils.err("cluster is not waiting for nodes to establish quorum")
+
+    unjoined_nodes = (
+        set(utils.getNodesFromCorosyncConf())
+        -
+        set(utils.getCorosyncActiveNodes())
+    )
+    if not unjoined_nodes:
+        utils.err("no unjoined nodes found")
+    for node in unjoined_nodes:
+        stonith.stonith_confirm([node])
+
+    output, retval = utils.run(
+        ["corosync-cmapctl", "-s", "quorum.cancel_wait_for_all", "u8", "1"]
+    )
+    if retval != 0:
+        utils.err("unable to cancel waiting for nodes")
+    print("Quorum unblocked")
+
+    startup_fencing = prop.get_set_properties().get("startup-fencing", "")
+    utils.set_cib_property(
+        "startup-fencing",
+        "false" if startup_fencing.lower() != "false" else "true"
+    )
+    utils.set_cib_property("startup-fencing", startup_fencing)
+    print("Waiting for nodes cancelled")
+
+class NodeActionThread(threading.Thread):
+    def __init__(self, node):
+        super(NodeActionThread, self).__init__()
+        self.node = node
+        self.retval = 0
+        self.output = ""
+
+class NodeStartThread(NodeActionThread):
+    def run(self):
+        self.retval, self.output = utils.startCluster(self.node, quiet=True)
+
+class NodeStopPacemakerThread(NodeActionThread):
+    def run(self):
+        self.retval, self.output = utils.stopCluster(
+            self.node, quiet=True, pacemaker=True, corosync=False
+        )
+
+class NodeStopCorosyncThread(NodeActionThread):
+    def run(self):
+        self.retval, self.output = utils.stopCluster(
+            self.node, quiet=True, pacemaker=False, corosync=True
+        )
+
+class NodeDestroyThread(NodeActionThread):
+    def run(self):
+        self.retval, self.output = utils.destroyCluster(self.node, quiet=True)
 

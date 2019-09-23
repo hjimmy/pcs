@@ -1,0 +1,252 @@
+
+    _pcs()
+    {
+    local cur cur1 cur2 cur3
+    COMPREPLY=()
+    cur="${COMP_WORDS[COMP_CWORD]}"
+    if [ "$COMP_CWORD" -gt "0" ]; then cur1="${COMP_WORDS[COMP_CWORD-1]}";fi
+    if [ "$COMP_CWORD" -gt "1" ]; then cur2="${COMP_WORDS[COMP_CWORD-2]}";fi
+    if [ "$COMP_CWORD" -gt "2" ]; then cur3="${COMP_WORDS[COMP_CWORD-3]}";fi
+
+    
+case "${cur3}" in
+  status)
+    ;;
+  node)
+    ;;
+  resource)
+    ;;
+  constraint)
+    ;;
+  acl)
+    ;;
+  stonith)
+    ;;
+  cluster)
+    ;;
+  property)
+    ;;
+  config)
+  case "${cur2}" in
+    checkpoint)
+      ;;
+    import-cman)
+      ;;
+    export)
+      case "${cur1}" in
+        pcs-commands|pcs-commands-verbose)
+          COMPREPLY=($(compgen -W "output=<filename>" -- ${cur}))
+          return 0
+          ;;
+        *)
+        ;;
+      esac
+      
+      ;;
+    *)
+    ;;
+  esac
+  
+    ;;
+  pcsd)
+    ;;
+  *)
+  ;;
+esac
+
+
+case "${cur2}" in
+  status)
+    ;;
+  node)
+    ;;
+  resource)
+  case "${cur1}" in
+    group)
+      COMPREPLY=($(compgen -W "add remove" -- ${cur}))
+      return 0
+      ;;
+    relocate)
+      COMPREPLY=($(compgen -W "run clear dry-run show" -- ${cur}))
+      return 0
+      ;;
+    failcount)
+      COMPREPLY=($(compgen -W "reset show" -- ${cur}))
+      return 0
+      ;;
+    op)
+      COMPREPLY=($(compgen -W "add defaults remove" -- ${cur}))
+      return 0
+      ;;
+    *)
+    ;;
+  esac
+  
+    ;;
+  constraint)
+  case "${cur1}" in
+    colocation)
+      COMPREPLY=($(compgen -W "add set remove show" -- ${cur}))
+      return 0
+      ;;
+    rule)
+      COMPREPLY=($(compgen -W "add remove" -- ${cur}))
+      return 0
+      ;;
+    location)
+      COMPREPLY=($(compgen -W "add remove show" -- ${cur}))
+      return 0
+      ;;
+    order)
+      COMPREPLY=($(compgen -W "set remove show" -- ${cur}))
+      return 0
+      ;;
+    *)
+    ;;
+  esac
+  
+    ;;
+  acl)
+  case "${cur1}" in
+    group)
+      COMPREPLY=($(compgen -W "create delete" -- ${cur}))
+      return 0
+      ;;
+    permission)
+      COMPREPLY=($(compgen -W "add delete" -- ${cur}))
+      return 0
+      ;;
+    role)
+      COMPREPLY=($(compgen -W "create assign unassign delete" -- ${cur}))
+      return 0
+      ;;
+    user)
+      COMPREPLY=($(compgen -W "create delete" -- ${cur}))
+      return 0
+      ;;
+    *)
+    ;;
+  esac
+  
+    ;;
+  stonith)
+  case "${cur1}" in
+    level)
+      COMPREPLY=($(compgen -W "verify add clear remove" -- ${cur}))
+      return 0
+      ;;
+    *)
+    ;;
+  esac
+  
+    ;;
+  cluster)
+  case "${cur1}" in
+    uidgid)
+      COMPREPLY=($(compgen -W "rm add" -- ${cur}))
+      return 0
+      ;;
+    node)
+      COMPREPLY=($(compgen -W "add remove" -- ${cur}))
+      return 0
+      ;;
+    remote-node)
+      COMPREPLY=($(compgen -W "add remove" -- ${cur}))
+      return 0
+      ;;
+    quorum)
+      COMPREPLY=($(compgen -W "unblock" -- ${cur}))
+      return 0
+      ;;
+    reload)
+      COMPREPLY=($(compgen -W "corosync" -- ${cur}))
+      return 0
+      ;;
+    *)
+    ;;
+  esac
+  
+    ;;
+  property)
+    ;;
+  config)
+  case "${cur1}" in
+    checkpoint)
+      COMPREPLY=($(compgen -W "restore view" -- ${cur}))
+      return 0
+      ;;
+    import-cman)
+      COMPREPLY=($(compgen -W "output=<filename>" -- ${cur}))
+      return 0
+      ;;
+    export)
+      COMPREPLY=($(compgen -W "pcs-commands pcs-commands-verbose" -- ${cur}))
+      return 0
+      ;;
+    *)
+    ;;
+  esac
+  
+    ;;
+  pcsd)
+    ;;
+  *)
+  ;;
+esac
+
+
+case "${cur1}" in
+  status)
+    COMPREPLY=($(compgen -W "xml corosync cluster resources groups nodes pcsd" -- ${cur}))
+    return 0
+    ;;
+  node)
+    COMPREPLY=($(compgen -W "unmaintenance maintenance utilization" -- ${cur}))
+    return 0
+    ;;
+  resource)
+    COMPREPLY=($(compgen -W "debug-demote providers debug-stop move meta agents manage unclone group utilization create show debug-monitor cleanup master ungroup enable clone describe update disable relocate debug-promote restart debug-start clear list standards failcount unmanage defaults ban delete op" -- ${cur}))
+    return 0
+    ;;
+  constraint)
+    COMPREPLY=($(compgen -W "colocation remove rule location ref order" -- ${cur}))
+    return 0
+    ;;
+  acl)
+    COMPREPLY=($(compgen -W "enable group permission disable role user" -- ${cur}))
+    return 0
+    ;;
+  stonith)
+    COMPREPLY=($(compgen -W "fence show create describe list update cleanup confirm level delete" -- ${cur}))
+    return 0
+    ;;
+  cluster)
+    COMPREPLY=($(compgen -W "uidgid node cib-push edit sync cib-upgrade kill verify start destroy corosync status pcsd-status enable remote-node stop auth disable report unstandby cib quorum standby setup reload" -- ${cur}))
+    return 0
+    ;;
+  property)
+    COMPREPLY=($(compgen -W "set unset list show" -- ${cur}))
+    return 0
+    ;;
+  config)
+    COMPREPLY=($(compgen -W "checkpoint restore import-cman backup export" -- ${cur}))
+    return 0
+    ;;
+  pcsd)
+    COMPREPLY=($(compgen -W "clear-auth certkey sync-certificates" -- ${cur}))
+    return 0
+    ;;
+  *)
+  ;;
+esac
+
+
+
+    if [ $COMP_CWORD -eq 1 ]; then
+        COMPREPLY=( $(compgen -W "resource cluster stonith property acl constraint status config pcsd node" -- $cur) )
+    fi
+    return 0
+
+    }
+    complete -F _pcs pcs
+    

@@ -1,21 +1,93 @@
-def getFenceAgents(auth_user)
+def getFenceAgents(session, fence_agent = nil)
   fence_agent_list = {}
-  stdout, stderr, retval = run_cmd(
-    auth_user, PCS, "stonith", "list", "--nodesc"
-  )
-  if retval != 0
-    $logger.error("Error running 'pcs stonith list --nodesc")
-    $logger.error(stdout + stderr)
-    return {}
-  end
-
-  agents = stdout
+  agents = Dir.glob('/usr/sbin/fence_' + '*')
   agents.each { |a|
     fa = FenceAgent.new
-    fa.name = a.chomp
+    fa.name =  a.sub(/.*\//,"")
+    next if fa.name == "fence_ack_manual"
+
+    if fence_agent and a.sub(/.*\//,"") == fence_agent.sub(/.*:/,"")
+      required_options, optional_options, advanced_options, info = getFenceAgentMetadata(session, fa.name)
+      fa.required_options = required_options
+      fa.optional_options = optional_options
+      fa.advanced_options = advanced_options
+      fa.info = info
+    end
     fence_agent_list[fa.name] = fa
   }
-  return fence_agent_list
+  fence_agent_list
+end
+
+def getFenceAgentMetadata(session, fenceagentname)
+  options_required = {}
+  options_optional = {}
+  options_advanced = {
+      "priority" => "",
+      "pcmk_host_argument" => "",
+      "pcmk_host_map" => "",
+      "pcmk_host_list" => "",
+      "pcmk_host_check" => ""
+  }
+  for a in ["reboot", "list", "status", "monitor", "off"]
+    options_advanced["pcmk_" + a + "_action"] = ""
+    options_advanced["pcmk_" + a + "_timeout"] = ""
+    options_advanced["pcmk_" + a + "_retries"] = ""
+  end
+
+  # There are bugs in stonith_admin & the new fence_agents interaction
+  # eventually we'll want to switch back to this, but for now we directly
+  # call the agent to get metadata
+  #metadata = `stonith_admin --metadata -a #{fenceagentname}`
+  if not fenceagentname.start_with?('fence_') or fenceagentname.include?('/')
+    $logger.error "Invalid fence agent '#{fenceagentname}'"
+    return [options_required, options_optional, options_advanced]
+  end
+  stdout, stderr, retval = run_cmd(
+    session, "/usr/sbin/#{fenceagentname}", '-o', 'metadata'
+  )
+  metadata = stdout.join
+  begin
+    doc = REXML::Document.new(metadata)
+  rescue REXML::ParseException => e
+    $logger.error(
+      "Unable to parse metadata of fence agent '#{resourcepath}': #{e}"
+    )
+    return [options_required, options_optional, options_advanced]
+  end
+
+  short_desc = ""
+  long_desc = ""
+  if doc.root
+    short_desc = doc.root.attributes["shortdesc"]
+  end
+  if short_desc == ""
+    doc.elements.each('resource-agent/shortdesc') {|sd|
+      short_desc = sd.text ? sd.text.strip : sd.text
+    }
+  end
+  doc.elements.each('resource-agent/longdesc') {|ld|
+    long_desc = ld.text ? ld.text.strip : ld.text
+  }
+
+  doc.elements.each('resource-agent/parameters/parameter') { |param|
+    temp_array = []
+    if param.elements["shortdesc"]
+      temp_array << param.elements["shortdesc"].text
+    else
+      temp_array << ""
+    end
+    if param.elements["longdesc"]
+      temp_array << param.elements["longdesc"].text
+    else
+      temp_array << ""
+    end
+    if param.attributes["required"] == "1" and param.attributes["name"] != "action"
+      options_required[param.attributes["name"]] = temp_array
+    else
+      options_optional[param.attributes["name"]] = temp_array
+    end
+  }
+  [options_required, options_optional, options_advanced, [short_desc, long_desc]]
 end
 
 class FenceAgent

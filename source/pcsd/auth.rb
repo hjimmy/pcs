@@ -1,6 +1,5 @@
 require 'json'
 require 'securerandom'
-gem 'rpam-ruby19-feist'
 require 'rpam'
 require 'base64'
 
@@ -48,7 +47,7 @@ class PCSAuth
 
   def self.getUsersGroups(username)
     stdout, stderr, retval = run_cmd(
-      getSuperuserAuth(), "id", "-Gn", username
+      getSuperuserSession, "id", "-Gn", username
     )
     if retval != 0
       $logger.info(
@@ -95,43 +94,41 @@ class PCSAuth
     return false
   end
 
-  def self.loginByToken(cookies)
-    auth_user = {}
+  def self.loginByToken(session, cookies)
     if username = validToken(cookies["token"])
       if SUPERUSER == username
         if cookies['CIB_user'] and cookies['CIB_user'].strip != ''
-          auth_user[:username] = cookies['CIB_user']
+          session[:username] = cookies['CIB_user']
           if cookies['CIB_user_groups'] and cookies['CIB_user_groups'].strip != ''
-            auth_user[:usergroups] = cookieUserDecode(
+            session[:usergroups] = cookieUserDecode(
               cookies['CIB_user_groups']
             ).split(nil)
           else
-            auth_user[:usergroups] = []
+            session[:usergroups] = []
           end
         else
-          auth_user[:username] = SUPERUSER
-          auth_user[:usergroups] = []
+          session[:username] = SUPERUSER
+          session[:usergroups] = []
         end
-        return auth_user
+        return true
       else
-        auth_user[:username] = username
+        session[:username] = username
         success, groups = getUsersGroups(username)
-        auth_user[:usergroups] = success ? groups : []
-        return auth_user
+        session[:usergroups] = success ? groups : []
+        return true
       end
     end
-    return nil
+    return false
   end
 
-  def self.loginByPassword(username, password)
+  def self.loginByPassword(session, username, password)
     if validUser(username, password)
-      auth_user = {}
-      auth_user[:username] = username
+      session[:username] = username
       success, groups = getUsersGroups(username)
-      auth_user[:usergroups] = success ? groups : []
-      return auth_user
+      session[:usergroups] = success ? groups : []
+      return true
     end
-    return nil
+    return false
   end
 
   def self.isLoggedIn(session)
@@ -144,7 +141,7 @@ class PCSAuth
     return false
   end
 
-  def self.getSuperuserAuth()
+  def self.getSuperuserSession()
     return {
       :username => SUPERUSER,
       :usergroups => [],
@@ -164,18 +161,6 @@ class PCSAuth
 
   def self.cookieUserDecode(text)
     return Base64.decode64(text)
-  end
-
-  def self.sessionToAuthUser(session)
-    return {
-      :username => session[:username],
-      :usergroups => session[:usergroups],
-    }
-  end
-
-  def self.authUserToSession(auth_user, session)
-    session[:username] = auth_user[:username]
-    session[:usergroups] = auth_user[:usergroups]
   end
 end
 

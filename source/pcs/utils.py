@@ -1,9 +1,7 @@
-from __future__ import (
-    absolute_import,
-    division,
-    print_function,
-    unicode_literals,
-)
+from __future__ import absolute_import
+from __future__ import division
+from __future__ import print_function
+from __future__ import unicode_literals
 
 import os
 import sys
@@ -20,61 +18,9 @@ import signal
 import time
 from io import BytesIO
 import tarfile
+import fcntl
 import getpass
 import base64
-import threading
-import logging
-
-
-from pcs import settings, usage
-from pcs.cli.common.reports import (
-    process_library_reports,
-    LibraryReportProcessorToConsole as LibraryReportProcessorToConsole,
-)
-from pcs.common.tools import (
-    join_multilines,
-    simple_cache,
-)
-from pcs.lib import reports, sbd
-from pcs.lib.env import LibraryEnvironment
-from pcs.lib.errors import LibraryError
-from pcs.lib.external import (
-    CommandRunner,
-    disable_service,
-    DisableServiceError,
-    enable_service,
-    EnableServiceError,
-    is_cman_cluster as lib_is_cman_cluster,
-    is_service_enabled,
-    is_service_running,
-    is_systemctl,
-    _service,
-    _systemctl,
-)
-import pcs.lib.resource_agent as lib_ra
-import pcs.lib.corosync.config_parser as corosync_conf_parser
-from pcs.lib.corosync.config_facade import ConfigFacade as corosync_conf_facade
-from pcs.lib.pacemaker import has_resource_wait_support
-from pcs.lib.pacemaker_state import ClusterState
-from pcs.lib.pacemaker_values import(
-    validate_id,
-    is_boolean,
-    timeout_to_seconds as get_timeout_seconds,
-    is_score_value,
-)
-from pcs.cli.common import middleware
-from pcs.cli.common.env import Env
-from pcs.cli.common.lib_wrapper import Library
-from pcs.cli.common.reports import build_report_message
-from pcs.cli.booth.command import DEFAULT_BOOTH_NAME
-import pcs.cli.booth.env
-
-try:
-    # python2
-    from httplib import HTTPException
-except ImportError:
-    # python3
-    from http.client import HTTPException
 try:
     # python2
     from urllib import urlencode as urllib_urlencode
@@ -104,21 +50,35 @@ except ImportError:
         URLError as urllib_URLError
     )
 
-
+import settings
+import resource
+import cluster
+import corosync_conf as corosync_conf_utils
 
 
 PYTHON2 = sys.version[0] == "2"
-
-DEFAULT_RESOURCE_ACTIONS = ["monitor", "start", "stop", "promote", "demote"]
 
 # usefile & filename variables are set in pcs module
 usefile = False
 filename = ""
 pcs_options = {}
+fence_bin = settings.fence_agent_binaries
 
+score_regexp = re.compile(r'^[+-]?((INFINITY)|(\d+))$')
+
+CIB_BOOLEAN_TRUE = ["true", "on", "yes", "y", "1"]
+CIB_BOOLEAN_FALSE = ["false", "off", "no", "n", "0"]
 
 class UnknownPropertyException(Exception):
     pass
+
+def simple_cache(func):
+    cache = {}
+    def wrapper(*args):
+        if args not in cache:
+            cache[args] = func()
+        return cache[args]
+    return wrapper
 
 def getValidateWithVersion(dom):
     cib = dom.getElementsByTagName("cib")
@@ -142,15 +102,8 @@ def checkAndUpgradeCIB(major,minor,rev):
     if cmajor > major or (cmajor == major and cminor > minor) or (cmajor == major and cminor == minor and crev >= rev):
         return False
     else:
-        cluster_upgrade()
+        cluster.cluster_upgrade()
         return True
-
-def cluster_upgrade():
-    output, retval = run(["cibadmin", "--upgrade", "--force"])
-    if retval != 0:
-        err("unable to upgrade cluster: %s" % output)
-    print("Cluster CIB has been upgraded to latest version")
-
 
 # Check status of node
 def checkStatus(node):
@@ -257,23 +210,8 @@ def setCorosyncConfig(node,config):
         if status != 0:
             err("Unable to set corosync config: {0}".format(data))
 
-def getPacemakerNodeStatus(node):
-    return sendHTTPRequest(
-        node, "remote/pacemaker_node_status", None, False, False
-    )
-
 def startCluster(node, quiet=False):
     return sendHTTPRequest(node, 'remote/cluster_start', None, False, not quiet)
-
-def stopPacemaker(node, quiet=False, force=True):
-    return stopCluster(
-        node, pacemaker=True, corosync=False, quiet=quiet, force=force
-    )
-
-def stopCorosync(node, quiet=False, force=True):
-    return stopCluster(
-        node, pacemaker=False, corosync=True, quiet=quiet, force=force
-    )
 
 def stopCluster(node, quiet=False, pacemaker=True, corosync=True, force=True):
     data = dict()
@@ -300,12 +238,12 @@ def restoreConfig(node, tarball_data):
     return sendHTTPRequest(node, "remote/config_restore", data, False, True)
 
 def pauseConfigSyncing(node, delay_seconds=300):
-    data = urllib_urlencode({"sync_thread_pause": delay_seconds})
-    return sendHTTPRequest(node, "remote/set_sync_options", data, False, False)
+  data = urllib_urlencode({"sync_thread_pause": delay_seconds})
+  return sendHTTPRequest(node, "remote/set_sync_options", data, False, False)
 
 def resumeConfigSyncing(node):
-    data = urllib_urlencode({"sync_thread_resume": 1})
-    return sendHTTPRequest(node, "remote/set_sync_options", data, False, False)
+  data = urllib_urlencode({"sync_thread_resume": 1})
+  return sendHTTPRequest(node, "remote/set_sync_options", data, False, False)
 
 def canAddNodeToCluster(node):
     retval, output = sendHTTPRequest(
@@ -318,8 +256,6 @@ def canAddNodeToCluster(node):
                 return (False, "unable to authenticate to node")
             if "node_available" in myout and myout["node_available"] == True:
                 return (True, "")
-            elif myout.get("pacemaker_remote", False):
-                return (False, "node is running pacemaker_remote")
             else:
                 return (False, "node is already in a cluster")
         except ValueError:
@@ -403,8 +339,7 @@ def sendHTTPRequest(host, request, data = None, printResult = True, printSuccess
                 if "CIB_user" == name:
                     value = re.sub(r"[^!-~]", "", value).replace(";", "")
                 else:
-                    # python3 requires the value to be bytes not str
-                    value = base64.b64encode(value.encode("utf8"))
+                    value = base64.b64encode(value)
                 cookies.append("{0}={1}".format(name, value))
     if cookies:
         opener.addheaders.append(('Cookie', ";".join(cookies)))
@@ -419,7 +354,6 @@ def sendHTTPRequest(host, request, data = None, printResult = True, printSuccess
             print(host + ": " + html.strip())
         if "--debug" in pcs_options:
             print("Response Code: 0")
-
             print("--Debug Response Start--\n{0}".format(html), end="")
             print("--Debug Response End--")
             print()
@@ -427,9 +361,6 @@ def sendHTTPRequest(host, request, data = None, printResult = True, printSuccess
     except urllib_HTTPError as e:
         if "--debug" in pcs_options:
             print("Response Code: " + str(e.code))
-            html = e.read().decode("utf-8")
-            print("--Debug Response Start--\n{0}".format(html), end="")
-            print("--Debug Response End--")
         if e.code == 401:
             output = (
                 3,
@@ -455,21 +386,11 @@ def sendHTTPRequest(host, request, data = None, printResult = True, printSuccess
             print(output[1])
         return output
     except urllib_URLError as e:
-        return __handle_HTTP_connection_error(host, str(e.reason), printResult)
-    except HTTPException:
-        return __handle_HTTP_connection_error(
-            host, "Connection error", printResult
-        )
-
-def __handle_HTTP_connection_error(host, reason,  print_result):
-    if "--debug" in pcs_options:
-        print("Response Reason: {0}".format(reason))
-    msg = "Unable to connect to {host} ({reason})".format(
-        host=host, reason=reason
-    )
-    if print_result:
-        print(msg)
-    return (2, msg)
+        if "--debug" in pcs_options:
+            print("Response Reason: " + str(e.reason))
+        if printResult:
+            print("Unable to connect to %s (%s)" % (host, e.reason))
+        return (2,"Unable to connect to %s (%s)" % (host, e.reason))
 
 def getNodesFromCorosyncConf(conf_text=None):
     if is_rhel6():
@@ -488,31 +409,13 @@ def getNodesFromCorosyncConf(conf_text=None):
     return nodes
 
 def getNodesFromPacemaker():
-    try:
-        return [
-            node.attrs.name
-            for node in ClusterState(getClusterStateXml()).node_section.nodes
-        ]
-    except LibraryError as e:
-        process_library_reports(e.args)
-
-def getNodeAttributesFromPacemaker():
-    try:
-        return [
-            node.attrs
-            for node in ClusterState(getClusterStateXml()).node_section.nodes
-        ]
-    except LibraryError as e:
-        process_library_reports(e.args)
-
-
-def hasCorosyncConf(conf=None):
-    if not conf:
-        if is_rhel6():
-            conf = settings.cluster_conf_file
-        else:
-            conf = settings.corosync_conf_file
-    return os.path.isfile(conf)
+    ret_nodes = []
+    root = get_cib_etree()
+    nodes = root.findall(str(".//node"))
+    for node in nodes:
+        ret_nodes.append(node.attrib["uname"])
+    ret_nodes.sort()
+    return ret_nodes
 
 def getCorosyncConf(conf=None):
     if not conf:
@@ -534,8 +437,8 @@ def getCorosyncConfParsed(conf=None, text=None):
         except xml.parsers.expat.ExpatError as e:
             err("Unable to parse cluster.conf: %s" % e)
     try:
-        return corosync_conf_parser.parse_string(conf_text)
-    except corosync_conf_parser.CorosyncConfParserException as e:
+        return corosync_conf_utils.parse_string(conf_text)
+    except corosync_conf_utils.CorosyncConfException as e:
         err("Unable to parse corosync.conf: %s" % e)
 
 def setCorosyncConf(corosync_config, conf_file=None):
@@ -581,7 +484,7 @@ def getCorosyncActiveNodes():
     nodename_re = re.compile(r"^nodelist\.node\.(\d+)\.ring0_addr.*= (.*)", re.M)
     nodestatus_re = re.compile(r"^runtime\.totem\.pg\.mrp\.srp\.members\.(\d+).status.*= (.*)", re.M)
     nodenameid_mapping_re = re.compile(r"nodelist\.node\.(\d+)\.nodeid.*= (\d+)", re.M)
-
+    
     nodes = nodename_re.findall(output)
     nodes_status = nodestatus_re.findall(output)
     nodes_mapping = nodenameid_mapping_re.findall(output)
@@ -608,31 +511,17 @@ def getCorosyncActiveNodes():
 
     return nodes_active
 
-
-def _enable_auto_tie_breaker_for_sbd(corosync_conf):
-    """
-    Enable auto tie breaker in specified corosync conf if it is needed by SBD.
-
-    corosync_conf -- parsed corosync conf
-    """
-    try:
-        corosync_facade = corosync_conf_facade(corosync_conf)
-        if sbd.atb_has_to_be_enabled(cmd_runner(), corosync_facade):
-            corosync_facade.set_quorum_options(
-                get_report_processor(), {"auto_tie_breaker": "1"}
-            )
-    except LibraryError as e:
-        process_library_reports(e.args)
-
-
 # Add node specified to corosync.conf and reload corosync.conf (if running)
 def addNodeToCorosync(node):
 # Before adding, make sure node isn't already in corosync.conf
     node0, node1 = parse_multiring_node(node)
+    used_node_ids = []
+    num_nodes_in_conf = 0
     corosync_conf_text = getCorosyncConf()
     for c_node in getNodesFromCorosyncConf(conf_text=corosync_conf_text):
         if (c_node == node0) or (c_node == node1):
             err("node already exists in corosync.conf")
+        num_nodes_in_conf = num_nodes_in_conf + 1
     if "--corosync_conf" not in pcs_options:
         for c_node in getCorosyncActiveNodes():
             if (c_node == node0) or (c_node == node1):
@@ -644,15 +533,12 @@ def addNodeToCorosync(node):
     if not nodelists:
         err("unable to find nodelist in corosync.conf")
     nodelist = nodelists[0]
-    new_node = corosync_conf_parser.Section("node")
+    new_node = corosync_conf_utils.Section("node")
     nodelist.add_section(new_node)
     new_node.add_attribute("ring0_addr", node0)
     if node1:
         new_node.add_attribute("ring1_addr", node1)
     new_node.add_attribute("nodeid", new_nodeid)
-
-    # enable ATB if it's needed
-    _enable_auto_tie_breaker_for_sbd(corosync_conf)
 
     corosync_conf = autoset_2node_corosync(corosync_conf)
     setCorosyncConf(str(corosync_conf))
@@ -681,40 +567,12 @@ def addNodeToClusterConf(node):
                 "error adding alternative address for node: %s" % node0
             )
 
-    # ensure the pacemaker fence device exists
-    pcmk_fence_name = None
-    all_fence_names = set()
-    output, retval = run([
-        "ccs", "-i", "-f", settings.cluster_conf_file, "--lsfencedev"
-    ])
-    if retval == 0:
-        for line in output.splitlines():
-            fence_name, dummy_fence_args = line.split(":", 1)
-            all_fence_names.add(fence_name)
-            match = re.match("(^|(.* ))agent=fence_pcmk((,.+)|$)", line)
-            if match:
-                pcmk_fence_name = fence_name
-    if not pcmk_fence_name:
-        fence_index = 1
-        pcmk_fence_name = "pcmk-redirect"
-        while pcmk_fence_name in all_fence_names:
-            pcmk_fence_name = "pcmk-redirect-{0}".format(fence_index)
-            fence_index += 1
-
-        output, retval = run([
-            "ccs", "-i", "-f", settings.cluster_conf_file,
-            "--addfencedev", pcmk_fence_name, "agent=fence_pcmk",
-        ])
-        if retval != 0:
-            print(output)
-            err("error fence device for node: %s" % node)
-
     output, retval = run(["ccs", "-i", "-f", settings.cluster_conf_file, "--addmethod", "pcmk-method", node0])
     if retval != 0:
         print(output)
         err("error adding fence method: %s" % node)
 
-    output, retval = run(["ccs", "-i", "-f", settings.cluster_conf_file, "--addfenceinst", pcmk_fence_name, node0, "pcmk-method", "port="+node0])
+    output, retval = run(["ccs", "-i", "-f", settings.cluster_conf_file, "--addfenceinst", "pcmk-redirect", node0, "pcmk-method", "port="+node0])
     if retval != 0:
         print(output)
         err("error adding fence instance: %s" % node)
@@ -736,11 +594,13 @@ def addNodeToClusterConf(node):
 
 def removeNodeFromCorosync(node):
     removed_node = False
+    num_nodes_in_conf = 0
     node0, node1 = parse_multiring_node(node)
 
     corosync_conf = getCorosyncConfParsed()
     for nodelist in corosync_conf.get_sections("nodelist"):
         for node in nodelist.get_sections("node"):
+            num_nodes_in_conf += 1
             ring0_attrs = node.get_attributes("ring0_addr")
             if ring0_attrs:
                 ring0_conf = ring0_attrs[0][1]
@@ -749,16 +609,13 @@ def removeNodeFromCorosync(node):
                     removed_node = True
 
     if removed_node:
-        # enable ATB if it's needed
-        _enable_auto_tie_breaker_for_sbd(corosync_conf)
-
         corosync_conf = autoset_2node_corosync(corosync_conf)
         setCorosyncConf(str(corosync_conf))
 
     return removed_node
 
 def removeNodeFromClusterConf(node):
-    node0, dummy_node1 = parse_multiring_node(node)
+    node0, node1 = parse_multiring_node(node)
     nodes = getNodesFromCorosyncConf()
     if node0 not in nodes:
         return False
@@ -784,22 +641,27 @@ def removeNodeFromClusterConf(node):
     return True
 
 def autoset_2node_corosync(corosync_conf):
-    facade = corosync_conf_facade(corosync_conf)
-    facade._ConfigFacade__update_two_node()
-    return facade.config
+    node_count = 0
+    auto_tie_breaker = False
 
-# is it needed to handle corosync-qdevice service when managing cluster services
-def need_to_handle_qdevice_service():
-    if is_rhel6():
-        return False
-    try:
-        cfg = corosync_conf_facade.from_string(
-            open(settings.corosync_conf_file).read()
-        )
-        return cfg.has_quorum_device()
-    except (EnvironmentError, corosync_conf_parser.CorosyncConfParserException):
-        # corosync.conf not present or not valid => no qdevice specified
-        return False
+    for nodelist in corosync_conf.get_sections("nodelist"):
+        node_count += len(nodelist.get_sections("node"))
+    quorum_sections = corosync_conf.get_sections("quorum")
+    for quorum in quorum_sections:
+        for attr in quorum.get_attributes("auto_tie_breaker"):
+            auto_tie_breaker = attr[1] == "1"
+
+    if node_count == 2 and not auto_tie_breaker:
+        for quorum in quorum_sections:
+            quorum.set_attribute("two_node", "1")
+        if not quorum_sections:
+            quorum = corosync_conf_utils.Section("quorum")
+            quorum.add_attribute("two_node", "1")
+            corosync_conf.add_section(quorum)
+    else:
+        for quorum in quorum_sections:
+            quorum.del_attributes_by_name("two_node")
+    return corosync_conf
 
 def getNextNodeID(corosync_conf):
     currentNodes = []
@@ -883,7 +745,6 @@ def subprocess_setup():
     signal.signal(signal.SIGPIPE, signal.SIG_DFL)
 
 # Run command, with environment and return (output, retval)
-# DEPRECATED, please use lib.external.CommandRunner via utils.cmd_runner()
 def run(
     args, ignore_stderr=False, string_for_stdin=None, env_extend=None,
     binary_output=False
@@ -892,7 +753,6 @@ def run(
         env_extend = dict()
     env_var = env_extend
     env_var.update(dict(os.environ))
-    env_var["LC_ALL"] = "C"
     if usefile:
         env_var["CIB_file"] = filename
 
@@ -934,7 +794,7 @@ def run(
             # decodes newlines and in python3 also converts bytes to str
             universal_newlines=(not PYTHON2 and not binary_output)
         )
-        output, dummy_stderror = p.communicate(string_for_stdin)
+        output,stderror = p.communicate(string_for_stdin)
         returnVal = p.returncode
         if "--debug" in pcs_options:
             print("Return Value: {0}".format(returnVal))
@@ -946,19 +806,6 @@ def run(
         err("unable to locate command: " + args[0])
 
     return output, returnVal
-
-@simple_cache
-def cmd_runner():
-    env_vars = dict()
-    if usefile:
-        env_vars["CIB_file"] = filename
-    env_vars.update(os.environ)
-    env_vars["LC_ALL"] = "C"
-    return CommandRunner(
-        logging.getLogger("old_cli"),
-        get_report_processor(),
-        env_vars
-    )
 
 def run_pcsdcli(command, data=None):
     if not data:
@@ -992,62 +839,6 @@ def run_pcsdcli(command, data=None):
         }
     return output_json, retval
 
-def auth_nodes_do(nodes, username, password, force, local):
-    pcsd_data = {
-        'nodes': list(set(nodes)),
-        'username': username,
-        'password': password,
-        'force': force,
-        'local': local,
-    }
-    output, retval = run_pcsdcli('auth', pcsd_data)
-    if retval == 0 and output['status'] == 'access_denied':
-        err('Access denied')
-    if retval == 0 and output['status'] == 'ok' and output['data']:
-        failed = False
-        try:
-            if not output['data']['sync_successful']:
-                err(
-                    "Some nodes had a newer tokens than the local node. "
-                    + "Local node's tokens were updated. "
-                    + "Please repeat the authentication if needed."
-                )
-            for node, result in output['data']['auth_responses'].items():
-                if result['status'] == 'ok':
-                    print("{0}: Authorized".format(node))
-                elif result['status'] == 'already_authorized':
-                    print("{0}: Already authorized".format(node))
-                elif result['status'] == 'bad_password':
-                    err(
-                        "{0}: Username and/or password is incorrect".format(node),
-                        False
-                    )
-                    failed = True
-                elif result['status'] == 'noresponse':
-                    err("Unable to communicate with {0}".format(node), False)
-                    failed = True
-                else:
-                    err("Unexpected response from {0}".format(node), False)
-                    failed = True
-            if output['data']['sync_nodes_err']:
-                err(
-                    (
-                        "Unable to synchronize and save tokens on nodes: {0}. "
-                        + "Are they authorized?"
-                    ).format(
-                        ", ".join(output['data']['sync_nodes_err'])
-                    ),
-                    False
-                )
-                failed = True
-        except:
-            err('Unable to communicate with pcsd')
-        if failed:
-            sys.exit(1)
-        return
-    err('Unable to communicate with pcsd')
-
-
 def call_local_pcsd(argv, interactive_auth=False, std_in=None):
     # some commands cannot be run under a non-root account
     # so we pass those commands to locally running pcsd to execute them
@@ -1067,7 +858,7 @@ def call_local_pcsd(argv, interactive_auth=False, std_in=None):
         print('Please authenticate yourself to the local pcsd')
         username = get_terminal_input('Username: ')
         password = get_terminal_password()
-        auth_nodes_do(["localhost"], username, password, True, True)
+        cluster.auth_nodes_do(["localhost"], username, password, True, True)
         print()
         code, output = sendHTTPRequest(
             "localhost", "run_pcs", data_send, False, False
@@ -1109,69 +900,44 @@ def map_for_error_list(callab, iterab):
             error_list.append(err)
     return error_list
 
-def run_parallel(worker_list, wait_seconds=1):
-    thread_list = []
-    for worker in worker_list:
-        thread = threading.Thread(target=worker)
+def run_node_threads(node_threads):
+    error_list = []
+    for node, thread in node_threads.items():
         thread.daemon = True
         thread.start()
-        thread_list.append(thread)
-
-    while thread_list:
-        for thread in thread_list:
-            thread.join(wait_seconds)
-            if not thread.is_alive():
-                thread_list.remove(thread)
-
-def create_task(report, action, node, *args, **kwargs):
-    def worker():
-        returncode, output = action(node, *args, **kwargs)
-        report(node, returncode, output)
-    return worker
-
-def create_task_list(report, action, node_list, *args, **kwargs):
-    return [
-        create_task(report, action, node, *args, **kwargs) for node in node_list
-    ]
-
-def parallel_for_nodes(action, node_list, *args, **kwargs):
-    node_errors = dict()
-    def report(node, returncode, output):
-        message = '{0}: {1}'.format(node, output.strip())
-        print(message)
-        if returncode != 0:
-            node_errors[node] = message
-    run_parallel(
-        create_task_list(report, action, node_list, *args, **kwargs)
-    )
-    return node_errors
-
-def prepare_node_name(node, pm_nodes, cs_nodes):
-    '''
-    Return pacemaker-corosync combined name for node if needed
-    pm_nodes dictionary pacemaker nodes id:node_name
-    cs_nodes dictionary corosync nodes id:node_name
-    '''
-    if node in pm_nodes.values():
-        return node
-
-    for cs_id, cs_name in cs_nodes.items():
-        if node == cs_name and cs_id in pm_nodes:
-            return '{0} ({1})'.format(
-                pm_nodes[cs_id] if pm_nodes[cs_id] != '(null)' else "*Unknown*",
-                node
-            )
-
-    return node
+    while node_threads:
+        for node in list(node_threads.keys()):
+            thread = node_threads[node]
+            thread.join(1)
+            if thread.is_alive():
+                continue
+            output = node + ": " + thread.output.strip()
+            print(output)
+            if thread.retval != 0:
+                error_list.append(output)
+            del node_threads[node]
+    return error_list
 
 # Check is something exists in the CIB, if it does return it, if not, return
 #  an empty string
 def does_exist(xpath_query):
     args = ["cibadmin", "-Q", "--xpath", xpath_query]
-    dummy_output,retval = run(args)
+    output,retval = run(args)
     if (retval != 0):
         return False
     return True
+
+def is_pacemaker_node(node):
+    p_nodes = getNodesFromPacemaker()
+    if node in p_nodes:
+        return True
+    return False
+
+def is_corosync_node(node):
+    c_nodes = getNodesFromCorosyncConf()
+    if node in c_nodes:
+        return True
+    return False
 
 def get_group_children(group_id):
     child_resources = []
@@ -1290,8 +1056,6 @@ def dom_get_resource_masterslave(dom, resource_id):
     return None
 
 # returns tuple (is_valid, error_message, correct_resource_id_if_exists)
-# there is a duplicate code in pcs/lib/cib/constraint/constraint.py
-# please use function in pcs/lib/cib/constraint/constraint.py
 def validate_constraint_resource(dom, resource_id):
     resource_el = (
         dom_get_clone(dom, resource_id)
@@ -1344,14 +1108,6 @@ def validate_constraint_resource(dom, resource_id):
 def dom_get_resource_remote_node_name(dom_resource):
     if dom_resource.tagName != "primitive":
         return None
-    if (
-        dom_resource.getAttribute("class").lower() == "ocf"
-        and
-        dom_resource.getAttribute("provider").lower() == "pacemaker"
-        and
-        dom_resource.getAttribute("type").lower() == "remote"
-    ):
-        return dom_resource.getAttribute("id")
     return dom_get_meta_attr_value(dom_resource, "remote-node")
 
 def dom_get_meta_attr_value(dom_resource, meta_name):
@@ -1400,7 +1156,7 @@ def dom_get_parent_by_tag_name(dom_el, tag_name):
 def dom_attrs_to_list(dom_el, with_id=False):
     attributes = [
         "%s=%s" % (name, value)
-        for name, value in sorted(dom_el.attributes.items()) if name != "id"
+        for name, value in dom_el.attributes.items() if name != "id"
     ]
     if with_id:
         attributes.append("(id:%s)" % (dom_el.getAttribute("id")))
@@ -1493,63 +1249,71 @@ def resource_running_on(resource, passed_state=None, stopped=False):
         "nodes_slave": nodes_slave,
     }
 
-def filter_default_op_from_actions(resource_actions):
-    filtered = []
-    for action in resource_actions:
-        if action.get("name", "") not in DEFAULT_RESOURCE_ACTIONS:
-            continue
-        new_action = dict([
-            (name, value)
-            for name, value in action.items()
-            if name != "depth"
-        ])
-        filtered.append(new_action)
-    return filtered
+def does_resource_have_options(ra_type):
+    if ra_type.startswith("ocf:") or ra_type.startswith("stonith:") or ra_type.find(':') == -1:
+        return True
+    return False
 
 # Given a resource agent (ocf:heartbeat:XXX) return an list of default
 # operations or an empty list if unable to find any default operations
-def get_default_op_values(full_agent_name):
-    default_ops = []
-    try:
-        if full_agent_name.startswith("stonith:"):
-            metadata = lib_ra.StonithAgent(
-                cmd_runner(),
-                full_agent_name[len("stonith:"):]
-            )
-        else:
-            metadata = lib_ra.ResourceAgent(
-                cmd_runner(),
-                full_agent_name
-            )
-        actions = filter_default_op_from_actions(metadata.get_actions())
-
-        for action in actions:
-            op = [action["name"]]
-            for key in action.keys():
-                if key != "name" and action[key] != "0":
-                    op.append("{0}={1}".format(key, action[key]))
-            default_ops.append(op)
-    except lib_ra.UnableToGetAgentMetadata:
+def get_default_op_values(ra_type):
+    allowable_operations = ["monitor","start","stop","promote","demote"]
+    ra_split = ra_type.split(':')
+    if len(ra_split) != 3:
         return []
-    except lib_ra.ResourceAgentError as e:
-        process_library_reports(
-            [lib_ra.resource_agent_error_to_report_item(e)]
-        )
-    except LibraryError as e:
-        process_library_reports(e.args)
 
-    return default_ops
+    ra_path = "/usr/lib/ocf/resource.d/" + ra_split[1] + "/" + ra_split[2]
+    metadata = get_metadata(ra_path)
 
+    if metadata == False:
+        return []
+
+    return_list = []
+    try:
+        root = ET.fromstring(metadata)
+        actions = root.findall(str(".//actions/action"))
+        for action in actions:
+            if action.attrib["name"] in allowable_operations:
+                new_operation = []
+                new_operation.append(action.attrib["name"])
+                for attrib in action.attrib:
+                    value = action.attrib[attrib]
+                    if attrib == "name" or (attrib == "depth" and value == "0"):
+                        continue
+                    new_operation.append(attrib + "=" + value)
+                return_list.append(new_operation)
+    except xml.parsers.expat.ExpatError as e:
+        err("Unable to parse xml for '%s': %s" % (ra_type, e))
+    except xml.etree.ElementTree.ParseError as e:
+        err("Unable to parse xml for '%s': %s" % (ra_type, e))
+
+    return return_list
+
+def get_timeout_seconds(timeout, return_unknown=False):
+    if timeout.isdigit():
+        return int(timeout)
+    suffix_multiplier = {
+        "s": 1,
+        "sec": 1,
+        "m": 60,
+        "min": 60,
+        "h": 3600,
+        "hr": 3600,
+    }
+    for suffix, multiplier in suffix_multiplier.items():
+        if timeout.endswith(suffix) and timeout[:-len(suffix)].isdigit():
+            return int(timeout[:-len(suffix)]) * multiplier
+    return timeout if return_unknown else None
 
 def check_pacemaker_supports_resource_wait():
-    if not has_resource_wait_support(cmd_runner()):
+    output, retval = run(["crm_resource", "-?"])
+    if "--wait" not in output:
         err("crm_resource does not support --wait, please upgrade pacemaker")
 
-def validate_wait_get_timeout(need_cib_support=True):
-    if need_cib_support:
-        check_pacemaker_supports_resource_wait()
-        if usefile:
-            err("Cannot use '-f' together with '--wait'")
+def validate_wait_get_timeout():
+    check_pacemaker_supports_resource_wait()
+    if usefile:
+        err("Cannot use '-f' together with '--wait'")
     wait_timeout = pcs_options["--wait"]
     if wait_timeout is None:
         return wait_timeout
@@ -1561,6 +1325,104 @@ def validate_wait_get_timeout(need_cib_support=True):
         )
     return wait_timeout
 
+# Check and see if the specified resource (or stonith) type is present on the
+# file system and properly responds to a meta-data request
+def is_valid_resource(resource, caseInsensitiveCheck=False):
+    if resource.startswith("ocf:"):
+        resource_split = resource.split(":",3)
+        if len(resource_split) != 3:
+            err("ocf resource definition (" + resource + ") does not match the ocf:provider:name pattern")
+        providers = [resource_split[1]]
+        resource = resource_split[2]
+    elif resource.startswith("stonith:"):
+        resource_split = resource.split(":", 2)
+        stonith = resource_split[1]
+        metadata = get_stonith_metadata("/usr/sbin/" + stonith)
+        if metadata != False:
+            return True
+        else:
+            return False
+    elif resource.startswith("nagios:"):
+        # search for nagios script
+        resource_split = resource.split(":", 2)
+        if os.path.isfile("/usr/share/pacemaker/nagios/plugins-metadata/%s.xml" % resource_split[1]):
+            return True
+        else:
+            return False
+    elif resource.startswith("lsb:"):
+        resource_split = resource.split(":",2)
+        lsb_ra = resource_split[1]
+        if os.path.isfile("/etc/init.d/" + lsb_ra):
+            return True
+        else:
+            return False
+    elif resource.startswith("systemd:"):
+        resource_split = resource.split(":",2)
+        systemd_ra = resource_split[1]
+        if os.path.isfile("/usr/lib/systemd/system/" + systemd_ra + ".service"):
+            return True
+        else:
+            return False
+    else:
+        providers = sorted(os.listdir("/usr/lib/ocf/resource.d"))
+
+    # search for ocf script
+    for provider in providers:
+        filepath = "/usr/lib/ocf/resource.d/" + provider + "/"
+        if caseInsensitiveCheck:
+            if os.path.isdir(filepath):
+                all_files = [ f for f in os.listdir(filepath ) ]
+                for f in all_files:
+                    if f.lower() == resource.lower() and os.path.isfile(filepath + f):
+                        return "ocf:" + provider + ":" + f
+                continue
+
+        metadata = get_metadata(filepath + resource)
+        if metadata == False:
+            continue
+        else:
+            # found it
+            return True
+
+    return False
+
+# Get metadata from resource agent
+def get_metadata(resource_agent_script):
+    os.environ['OCF_ROOT'] = "/usr/lib/ocf/"
+    if (not os.path.isfile(resource_agent_script)) or (not os.access(resource_agent_script, os.X_OK)):
+        return False
+
+    (metadata, retval) = run([resource_agent_script, "meta-data"],True)
+    if retval == 0:
+        return metadata
+    else:
+        return False
+
+def get_stonith_metadata(fence_agent_script):
+    if (not os.path.isfile(fence_agent_script)) or (not os.access(fence_agent_script, os.X_OK)):
+        return False
+    (metadata, retval) = run([fence_agent_script, "-o", "metadata"], True)
+    if retval == 0:
+        return metadata
+    else:
+        return False
+
+def get_default_stonith_options():
+    (metadata, retval) = run([settings.stonithd_binary, "metadata"],True)
+    if retval == 0:
+        root = ET.fromstring(metadata)
+        params = root.findall(str(".//parameter"))
+        default_params = []
+        for param in params:
+            adv_param = False
+            for short_desc in param.findall(str(".//shortdesc")):
+                if short_desc.text.startswith("Advanced use only"):
+                    adv_param = True
+            if adv_param == False:
+                default_params.append(param)
+        return default_params
+    else:
+        return []
 
 # Return matches from the CIB with the xpath_query
 def get_cib_xpath(xpath_query):
@@ -1609,23 +1471,12 @@ def is_etree(var):
     )
 
 # Replace only configuration section of cib with dom passed
-def replace_cib_configuration(dom, cib_upgraded=False):
+def replace_cib_configuration(dom):
     if is_etree(dom):
-        #etree returns string in bytes: b'xml'
-        #python 3 removed .encode() from byte strings
-        #run(...) calls subprocess.Popen.communicate which calls encode...
-        #so there is bytes to str conversion
-        new_dom = ET.tostring(dom).decode()
-    elif hasattr(dom, "toxml"):
+        new_dom = ET.tostring(dom)
+    else:
         new_dom = dom.toxml()
-    else:
-        new_dom = dom
-    cmd = ["cibadmin", "--replace", "-V", "--xml-pipe"]
-    if cib_upgraded:
-        print("CIB has been upgraded to the latest schema version.")
-    else:
-        cmd += ["-o", "configuration"]
-    output, retval = run(cmd, False, new_dom)
+    output, retval = run(["cibadmin", "--replace", "-o", "configuration", "-V", "--xml-pipe"],False,new_dom)
     if retval != 0:
         err("Unable to update cib\n"+output)
 
@@ -1636,42 +1487,20 @@ def is_valid_cib_scope(scope):
     ]
 
 # Checks to see if id exists in the xml dom passed
-# DEPRECATED use lxml version available in pcs.lib.cib.tools
 def does_id_exist(dom, check_id):
-    # do not search in /cib/status, it may contain references to previously
-    # existing and deleted resources and thus preventing creating them again
     if is_etree(dom):
-        for elem in dom.findall(str(
-            '(/cib/*[name()!="status"]|/*[name()!="cib"])/*'
-        )):
+        for elem in dom.findall(str(".//*")):
             if elem.get("id") == check_id:
                 return True
     else:
-        document = (
-            dom
-            if isinstance(dom, xml.dom.minidom.Document)
-            else dom.ownerDocument
-        )
-        cib_found = False
-        for cib in dom_get_children_by_tag_name(document, "cib"):
-            cib_found = True
-            for section in cib.childNodes:
-                if section.nodeType != xml.dom.minidom.Node.ELEMENT_NODE:
-                    continue
-                if section.tagName == "status":
-                    continue
-                for elem in section.getElementsByTagName("*"):
-                    if elem.getAttribute("id") == check_id:
-                        return True
-        if not cib_found:
-            for elem in document.getElementsByTagName("*"):
-                if elem.getAttribute("id") == check_id:
-                    return True
+        all_elem = dom.getElementsByTagName("*")
+        for elem in all_elem:
+            if elem.getAttribute("id") == check_id:
+                return True
     return False
 
 # Returns check_id if it doesn't exist in the dom, otherwise it adds an integer
 # to the end of the id and increments it until a unique id is found
-# DEPRECATED use lxml version available in pcs.lib.cib.tools
 def find_unique_id(dom, check_id):
     counter = 1
     temp_id = check_id
@@ -1728,26 +1557,19 @@ def set_unmanaged(resource):
             "is-managed", "--meta", "--parameter-value", "false"]
     return run(args)
 
-def get_node_attributes(filter_node=None, filter_attr=None):
+def get_node_attributes():
     node_config = get_cib_xpath("//nodes")
+    nas = {}
     if (node_config == ""):
         err("unable to get crm_config, is pacemaker running?")
     dom = parseString(node_config).documentElement
-    nas = dict()
     for node in dom.getElementsByTagName("node"):
         nodename = node.getAttribute("uname")
-        if filter_node is not None and nodename != filter_node:
-            continue
         for attributes in node.getElementsByTagName("instance_attributes"):
             for nvp in attributes.getElementsByTagName("nvpair"):
-                attr_name = nvp.getAttribute("name")
-                if filter_attr is not None and attr_name != filter_attr:
-                    continue
                 if nodename not in nas:
-                    nas[nodename] = dict()
-                nas[nodename][attr_name] = nvp.getAttribute("value")
-            # Use just first element of attributes. We don't support
-            # attributes with rules just yet.
+                    nas[nodename] = []
+                nas[nodename].append(nvp.getAttribute("name") + "=" + nvp.getAttribute("value"))
             break
     return nas
 
@@ -1801,7 +1623,7 @@ def set_cib_property(prop, value, cib_dom=None):
     if update_cib:
         replace_cib_configuration(crm_config)
 
-def setAttribute(a_type, a_name, a_value, exit_on_error=False):
+def setAttribute(a_type, a_name, a_value):
     args = ["crm_attribute", "--type", a_type, "--attr-name", a_name,
             "--attr-value", a_value]
 
@@ -1810,10 +1632,7 @@ def setAttribute(a_type, a_name, a_value, exit_on_error=False):
 
     output, retval = run(args)
     if retval != 0:
-        if exit_on_error:
-            err(output)
-        else:
-            print(output)
+        print(output)
 
 def getTerminalSize(fd=1):
     """
@@ -1838,40 +1657,31 @@ def getTerminalSize(fd=1):
 
 def get_terminal_input(message=None):
     if message:
-        sys.stdout.write(message)
+        sys.stdout.write('Username: ')
         sys.stdout.flush()
-    try:
-        if PYTHON2:
-            return raw_input("")
-        else:
-            return input("")
-    except EOFError:
-        return ""
-    except KeyboardInterrupt:
-        print("Interrupted")
-        sys.exit(1)
+    if PYTHON2:
+        return raw_input("")
+    else:
+        return input("")
 
 def get_terminal_password(message="Password: "):
-    if sys.stdin.isatty():
-        try:
-            return getpass.getpass(message)
-        except KeyboardInterrupt:
-            print("Interrupted")
-            sys.exit(1)
+    if sys.stdout.isatty():
+        return getpass.getpass(message)
     else:
         return get_terminal_input(message)
 
 # Returns an xml dom containing the current status of the cluster
-# DEPRECATED, please use ClusterState(getClusterStateXml()) instead
 def getClusterState():
-    return parseString(getClusterStateXml())
-
-# DEPRECATED, please use lib.pacemaker.get_cluster_status_xml in new code
-def getClusterStateXml():
-    xml, returncode = run(["crm_mon", "--one-shot", "--as-xml", "--inactive"])
-    if returncode != 0:
+    (output, retval) = run(["crm_mon", "-1", "-X","-r"])
+    if (retval != 0):
         err("error running crm_mon, is pacemaker running?")
-    return xml
+    dom = parseString(output)
+    return dom
+
+def getNodeAttributes():
+    dom = get_cib_dom()
+    nodes = dom.getElementsByTagName("node")
+
 
 # Returns true if stonith-enabled is not false/off & no stonith devices exist
 # So if the cluster can't start due to missing stonith devices return true
@@ -1884,27 +1694,16 @@ def stonithCheck():
                 if prop.attrib["value"] == "off" or \
                         prop.attrib["value"] == "false":
                     return False
+        
+    primitives = et.findall(str("configuration/resources/primitive"))
+    for p in primitives:
+        if p.attrib["class"] == "stonith":
+            return False
 
-    xpath_list = (
-        "configuration/resources/primitive",
-        "configuration/resources/group/primitive",
-        "configuration/resources/clone/primitive",
-        "configuration/resources/clone/group/primitive",
-        "configuration/resources/master/primitive",
-        "configuration/resources/master/group/primitive",
-    )
-    for xpath in xpath_list:
-        for p in et.findall(str(xpath)):
-            if ("class" in p.attrib) and (p.attrib["class"] == "stonith"):
-                return False
-
-    if not usefile:
-        # check if SBD daemon is running
-        try:
-            if is_service_running(cmd_runner(), sbd.get_sbd_service_name()):
-                return False
-        except LibraryError:
-            pass
+    primitives = et.findall(str("configuration/resources/clone/primitive"))
+    for p in primitives:
+        if p.attrib["class"] == "stonith":
+            return False
 
     return True
 
@@ -1925,10 +1724,10 @@ def getCorosyncNodesID(allow_failure=False):
 
         (output, retval) = run(['corosync-cmapctl', '-b', 'nodelist.node'])
     else:
-        err_msgs, retval, output, dummy_std_err = call_local_pcsd(
+        err_msgs, retval, output, std_err = call_local_pcsd(
             ['status', 'nodes', 'corosync-id'], True
         )
-        if err_msgs and not allow_failure:
+        if err_msgs:
             for msg in err_msgs:
                 err(msg, False)
             sys.exit(1)
@@ -1942,29 +1741,26 @@ def getCorosyncNodesID(allow_failure=False):
     cs_nodes = {}
     node_list_node_mapping = {}
     for line in output.rstrip().split("\n"):
-        m = re.match("nodelist\.node\.(\d+)\.nodeid.*= (.*)", line)
+        m = re.match("nodelist.node.(\d+).nodeid.*= (.*)",line)
         if m:
             node_list_node_mapping[m.group(1)] = m.group(2)
 
     for line in output.rstrip().split("\n"):
-        m = re.match("nodelist\.node\.(\d+)\.ring0_addr.*= (.*)", line)
-        # check if node id is in node_list_node_mapping - do not crash when
-        # node ids are not specified
-        if m and m.group(1) in node_list_node_mapping:
+        m = re.match("nodelist.node.(\d+).ring0_addr.*= (.*)",line)
+        if m:
             cs_nodes[node_list_node_mapping[m.group(1)]] = m.group(2)
     return cs_nodes
 
 # Warning, if a node has never started the hostname may be '(null)'
 #TODO This doesn't work on CMAN clusters at all and should be removed completely
-# Doesn't work on pacemaker-remote nodes either
 def getPacemakerNodesID(allow_failure=False):
     if os.getuid() == 0:
         (output, retval) = run(['crm_node', '-l'])
     else:
-        err_msgs, retval, output, dummy_std_err = call_local_pcsd(
+        err_msgs, retval, output, std_err = call_local_pcsd(
             ['status', 'nodes', 'pacemaker-id'], True
         )
-        if err_msgs and not allow_failure:
+        if err_msgs:
             for msg in err_msgs:
                 err(msg, False)
             sys.exit(1)
@@ -1984,11 +1780,9 @@ def getPacemakerNodesID(allow_failure=False):
     return pm_nodes
 
 def corosyncPacemakerNodeCheck():
-    # does not work on CMAN clusters and pacemaker-remote nodes
-    # we do not want a failure to exit pcs as this is only a minor information
-    # function
-    pm_nodes = getPacemakerNodesID(allow_failure=True)
-    cs_nodes = getCorosyncNodesID(allow_failure=True)
+    # does not work on CMAN clusters
+    pm_nodes = getPacemakerNodesID()
+    cs_nodes = getCorosyncNodesID()
 
     for node_id in pm_nodes:
         if pm_nodes[node_id] == "(null)":
@@ -2009,17 +1803,88 @@ def getResourceType(resource):
     resType = resource.getAttribute("type")
     return resClass + ":" + resProvider + ":" + resType
 
+# Returns empty array if all attributes are valid, otherwise return an array
+# of bad attributes
+# res_id is the resource id
+# ra_values is an array of 2 item tuples (key, value)
+# resource is a python minidom element of the resource from the cib
+def validInstanceAttributes(res_id, ra_values, resource_type):
+    ra_values = dict(ra_values)
+    found = False
+    stonithDevice = False
+    resSplit = resource_type.split(":")
+    if len(resSplit) == 2:
+        (resClass, resType) = resSplit
+        metadata = get_stonith_metadata(fence_bin + resType)
+        stonithDevice = True
+    else:
+        (resClass, resProvider, resType) = resource_type.split(":")
+        metadata = get_metadata("/usr/lib/ocf/resource.d/" + resProvider + "/" + resType)
+
+    if metadata == False:
+        err("Unable to find resource: ocf:%s:%s" % (resProvider, resType))
+
+    missing_required_parameters = []
+    valid_parameters = ["pcmk_host_list", "pcmk_host_map", "pcmk_host_check", "pcmk_host_argument", "pcmk_arg_map", "pcmk_list_cmd", "pcmk_status_cmd", "pcmk_monitor_cmd"]
+    valid_parameters = valid_parameters + ["stonith-timeout", "priority", "timeout"]
+    valid_parameters = valid_parameters + ["pcmk_reboot_action", "pcmk_poweroff_action", "pcmk_list_action", "pcmk_monitor_action", "pcmk_status_action"]
+    for a in ["off","on","status","list","metadata","monitor", "reboot"]:
+        valid_parameters.append("pcmk_" + a + "_action")
+        valid_parameters.append("pcmk_" + a + "_timeout")
+        valid_parameters.append("pcmk_" + a + "_retries")
+    bad_parameters = []
+    try:
+        actions = ET.fromstring(metadata).find("parameters")
+        for action in actions.findall(str("parameter")):
+            valid_parameters.append(action.attrib["name"])
+            if "required" in action.attrib and action.attrib["required"] == "1":
+# If a default value is set, then the attribute isn't really required (for 'action' on stonith devices only)
+                default_exists = False
+                if action.attrib["name"] == "action" and stonithDevice:
+                    for ch in action:
+                        if ch.tag == "content" and "default" in ch.attrib:
+                            default_exists = True
+                            break
+
+                if not default_exists:
+                    missing_required_parameters.append(action.attrib["name"])
+    except xml.parsers.expat.ExpatError as e:
+        err("Unable to parse xml for '%s': %s" % (resource_type, e))
+    except xml.etree.ElementTree.ParseError as e:
+        err("Unable to parse xml for '%s': %s" % (resource_type, e))
+    for key,value in ra_values.items():
+        if key not in valid_parameters:
+            bad_parameters.append(key)
+        if key in missing_required_parameters:
+            missing_required_parameters.remove(key)
+
+    if missing_required_parameters:
+        if resClass == "stonith" and "port" in missing_required_parameters:
+            # Temporarily make "port" an optional parameter. Once we are
+            # getting metadata from pacemaker, this will be reviewed and fixed.
+            #if (
+            #    "pcmk_host_argument" in ra_values
+            #    or
+            #    "pcmk_host_map" in ra_values
+            #    or
+            #    "pcmk_host_list" in ra_values
+            #):
+            missing_required_parameters.remove("port")
+
+    return bad_parameters, missing_required_parameters 
+
 def getClusterName():
     if is_rhel6():
         try:
             dom = parse(settings.cluster_conf_file)
-            return dom.documentElement.getAttribute("name")
         except (IOError,xml.parsers.expat.ExpatError):
-            pass
+            return ""
+
+        return dom.documentElement.getAttribute("name")
     else:
         try:
             f = open(settings.corosync_conf_file,'r')
-            conf = corosync_conf_parser.parse_string(f.read())
+            conf = corosync_conf_utils.parse_string(f.read())
             f.close()
             # mimic corosync behavior - the last cluster_name found is used
             cluster_name = None
@@ -2028,16 +1893,8 @@ def getClusterName():
                     cluster_name = attrs[1]
             if cluster_name:
                 return cluster_name
-        except (IOError, corosync_conf_parser.CorosyncConfParserException):
-            pass
-
-    # there is no corosync.conf or cluster.conf on remote nodes, we can try to
-    # get cluster name from pacemaker
-    try:
-        return get_set_properties("cluster-name")["cluster-name"]
-    except:
-        # we need to catch SystemExit (from utils.err), parse errors and so on
-        pass
+        except (IOError, corosync_conf_utils.CorosyncConfException) as e:
+            return ""
 
     return ""
 
@@ -2066,18 +1923,34 @@ def is_score_or_opt(var):
     return False
 
 def is_score(var):
-    return is_score_value(var)
+    return score_regexp.match(var) is not None
 
 def validate_xml_id(var, description="id"):
-    try:
-        validate_id(var, description)
-    except LibraryError as e:
-        return False, build_report_message(e.args[0])
+    # see NCName definition
+    # http://www.w3.org/TR/REC-xml-names/#NT-NCName
+    # http://www.w3.org/TR/REC-xml/#NT-Name
+    if len(var) < 1:
+        return False, "%s cannot be empty" % description
+    first_char_re = re.compile("[a-zA-Z_]")
+    if not first_char_re.match(var[0]):
+        return (
+            False,
+            "invalid %s '%s', '%s' is not a valid first character for a %s"
+                % (description, var, var[0], description)
+        )
+    char_re = re.compile("[a-zA-Z0-9_.-]")
+    for char in var[1:]:
+        if not char_re.match(char):
+            return (
+                False,
+                "invalid %s '%s', '%s' is not a valid character for a %s"
+                    % (description, var, char, description)
+            )
     return True, ""
 
 def is_iso8601_date(var):
     # using pacemaker tool to check if a value is a valid pacemaker iso8601 date
-    dummy_output, retVal = run(["iso8601", "-d", var])
+    output, retVal = run(["iso8601", "-d", var])
     return retVal == 0
 
 def verify_cert_key_pair(cert, key):
@@ -2109,106 +1982,82 @@ def verify_cert_key_pair(cert, key):
 
     return errors
 
+# Does pacemaker consider a variable as true in cib?
+# See crm_is_true in pacemaker/lib/common/utils.c
+def is_cib_true(var):
+    return var.lower() in CIB_BOOLEAN_TRUE
 
-def is_rhel6():
-    return is_cman_cluster()
+def is_cib_boolean(val):
+    return val.lower() in CIB_BOOLEAN_TRUE + CIB_BOOLEAN_FALSE
+
+def is_systemctl():
+    systemctl_paths = [
+        '/usr/bin/systemctl',
+        '/bin/systemctl',
+        '/var/run/systemd/system',
+    ]
+    for path in systemctl_paths:
+        if os.path.exists(path):
+            return True
+    return False
 
 @simple_cache
-def is_cman_cluster():
-    return lib_is_cman_cluster(cmd_runner())
+def is_rhel6():
+    # Checking corosync version works in most cases and supports non-rhel
+    # distributions as well as running (manually compiled) corosync2 on rhel6.
+    # - corosync2 does not support cman at all
+    # - corosync1 runs with cman on rhel6
+    # - corosync1 can be used without cman, but we don't support it anyways
+    # - corosync2 is the default result if errors occur
+    output, retval = run(["corosync", "-v"])
+    if retval != 0:
+        return False
+    match = re.search(r"version\D+(\d+)", output)
+    return match and match.group(1) == "1"
 
 def err(errorText, exit_after_error=True):
     sys.stderr.write("Error: %s\n" % errorText)
     if exit_after_error:
         sys.exit(1)
 
-
 def serviceStatus(prefix):
-    print("Daemon Status:")
-    service_def = [
-        # (
-        #     service name,
-        #     display even if not enabled nor running
-        # )
-        ("cman", False),
-        ("corosync", True),
-        ("pacemaker", True),
-        ("pacemaker_remote", False),
-        ("pcsd", True),
-        (sbd.get_sbd_service_name(), False),
-    ]
-    for service, display_always in service_def:
-        try:
-            running = is_service_running(cmd_runner(), service)
-            enabled = is_service_enabled(cmd_runner(), service)
-            if display_always or enabled or running:
-                print("{prefix}{service}: {active}/{enabled}".format(
-                    prefix=prefix,
-                    service=service,
-                    active=("active" if running else "inactive"),
-                    enabled=("enabled" if enabled else "disabled")
-                ))
-        except LibraryError:
-            pass
+    if is_systemctl():
+        print("Daemon Status:")
+        daemons = ["corosync", "pacemaker", "pcsd"]
+        out, ret = run(["systemctl", "is-active"] + daemons)
+        status = out.split("\n")
+        out, ret = run(["systemctl", "is-enabled"]+ daemons)
+        enabled = out.split("\n")
+        for i in range(len(daemons)):
+            print(prefix + daemons[i] + ": " + status[i] + "/" + enabled[i])
 
 def enableServices():
-    # do NOT handle SBD in here, it is started by pacemaker not systemd or init
     if is_rhel6():
-        service_list = ["pacemaker"]
+        run(["chkconfig", "pacemaker", "on"])
     else:
-        service_list = ["corosync", "pacemaker"]
-        if need_to_handle_qdevice_service():
-            service_list.append("corosync-qdevice")
-
-    report_item_list = []
-    for service in service_list:
-        try:
-            enable_service(cmd_runner(), service)
-        except EnableServiceError as e:
-            report_item_list.append(
-                reports.service_enable_error(e.service, e.message)
-            )
-    if report_item_list:
-        raise LibraryError(*report_item_list)
+        if is_systemctl():
+            run(["systemctl", "enable", "corosync.service"])
+            run(["systemctl", "enable", "pacemaker.service"])
+        else:
+            run(["chkconfig", "corosync", "on"])
+            run(["chkconfig", "pacemaker", "on"])
 
 def disableServices():
-    # Disable corosync on RHEL6 as well - left here for users of old pcs which
-    # enabled corosync.
-    # do NOT handle SBD in here, it is started by pacemaker not systemd or init
-    service_list = ["corosync", "pacemaker"]
-    if need_to_handle_qdevice_service():
-        service_list.append("corosync-qdevice")
-
-    report_item_list = []
-    for service in service_list:
-        try:
-            disable_service(cmd_runner(), service)
-        except DisableServiceError as e:
-            report_item_list.append(
-                reports.service_disable_error(e.service, e.message)
-            )
-    if report_item_list:
-        raise LibraryError(*report_item_list)
-
-def start_service(service):
-    if is_systemctl():
-        stdout, stderr, retval = cmd_runner().run([
-            _systemctl, "start", service
-        ])
+    if is_rhel6():
+        run(["chkconfig", "pacemaker", "off"])
+        run(["chkconfig", "corosync", "off"]) # Left here for users of old pcs
+                                              # which enabled corosync
     else:
-        stdout, stderr, retval = cmd_runner().run([_service, service, "start"])
-    return join_multilines([stderr, stdout]), retval
-
-def stop_service(service):
-    if is_systemctl():
-        stdout, stderr, retval = cmd_runner().run([_systemctl, "stop", service])
-    else:
-        stdout, stderr, retval = cmd_runner().run([_service, service, "stop"])
-    return join_multilines([stderr, stdout]), retval
+        if is_systemctl():
+            run(["systemctl", "disable", "corosync.service"])
+            run(["systemctl", "disable", "pacemaker.service"])
+        else:
+            run(["chkconfig", "corosync", "off"])
+            run(["chkconfig", "pacemaker", "off"])
 
 def write_file(path, data, permissions=0o644, binary=False):
     if os.path.exists(path):
-        if "--force" not in pcs_options:
+        if not "--force" in pcs_options:
             return False, "'%s' already exists, use --force to overwrite" % path
         else:
             try:
@@ -2361,7 +2210,7 @@ def parse_cman_quorum_info(cman_info):
     in_node_list = False
     local_node_id = ""
     try:
-        for line in cman_info.splitlines():
+        for line in cman_info.split("\n"):
             line = line.strip()
             if not line:
                 continue
@@ -2373,13 +2222,12 @@ def parse_cman_quorum_info(cman_info):
                 parsed["node_list"].append({
                     "name": parts[3],
                     "votes": int(parts[2]),
-                    "local": local_node_id == parts[0],
+                    "local": local_node_id == parts[0]
                 })
             else:
                 if line == "---Votes---":
                     in_node_list = True
                     parsed["node_list"] = []
-                    parsed["qdevice_list"] = []
                     continue
                 if not ":" in line:
                     continue
@@ -2404,7 +2252,7 @@ def parse_quorumtool_output(quorumtool_output):
     parsed = {}
     in_node_list = False
     try:
-        for line in quorumtool_output.splitlines():
+        for line in quorumtool_output.split("\n"):
             line = line.strip()
             if not line:
                 continue
@@ -2413,25 +2261,15 @@ def parse_quorumtool_output(quorumtool_output):
                     # skip headers
                     continue
                 parts = line.split()
-                if parts[0] == "0":
-                    # this line has nodeid == 0, this is a qdevice line
-                    parsed["qdevice_list"].append({
-                        "name": parts[2],
-                        "votes": int(parts[1]),
-                        "local": False,
-                    })
-                else:
-                    # this line has non-zero nodeid, this is a node line
-                    parsed["node_list"].append({
-                        "name": parts[3],
-                        "votes": int(parts[1]),
-                        "local": len(parts) > 4 and parts[4] == "(local)",
-                    })
+                parsed["node_list"].append({
+                    "name": parts[3],
+                    "votes": int(parts[1]),
+                    "local": len(parts) > 4 and parts[4] == "(local)"
+                })
             else:
                 if line == "Membership information":
                     in_node_list = True
                     parsed["node_list"] = []
-                    parsed["qdevice_list"] = []
                     continue
                 if not ":" in line:
                     continue
@@ -2464,8 +2302,6 @@ def is_node_stop_cause_quorum_loss(quorum_info, local=True, node_list=None):
         if node_list and node_info["name"] in node_list:
             continue
         votes_after_stop += node_info["votes"]
-    for qdevice_info in quorum_info.get("qdevice_list", []):
-        votes_after_stop += qdevice_info["votes"]
     return votes_after_stop < quorum_info["quorum"]
 
 def dom_prepare_child_element(dom_element, tag_name, id):
@@ -2526,7 +2362,7 @@ def dom_update_utilization(dom_element, attributes, id_prefix=""):
         id_prefix + dom_element.getAttribute("id") + "-utilization"
     )
 
-    for name, value in sorted(attributes.items()):
+    for name, value in attributes:
         if value != "" and not is_int(value):
             err(
                 "Value of utilization attribute must be integer: "
@@ -2554,22 +2390,21 @@ def dom_update_meta_attr(dom_element, attributes):
             meta_attributes.getAttribute("id") + "-"
         )
 
-def get_utilization(element, filter_name=None):
+def get_utilization(element):
     utilization = {}
     for e in element.getElementsByTagName("utilization"):
         for u in e.getElementsByTagName("nvpair"):
             name = u.getAttribute("name")
-            if filter_name is not None and name != filter_name:
-                continue
-            utilization[name] = u.getAttribute("value")
+            value = u.getAttribute("value") if u.hasAttribute("value") else ""
+            utilization[name] = value
         # Use just first element of utilization attributes. We don't support
         # utilization with rules just yet.
         break
     return utilization
 
-def get_utilization_str(element, filter_name=None):
+def get_utilization_str(element):
     output = []
-    for name, value in sorted(get_utilization(element, filter_name).items()):
+    for name, value in sorted(get_utilization(element).items()):
         output.append(name + "=" + value)
     return " ".join(output)
 
@@ -2590,7 +2425,7 @@ def is_valid_cib_value(type, value, enum_options=[]):
     if type == "enum":
         return value in enum_options
     elif type == "boolean":
-        return is_boolean(value)
+        return is_cib_boolean(value)
     elif type == "integer":
         return is_score(value)
     elif type == "time":
@@ -2647,44 +2482,33 @@ def get_cluster_properties_definition():
     ]
     definition = {}
     for source in sources:
-        stdout, stderr, retval = cmd_runner().run([source["path"], "metadata"])
+        output, retval = run([source["path"], "metadata"])
         if retval != 0:
-            err("unable to run {0}\n{1}".format(source["name"], stderr))
-        try:
-            etree = ET.fromstring(stdout)
-            for e in etree.findall("./parameters/parameter"):
-                prop = get_cluster_property_from_xml(e)
-                if prop["name"] not in banned_props:
-                    prop["source"] = source["name"]
-                    prop["advanced"] = prop["name"] not in basic_props
-                    if prop["name"] in readable_names:
-                        prop["readable_name"] = readable_names[prop["name"]]
-                    else:
-                        prop["readable_name"] = prop["name"]
-                    definition[prop["name"]] = prop
-        except xml.parsers.expat.ExpatError as e:
-            err("unable to parse {0} metadata definition: {1}".format(
-                source["name"],
-                e
-            ))
-        except ET.ParseError as e:
-            err("unable to parse {0} metadata definition: {1}".format(
-                source["name"],
-                e
-            ))
+            err("unable to run {0}\n".format(source["name"]) + output)
+        etree = ET.fromstring(output)
+        for e in etree.findall("./parameters/parameter"):
+            prop = get_cluster_property_from_xml(e)
+            if prop["name"] not in banned_props:
+                prop["source"] = source["name"]
+                prop["advanced"] = prop["name"] not in basic_props
+                if prop["name"] in readable_names:
+                    prop["readable_name"] = readable_names[prop["name"]]
+                else:
+                    prop["readable_name"] = prop["name"]
+                definition[prop["name"]] = prop
     return definition
 
 
 def get_cluster_property_from_xml(etree_el):
     property = {
-        "name": etree_el.get("name", ""),
-        "shortdesc": "",
-        "longdesc": "",
+        "name": etree_el.get("name"),
+        "shortdesc": etree_el.find("shortdesc").text,
+        "longdesc": etree_el.find("longdesc").text
     }
-    for item in ["shortdesc", "longdesc"]:
-        item_el = etree_el.find(item)
-        if item_el is not None and item_el.text is not None:
-            property[item] = item_el.text
+    if property["shortdesc"] is None:
+        property["shortdesc"] = ""
+    if property["longdesc"] is None:
+        property["longdesc"] = ""
 
     content = etree_el.find("content")
     if content is None:
@@ -2707,120 +2531,3 @@ def get_cluster_property_from_xml(etree_el):
     if property["longdesc"] == property["shortdesc"]:
         property["longdesc"] = ""
     return property
-
-def get_lib_env():
-    user = None
-    groups = None
-    if os.geteuid() == 0:
-        for name in ("CIB_user", "CIB_user_groups"):
-            if name in os.environ and os.environ[name].strip():
-                value = os.environ[name].strip()
-                if "CIB_user" == name:
-                    user = value
-                else:
-                    groups = value.split(" ")
-
-    cib_data = None
-    if usefile:
-        cib_data = get_cib()
-
-    corosync_conf_data = None
-    if "--corosync_conf" in pcs_options:
-        conf = pcs_options["--corosync_conf"]
-        try:
-            corosync_conf_data = open(conf).read()
-        except IOError as e:
-            err("Unable to read %s: %s" % (conf, e.strerror))
-
-    return LibraryEnvironment(
-        logging.getLogger("old_cli"),
-        get_report_processor(),
-        user,
-        groups,
-        cib_data,
-        corosync_conf_data,
-        auth_tokens_getter=readTokens,
-    )
-
-def get_cli_env():
-    user = None
-    groups = None
-    if os.geteuid() == 0:
-        for name in ("CIB_user", "CIB_user_groups"):
-            if name in os.environ and os.environ[name].strip():
-                value = os.environ[name].strip()
-                if "CIB_user" == name:
-                    user = value
-                else:
-                    groups = value.split(" ")
-
-    env = Env()
-    env.user = user
-    env.groups = groups
-    env.auth_tokens_getter = readTokens
-    env.debug = "--debug" in pcs_options
-    return env
-
-def get_middleware_factory():
-    return middleware.create_middleware_factory(
-        cib=middleware.cib(usefile, get_cib, replace_cib_configuration),
-        corosync_conf_existing=middleware.corosync_conf_existing(
-            pcs_options.get("--corosync_conf", None)
-        ),
-        booth_conf=pcs.cli.booth.env.middleware_config(
-            pcs_options.get("--name", DEFAULT_BOOTH_NAME),
-            pcs_options.get("--booth-conf", None),
-            pcs_options.get("--booth-key", None),
-        ),
-        cluster_conf_read_only=middleware.cluster_conf_read_only(
-            pcs_options.get("--cluster_conf", None)
-        ),
-    )
-
-def get_library_wrapper():
-    return Library(get_cli_env(), get_middleware_factory())
-
-
-def get_modificators():
-    #please keep in mind that this is not final implemetation
-    #beside missing support of other possible options, cases may arise that can
-    #not be solved using a dict - for example "wait" - maybe there will be
-    #global default for it and maybe there will appear need for local default...
-    #there is possible create class extending dict, so dict like access in
-    #commands is not an issue
-    return {
-        "autocorrect": "--autocorrect" in pcs_options,
-        "autodelete": "--autodelete" in pcs_options,
-        "corosync_conf": pcs_options.get("--corosync_conf", None),
-        "describe": "--nodesc" not in pcs_options,
-        "enable": "--enable" in pcs_options,
-        "force": "--force" in pcs_options,
-        "full": "--full" in pcs_options,
-        "name": pcs_options.get("--name", None),
-        "skip_offline_nodes": "--skip-offline" in pcs_options,
-        "start": "--start" in pcs_options,
-        "watchdog": pcs_options.get("--watchdog", []),
-    }
-
-def exit_on_cmdline_input_errror(error, main_name, usage_name):
-    if error.message:
-        err(error.message)
-    else:
-        usage.show(main_name, [usage_name])
-    sys.exit(1)
-
-def get_report_processor():
-    return LibraryReportProcessorToConsole(debug=("--debug" in pcs_options))
-
-def get_set_properties(prop_name=None, defaults=None):
-    properties = {} if defaults is None else dict(defaults)
-    (output, retVal) = run(["cibadmin","-Q","--scope", "crm_config"])
-    if retVal != 0:
-        err("unable to get crm_config\n"+output)
-    dom = parseString(output)
-    de = dom.documentElement
-    crm_config_properties = de.getElementsByTagName("nvpair")
-    for prop in crm_config_properties:
-        if prop_name is None or (prop_name == prop.getAttribute("name")):
-            properties[prop.getAttribute("name")] = prop.getAttribute("value")
-    return properties

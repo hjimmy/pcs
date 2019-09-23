@@ -1,23 +1,17 @@
-from __future__ import (
-    absolute_import,
-    division,
-    print_function,
-    unicode_literals,
-)
+from __future__ import absolute_import
+from __future__ import division
+from __future__ import print_function
+from __future__ import unicode_literals
 
 import sys
 import os
 
-from pcs import (
-    resource,
-    usage,
-    utils,
-)
-# from pcs.qdevice import qdevice_status_cmd
-# from pcs.quorum import quorum_status_cmd
-# from pcs.cli.common.errors import CmdLineInputError
-from pcs.lib.errors import LibraryError
-from pcs.lib.pacemaker_state import ClusterState
+import resource
+import cluster
+import settings
+import usage
+import utils
+
 
 def status_cmd(argv):
     if len(argv) == 0:
@@ -36,50 +30,20 @@ def status_cmd(argv):
     elif (sub_cmd == "nodes"):
         nodes_status(argv)
     elif (sub_cmd == "pcsd"):
-        cluster_pcsd_status(argv)
+        cluster.cluster_gui_status(argv)
     elif (sub_cmd == "xml"):
         xml_status()
     elif (sub_cmd == "corosync"):
         corosync_status()
-    # elif sub_cmd == "qdevice":
-    #     try:
-    #         qdevice_status_cmd(
-    #             utils.get_library_wrapper(),
-    #             argv,
-    #             utils.get_modificators()
-    #         )
-    #     except LibraryError as e:
-    #         utils.process_library_reports(e.args)
-    #     except CmdLineInputError as e:
-    #         utils.exit_on_cmdline_input_errror(e, "status", sub_cmd)
-    # elif sub_cmd == "quorum":
-    #     try:
-    #         quorum_status_cmd(
-    #             utils.get_library_wrapper(),
-    #             argv,
-    #             utils.get_modificators()
-    #         )
-    #     except LibraryError as e:
-    #         utils.process_library_reports(e.args)
-    #     except CmdLineInputError as e:
-    #         utils.exit_on_cmdline_input_errror(e, "status", sub_cmd)
     else:
         usage.status()
         sys.exit(1)
 
 def full_status():
-    if "--hide-inactive" in utils.pcs_options and "--full" in utils.pcs_options:
-        utils.err("you cannot specify both --hide-inactive and --full")
-
-    monitor_command = ["crm_mon", "--one-shot"]
-    if "--hide-inactive" not in utils.pcs_options:
-        monitor_command.append('--inactive')
     if "--full" in utils.pcs_options:
-        monitor_command.extend(
-            ["--show-detail", "--show-node-attributes", "--failcounts"]
-        )
-
-    output, retval = utils.run(monitor_command)
+        (output, retval) = utils.run(["crm_mon", "-1", "-r", "-R", "-A", "-f"])
+    else:
+        (output, retval) = utils.run(["crm_mon", "-1", "-r"])
 
     if (retval != 0):
         utils.err("cluster is not currently running on this node")
@@ -91,21 +55,14 @@ def full_status():
     if utils.stonithCheck():
         print("WARNING: no stonith devices and stonith-enabled is not false")
 
-    if (
-        not utils.usefile
-        and
-        not utils.is_rhel6()
-        and
-        utils.corosyncPacemakerNodeCheck()
-    ):
+    if not utils.is_rhel6() and utils.corosyncPacemakerNodeCheck():
         print("WARNING: corosync and pacemaker node names do not match (IPs used in setup?)")
 
     print(output)
 
     if not utils.usefile:
-        if  "--full" in utils.pcs_options and utils.hasCorosyncConf():
-            print_pcsd_daemon_status()
-            print()
+        print_pcsd_daemon_status()
+        print()
         utils.serviceStatus("  ")
 
 # Parse crm_mon for status
@@ -121,18 +78,8 @@ def nodes_status(argv):
         return
 
     if len(argv) == 1 and (argv[0] == "config"):
-        if utils.hasCorosyncConf():
-            corosync_nodes = utils.getNodesFromCorosyncConf()
-        else:
-            corosync_nodes = []
-        try:
-            pacemaker_nodes = sorted([
-                node.attrs.name for node
-                in ClusterState(utils.getClusterStateXml()).node_section.nodes
-                if node.attrs.type != 'remote'
-            ])
-        except LibraryError as e:
-            utils.process_library_reports(e.args)
+        corosync_nodes = utils.getNodesFromCorosyncConf()
+        pacemaker_nodes = utils.getNodesFromPacemaker()
         print("Corosync Nodes:")
         if corosync_nodes:
             print(" " + " ".join(corosync_nodes))
@@ -147,7 +94,9 @@ def nodes_status(argv):
         online_nodes = utils.getCorosyncActiveNodes()
         offline_nodes = []
         for node in all_nodes:
-            if node not in online_nodes:
+            if node in online_nodes:
+                next
+            else:
                 offline_nodes.append(node)
 
         online_nodes.sort()
@@ -247,7 +196,7 @@ def cluster_status(argv):
         else:
             print("",line)
 
-    if not utils.usefile and utils.hasCorosyncConf():
+    if not utils.usefile:
         print()
         print_pcsd_daemon_status()
 
@@ -265,19 +214,33 @@ def xml_status():
         utils.err("running crm_mon, is pacemaker running?")
     print(output, end="")
 
-def is_service_running(service):
+def is_cman_running():
     if utils.is_systemctl():
-        dummy_output, retval = utils.run(["systemctl", "status", service])
+        output, retval = utils.run(["systemctl", "status", "cman.service"])
     else:
-        dummy_output, retval = utils.run(["service", service, "status"])
+        output, retval = utils.run(["service", "cman", "status"])
+    return retval == 0
+
+def is_corosyc_running():
+    if utils.is_systemctl():
+        output, retval = utils.run(["systemctl", "status", "corosync.service"])
+    else:
+        output, retval = utils.run(["service", "corosync", "status"])
+    return retval == 0
+
+def is_pacemaker_running():
+    if utils.is_systemctl():
+        output, retval = utils.run(["systemctl", "status", "pacemaker.service"])
+    else:
+        output, retval = utils.run(["service", "pacemaker", "status"])
     return retval == 0
 
 def print_pcsd_daemon_status():
     print("PCSD Status:")
     if os.getuid() == 0:
-        cluster_pcsd_status([], True)
+        cluster.cluster_gui_status([], True)
     else:
-        err_msgs, exitcode, std_out, dummy_std_err = utils.call_local_pcsd(
+        err_msgs, exitcode, std_out, std_err = utils.call_local_pcsd(
             ['status', 'pcsd'], True
         )
         if err_msgs:
@@ -288,49 +251,3 @@ def print_pcsd_daemon_status():
         else:
             print("Unable to get PCSD status")
 
-def check_nodes(node_list, prefix=""):
-    """
-    Print pcsd status on node_list, return if there is any pcsd not online
-    """
-    if not utils.is_rhel6():
-        pm_nodes = utils.getPacemakerNodesID(allow_failure=True)
-        cs_nodes = utils.getCorosyncNodesID(allow_failure=True)
-
-    STATUS_ONLINE = 0
-    status_desc_map = {
-        STATUS_ONLINE: 'Online',
-        3: 'Unable to authenticate'
-    }
-    status_list = []
-    def report(node, returncode, output):
-        print("{0}{1}: {2}".format(
-            prefix,
-            node if utils.is_rhel6() else utils.prepare_node_name(
-                node, pm_nodes, cs_nodes
-            ),
-            status_desc_map.get(returncode, 'Offline')
-        ))
-        status_list.append(returncode)
-
-    utils.run_parallel(
-        utils.create_task_list(report, utils.checkAuthorization, node_list)
-    )
-
-    return any([status != STATUS_ONLINE for status in status_list])
-
-# If no arguments get current cluster node status, otherwise get listed
-# nodes status
-def cluster_pcsd_status(argv, dont_exit=False):
-    bad_nodes = False
-    if len(argv) == 0:
-        nodes = utils.getNodesFromCorosyncConf()
-        if len(nodes) == 0:
-            if utils.is_rhel6():
-                utils.err("no nodes found in cluster.conf")
-            else:
-                utils.err("no nodes found in corosync.conf")
-        bad_nodes = check_nodes(nodes, "  ")
-    else:
-        bad_nodes = check_nodes(argv, "  ")
-    if bad_nodes and not dont_exit:
-        sys.exit(2)

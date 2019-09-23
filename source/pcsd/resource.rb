@@ -1,10 +1,10 @@
 require 'pathname'
 
-def getResourcesGroups(auth_user, get_fence_devices = false, get_all_options = false,
+def getResourcesGroups(session, get_fence_devices = false, get_all_options = false,
   get_operations=false
 )
   stdout, stderror, retval = run_cmd(
-    auth_user, CRM_MON, "--one-shot", "-r", "--as-xml"
+    session, CRM_MON, "--one-shot", "-r", "--as-xml"
   )
   if retval != 0
     return [],[], retval
@@ -60,7 +60,7 @@ def getResourcesGroups(auth_user, get_fence_devices = false, get_all_options = f
   resource_list = resource_list.sort_by{|a| (a.group ? "1" : "0").to_s + a.group.to_s + "-" +  a.id}
 
   if get_all_options or get_operations
-    stdout, stderror, retval = run_cmd(auth_user, "cibadmin", "-Q", "-l")
+    stdout, stderror, retval = run_cmd(session, "cibadmin", "-Q", "-l")
     cib_output = stdout
     resources_inst_attr_map = {}
     resources_meta_attr_map = {}
@@ -167,11 +167,86 @@ def getAllConstraints(constraints_dom)
   return constraints
 end
 
-def getResourceAgents(auth_user)
+def getResourceMetadata(session, resourcepath)
+  options_required = {}
+  options_optional = {}
+  long_desc = ""
+  short_desc = ""
+
+  resourcepath = Pathname.new(resourcepath).cleanpath.to_s
+  resource_dirs = [
+    HEARTBEAT_AGENTS_DIR, PACEMAKER_AGENTS_DIR, NAGIOS_METADATA_DIR,
+  ]
+  if not resource_dirs.any? { |allowed| resourcepath.start_with?(allowed) }
+    $logger.error(
+      "Unable to get metadata of resource agent '#{resourcepath}': " +
+      'path not allowed'
+    )
+    return [options_required, options_optional, [short_desc, long_desc]]
+  end
+
+  if resourcepath.end_with?('.xml')
+    begin
+      metadata = IO.read(resourcepath)
+    rescue
+      metadata = ""
+    end
+  else
+    ENV['OCF_ROOT'] = OCF_ROOT
+    stdout, stderr, retval = run_cmd(session, resourcepath, 'meta-data')
+    metadata = stdout.join
+  end
+
+  begin
+    doc = REXML::Document.new(metadata)
+  rescue REXML::ParseException => e
+    $logger.error(
+      "Unable to parse metadata of resource agent '#{resourcepath}': #{e}"
+    )
+    return [options_required, options_optional, [short_desc, long_desc]]
+  end
+
+  doc.elements.each('resource-agent/longdesc') {|ld|
+    long_desc = ld.text ? ld.text.strip : ld.text
+  }
+  doc.elements.each('resource-agent/shortdesc') {|ld|
+    short_desc = ld.text ? ld.text.strip : ld.text
+  }
+
+  doc.elements.each('resource-agent/parameters/parameter') { |param|
+    temp_array = []
+    if param.attributes["required"] == "1"
+      if param.elements["shortdesc"] and param.elements["shortdesc"].text
+        temp_array << param.elements["shortdesc"].text.strip
+      else
+        temp_array << ""
+      end
+      if param.elements["longdesc"] and param.elements["longdesc"].text
+        temp_array << param.elements["longdesc"].text.strip
+      else
+        temp_array << ""
+      end
+      options_required[param.attributes["name"]] = temp_array
+    else
+      if param.elements["shortdesc"] and param.elements["shortdesc"].text
+        temp_array << param.elements["shortdesc"].text.strip
+      else
+        temp_array << ""
+      end
+      if param.elements["longdesc"] and param.elements["longdesc"].text
+        temp_array << param.elements["longdesc"].text.strip
+      else
+        temp_array << ""
+      end
+      options_optional[param.attributes["name"]] = temp_array
+    end
+  }
+  [options_required, options_optional, [short_desc, long_desc]]
+end
+
+def getResourceAgents(session)
   resource_agent_list = {}
-  stdout, stderr, retval = run_cmd(
-    auth_user, PCS, "resource", "list", "--nodesc"
-  )
+  stdout, stderr, retval = run_cmd(session, PCS, "resource", "list", "--nodesc")
   if retval != 0
     $logger.error("Error running 'pcs resource list --nodesc")
     $logger.error(stdout + stderr)

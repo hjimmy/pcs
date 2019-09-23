@@ -1,18 +1,14 @@
-from __future__ import (
-    absolute_import,
-    division,
-    print_function,
-    unicode_literals,
-)
+from __future__ import absolute_import
+from __future__ import division
+from __future__ import print_function
+from __future__ import unicode_literals
 
 import sys
 import json
+from xml.dom.minidom import parseString
 
-from pcs import (
-    node,
-    usage,
-    utils,
-)
+import usage
+import utils
 
 def property_cmd(argv):
     if len(argv) == 0:
@@ -35,10 +31,6 @@ def property_cmd(argv):
 
 
 def set_property(argv):
-    if not argv:
-        usage.property(['set'])
-        sys.exit(1)
-
     prop_def_dict = utils.get_cluster_properties_definition()
     nodes_attr = "--node" in utils.pcs_options
     failed = False
@@ -103,10 +95,9 @@ def unset_property(argv):
         utils.replace_cib_configuration(cib_dom)
 
 def list_property(argv):
-    print_all = len(argv) == 0
-
-    if "--all" in utils.pcs_options and "--defaults" in utils.pcs_options:
-        utils.err("you cannot specify both --all and --defaults")
+    print_all = False
+    if len(argv) == 0:
+        print_all = True
 
     if "--all" in utils.pcs_options or "--defaults" in utils.pcs_options:
         if len(argv) != 0:
@@ -114,23 +105,25 @@ def list_property(argv):
         properties = get_default_properties()
     else:
         properties = {}
-
+        
     if "--defaults" not in utils.pcs_options:
-        properties = utils.get_set_properties(
+        properties = get_set_properties(
             None if print_all else argv[0],
             properties
         )
 
     print("Cluster Properties:")
     for prop,val in sorted(properties.items()):
-        print(" {0}: {1}".format(prop, val))
+        print(" " + prop + ": " + val)
 
-    node_attributes = utils.get_node_attributes(
-        filter_attr=(None if print_all else argv[0])
-    )
+    node_attributes = utils.get_node_attributes()
     if node_attributes:
         print("Node Attributes:")
-        node.attribute_print(node_attributes)
+        for node in sorted(node_attributes):
+            line_parts = [" " + node + ":"]
+            for attr in node_attributes[node]:
+                line_parts.append(attr)
+            print(" ".join(line_parts))
 
 def get_default_properties():
     parameters = {}
@@ -138,4 +131,17 @@ def get_default_properties():
     for name, prop in prop_def_dict.items():
         parameters[name] = prop["default"]
     return parameters
+
+def get_set_properties(prop_name=None, defaults=None):
+    properties = {} if defaults is None else dict(defaults)
+    (output, retVal) = utils.run(["cibadmin","-Q","--scope", "crm_config"])
+    if retVal != 0:
+        utils.err("unable to get crm_config\n"+output)
+    dom = parseString(output)
+    de = dom.documentElement
+    crm_config_properties = de.getElementsByTagName("nvpair")
+    for prop in crm_config_properties:
+        if prop_name is None or (prop_name == prop.getAttribute("name")):
+            properties[prop.getAttribute("name")] = prop.getAttribute("value")
+    return properties
 

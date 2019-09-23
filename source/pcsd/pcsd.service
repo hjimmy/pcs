@@ -4,8 +4,7 @@ Description=PCS GUI and remote configuration interface
 [Service]
 EnvironmentFile=/etc/sysconfig/pcsd
 Environment=GEM_HOME=/usr/lib/pcsd/vendor/bundle/ruby
-ExecStart=/usr/lib/pcsd/pcsd > /dev/null &
-Type=notify
+ExecStart=/usr/bin/ruby -C/var/lib/pcsd -I/usr/lib/pcsd -- /usr/lib/pcsd/ssl.rb > /dev/null &
 
 [Install]
 WantedBy=multi-user.target

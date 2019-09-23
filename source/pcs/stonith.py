@@ -1,117 +1,172 @@
-from __future__ import (
-    absolute_import,
-    division,
-    print_function,
-    unicode_literals,
-)
+from __future__ import absolute_import
+from __future__ import division
+from __future__ import print_function
+from __future__ import unicode_literals
 
 import sys
 import re
-import json
+import glob
+from xml.dom.minidom import parseString
 
-from pcs import (
-    resource,
-    usage,
-    utils,
-)
-from pcs.cli.common import parse_args
-from pcs.cli.common.errors import CmdLineInputError
-from pcs.cli.common.reports import build_report_message
-from pcs.lib.errors import LibraryError, ReportItemSeverity
-import pcs.lib.resource_agent as lib_ra
+import usage
+import utils
+import resource
 
 def stonith_cmd(argv):
-    if len(argv) < 1:
-        sub_cmd, argv_next = "show", []
+    if len(argv) == 0:
+        argv = ["show"]
+
+    sub_cmd = argv.pop(0)
+    if (sub_cmd == "help"):
+        usage.stonith(argv)
+    elif (sub_cmd == "list"):
+        stonith_list_available(argv)
+    elif (sub_cmd == "describe"):
+        if len(argv) == 1:
+            stonith_list_options(argv[0])
+        else:
+            usage.stonith()
+            sys.exit(1)
+    elif (sub_cmd == "create"):
+        stonith_create(argv)
+    elif (sub_cmd == "update"):
+        if len(argv) > 1:
+            stn_id = argv.pop(0)
+            resource.resource_update(stn_id,argv)
+        else:
+            usage.stonith(["update"])
+            sys.exit(1)
+    elif (sub_cmd == "delete"):
+        if len(argv) == 1:
+            stn_id = argv.pop(0)
+            resource.resource_remove(stn_id)
+        else:
+            usage.stonith(["delete"])
+            sys.exit(1)
+    elif (sub_cmd == "show"):
+        resource.resource_show(argv, True)
+        stonith_level([])
+    elif (sub_cmd == "level"):
+        stonith_level(argv)
+    elif (sub_cmd == "fence"):
+        stonith_fence(argv)
+    elif (sub_cmd == "cleanup"):
+        if len(argv) == 0:
+            resource.resource_cleanup_all()
+        else:
+            res_id = argv.pop(0)
+            resource.resource_cleanup(res_id)
+    elif (sub_cmd == "confirm"):
+        stonith_confirm(argv)
     else:
-        sub_cmd, argv_next = argv[0], argv[1:]
+        usage.stonith()
+        sys.exit(1)
 
-    lib = utils.get_library_wrapper()
-    modifiers = utils.get_modificators()
+def stonith_list_available(argv):
+    if len(argv) != 0:
+        filter_string = argv[0]
+    else:
+        filter_string = ""
 
-    try:
-        if sub_cmd == "help":
-            usage.stonith(argv)
-        elif sub_cmd == "list":
-            stonith_list_available(lib, argv_next, modifiers)
-        elif sub_cmd == "describe":
-            stonith_list_options(lib, argv_next, modifiers)
-        elif sub_cmd == "create":
-            stonith_create(argv_next)
-        elif sub_cmd == "update":
-            if len(argv_next) > 1:
-                stn_id = argv_next.pop(0)
-                resource.resource_update(stn_id, argv_next)
-            else:
-                raise CmdLineInputError()
-        elif sub_cmd == "delete":
-            if len(argv_next) == 1:
-                stn_id = argv_next.pop(0)
-                resource.resource_remove(stn_id)
-            else:
-                raise CmdLineInputError()
-        elif sub_cmd == "show":
-            resource.resource_show(argv_next, True)
-            stonith_level([])
-        elif sub_cmd == "level":
-            stonith_level(argv_next)
-        elif sub_cmd == "fence":
-            stonith_fence(argv_next)
-        elif sub_cmd == "cleanup":
-            resource.resource_cleanup(argv_next)
-        elif sub_cmd == "confirm":
-            stonith_confirm(argv_next)
-        elif sub_cmd == "get_fence_agent_info":
-            get_fence_agent_info(argv_next)
-        elif sub_cmd == "sbd":
-            sbd_cmd(lib, argv_next, modifiers)
-        else:
-            raise CmdLineInputError()
-    except LibraryError as e:
-        utils.process_library_reports(e.args)
-    except CmdLineInputError as e:
-        utils.exit_on_cmdline_input_errror(e, "stonith", sub_cmd)
+    bad_fence_devices = ["kdump_send", "legacy", "na", "nss_wrapper",
+            "pcmk", "vmware_helper", "ack_manual", "virtd", "sanlockd",
+            "check", "tool", "node"]
+    fence_devices = sorted(glob.glob(utils.fence_bin + "fence_*"))
+    for bfd in bad_fence_devices:
+        try:
+            fence_devices.remove(utils.fence_bin + "fence_"+bfd)
+        except ValueError:
+            continue
 
-
-def stonith_list_available(lib, argv, modifiers):
-    if len(argv) > 1:
-        raise CmdLineInputError()
-
-    search = argv[0] if argv else None
-    agent_list = lib.stonith_agent.list_agents(modifiers["describe"], search)
-
-    if not agent_list:
-        if search:
-            utils.err("No stonith agents matching the filter.")
+    if not fence_devices:
         utils.err(
-            "No stonith agents available. "
-            "Do you have fence agents installed?"
+            "No stonith agents available. Do you have fence agents installed?"
         )
+    fence_devices_filtered = [fd for fd in fence_devices if filter_string in fd]
+    if not fence_devices_filtered:
+        utils.err("No stonith agents matching the filter.")
 
-    for agent_info in agent_list:
-        name = agent_info["name"]
-        shortdesc = agent_info["shortdesc"]
-        if shortdesc:
-            print("{0} - {1}".format(
-                name,
-                resource._format_desc(
-                    len(name + " - "), shortdesc.replace("\n", " ")
+    for fd in fence_devices_filtered:
+        sd = ""
+        fd_name = fd[10:]
+        if not "--nodesc" in utils.pcs_options:
+            metadata = utils.get_stonith_metadata(fd)
+            if metadata == False:
+                utils.err("no metadata for %s" % fd, False)
+                continue
+            try:
+                dom = parseString(metadata)
+            except Exception:
+                utils.err(
+                    "unable to parse metadata for fence agent: %s" % (fd_name),
+                    False
                 )
-            ))
-        else:
-            print(name)
+                continue
+            ra = dom.documentElement
+            shortdesc = ra.getAttribute("shortdesc")
 
+            if len(shortdesc) > 0:
+                sd = " - " +  resource.format_desc(fd_name.__len__() + 3, shortdesc)
+        print(fd_name + sd)
 
-def stonith_list_options(lib, argv, modifiers):
-    if len(argv) != 1:
-        raise CmdLineInputError()
-    agent_name = argv[0]
+def stonith_list_options(stonith_agent):
+    metadata = utils.get_stonith_metadata(utils.fence_bin + stonith_agent)
+    if not metadata:
+        utils.err("unable to get metadata for %s" % stonith_agent)
+    try:
+        dom = parseString(metadata)
+    except xml.parsers.expat.ExpatError as e:
+        utils.err("Unable to parse xml for '%s': %s" % (stonith_agent, e))
 
-    print(resource._format_agent_description(
-        lib.stonith_agent.describe_agent(agent_name),
-        True
-    ))
+    title = dom.documentElement.getAttribute("name") or stonith_agent
+    short_desc = dom.documentElement.getAttribute("shortdesc")
+    if not short_desc:
+        for sd in dom.documentElement.getElementsByTagName("shortdesc"):
+            if sd.parentNode.tagName == "resource-agent" and sd.firstChild:
+                short_desc = sd.firstChild.data.strip()
+                break
+    long_desc = ""
+    for ld in dom.documentElement.getElementsByTagName("longdesc"):
+        if ld.parentNode.tagName == "resource-agent" and ld.firstChild:
+            long_desc = ld.firstChild.data.strip()
+            break
 
+    if short_desc:
+        title += " - " + resource.format_desc(len(title + " - "), short_desc)
+    print(title)
+    print()
+    if long_desc:
+        print(long_desc)
+        print()
+    print("Stonith options:")
+
+    params = dom.documentElement.getElementsByTagName("parameter")
+    for param in params:
+        name = param.getAttribute("name")
+        if param.getAttribute("required") == "1":
+            name += " (required)"
+        desc = ""
+        shortdesc_els = param.getElementsByTagName("shortdesc")
+        if shortdesc_els and shortdesc_els[0].firstChild:
+            desc = shortdesc_els[0].firstChild.nodeValue.strip().replace("\n", " ")
+        if not desc:
+            desc = "No description available"
+        indent = name.__len__() + 4
+        desc = resource.format_desc(indent, desc)
+        print("  " + name + ": " + desc)
+
+    default_stonith_options = utils.get_default_stonith_options()
+    for do in default_stonith_options:
+        name = do.attrib["name"]
+        desc = ""
+        if len(do.findall(str("shortdesc"))) > 0:
+            if do.findall(str("shortdesc"))[0].text:
+                desc = do.findall(str("shortdesc"))[0].text.strip()
+        if not desc:
+            desc = "No description available"
+        indent = len(name) + 4
+        desc = resource.format_desc(indent, desc)
+        print("  " + name + ": " + desc)
 
 def stonith_create(argv):
     if len(argv) < 2:
@@ -123,34 +178,15 @@ def stonith_create(argv):
     st_values, op_values, meta_values = resource.parse_resource_options(
         argv, with_clone=False
     )
-
-    try:
-        metadata = lib_ra.StonithAgent(
-            utils.cmd_runner(),
-            stonith_type
-        )
-        if metadata.get_provides_unfencing():
+    metadata = utils.get_stonith_metadata("/usr/sbin/" + stonith_type)
+    if metadata:
+        if stonith_does_agent_provide_unfencing(metadata):
             meta_values = [
                 meta for meta in meta_values if not meta.startswith("provides=")
             ]
             meta_values.append("provides=unfencing")
-    except lib_ra.ResourceAgentError as e:
-        forced = utils.get_modificators().get("force", False)
-        if forced:
-            severity = ReportItemSeverity.WARNING
-        else:
-            severity = ReportItemSeverity.ERROR
-        utils.process_library_reports([
-            lib_ra.resource_agent_error_to_report_item(
-                e, severity, not forced
-            )
-        ])
-    except LibraryError as e:
-        utils.process_library_reports(e.args)
-
     resource.resource_create(
-        stonith_id, "stonith:" + stonith_type, st_values, op_values, meta_values,
-        group=utils.pcs_options.get("--group", None)
+        stonith_id, "stonith:" + stonith_type, st_values, op_values, meta_values
     )
 
 def stonith_level(argv):
@@ -169,7 +205,7 @@ def stonith_level(argv):
         if len(argv) < 1:
             usage.stonith(["level remove"])
             sys.exit(1)
-
+        
         node = ""
         devices = ""
         if len(argv) == 2:
@@ -197,15 +233,11 @@ def stonith_level_add(level, node, devices):
     if not re.search(r'^\d+$', level) or re.search(r'^0+$', level):
         utils.err("invalid level '{0}', use a positive integer".format(level))
     level = level.lstrip('0')
-    if "--force" not in utils.pcs_options:
+    if not "--force" in utils.pcs_options:
         for dev in devices.split(","):
             if not utils.is_stonith_resource(dev):
                 utils.err("%s is not a stonith id (use --force to override)" % dev)
-        corosync_nodes = []
-        if utils.hasCorosyncConf():
-            corosync_nodes = utils.getNodesFromCorosyncConf()
-        pacemaker_nodes = utils.getNodesFromPacemaker()
-        if node not in corosync_nodes and node not in pacemaker_nodes:
+        if not utils.is_pacemaker_node(node) and not utils.is_corosync_node(node):
             utils.err("%s is not currently a node (use --force to override)" % node)
 
     ft = dom.getElementsByTagName("fencing-topology")
@@ -245,6 +277,7 @@ def stonith_level_rm(level, node, devices):
         ft = ft[0]
 
     fls = ft.getElementsByTagName("fencing-level")
+    fls_to_remove = []
 
     if node != "":
         if devices != "":
@@ -277,6 +310,23 @@ def stonith_level_rm(level, node, devices):
 
     utils.replace_cib_configuration(dom)
 
+def stonith_level_rm_device(cib_dom, stn_id):
+    topology_el_list = cib_dom.getElementsByTagName("fencing-topology")
+    if not topology_el_list:
+        return cib_dom
+    topology_el = topology_el_list[0]
+    for level_el in topology_el.getElementsByTagName("fencing-level"):
+        device_list = level_el.getAttribute("devices").split(",")
+        if stn_id in device_list:
+            new_device_list = [dev for dev in device_list if dev != stn_id]
+            if new_device_list:
+                level_el.setAttribute("devices", ",".join(new_device_list))
+            else:
+                level_el.parentNode.removeChild(level_el)
+    if not topology_el.getElementsByTagName("fencing-level"):
+        topology_el.parentNode.removeChild(topology_el)
+    return cib_dom
+
 def stonith_level_clear(node = None):
     dom = utils.get_cib_dom()
     ft = dom.getElementsByTagName("fencing-topology")
@@ -301,19 +351,16 @@ def stonith_level_clear(node = None):
 
 def stonith_level_verify():
     dom = utils.get_cib_dom()
-    corosync_nodes = []
-    if utils.hasCorosyncConf():
-        corosync_nodes = utils.getNodesFromCorosyncConf()
-    pacemaker_nodes = utils.getNodesFromPacemaker()
 
     fls = dom.getElementsByTagName("fencing-level")
     for fl in fls:
         node = fl.getAttribute("target")
+        level = fl.getAttribute("index")
         devices = fl.getAttribute("devices")
         for dev in devices.split(","):
             if not utils.is_stonith_resource(dev):
                 utils.err("%s is not a stonith id" % dev)
-        if node not in corosync_nodes and node not in pacemaker_nodes:
+        if not utils.is_corosync_node(node) and not utils.is_pacemaker_node(node):
             utils.err("%s is not currently a node" % node)
 
 def stonith_level_show():
@@ -358,23 +405,11 @@ def stonith_fence(argv):
     else:
         print("Node: %s fenced" % node)
 
-def stonith_confirm(argv, skip_question=False):
+def stonith_confirm(argv):
     if len(argv) != 1:
         utils.err("must specify one (and only one) node to confirm fenced")
 
     node = argv.pop(0)
-    if not skip_question and "--force" not in utils.pcs_options:
-        answer = utils.get_terminal_input(
-            (
-                "WARNING: If node {node} is not powered off or it does"
-                + " have access to shared resources, data corruption and/or"
-                + " cluster failure may occur. Are you sure you want to"
-                + " continue? [y/N] "
-            ).format(node=node)
-        )
-        if answer.lower() not in ["y", "yes"]:
-            print("Canceled")
-            return
     args = ["stonith_admin", "-C", node]
     output, retval = utils.run(args)
 
@@ -383,150 +418,23 @@ def stonith_confirm(argv, skip_question=False):
     else:
         print("Node: %s confirmed fenced" % node)
 
-
-def get_fence_agent_info(argv):
-# This is used only by pcsd, will be removed in new architecture
-    if len(argv) != 1:
-        utils.err("One parameter expected")
-
-    agent = argv[0]
-    if not agent.startswith("stonith:"):
-        utils.err("Invalid fence agent name")
-
-    runner = utils.cmd_runner()
-
+def stonith_does_agent_provide_unfencing(metadata_string):
     try:
-        metadata = lib_ra.StonithAgent(runner, agent[len("stonith:"):])
-        info = metadata.get_full_info()
-        info["name"] = "stonith:{0}".format(info["name"])
-        print(json.dumps(info))
-    except lib_ra.ResourceAgentError as e:
-        utils.process_library_reports(
-            [lib_ra.resource_agent_error_to_report_item(e)]
-        )
-    except LibraryError as e:
-        utils.process_library_reports(e.args)
+        dom = parseString(metadata_string)
+        for agent in utils.dom_get_children_by_tag_name(dom, "resource-agent"):
+            for actions in utils.dom_get_children_by_tag_name(agent, "actions"):
+                for action in utils.dom_get_children_by_tag_name(
+                    actions, "action"
+                ):
+                    if (
+                        action.getAttribute("name") == "on"
+                        and
+                        action.getAttribute("on_target") == "1"
+                        and
+                        action.getAttribute("automatic") == "1"
+                    ):
+                        return True
+    except xml.parsers.expat.ExpatError as e:
+        return False
+    return False
 
-
-def sbd_cmd(lib, argv, modifiers):
-    if len(argv) == 0:
-        raise CmdLineInputError()
-    cmd = argv.pop(0)
-    try:
-        if cmd == "enable":
-            sbd_enable(lib, argv, modifiers)
-        elif cmd == "disable":
-            sbd_disable(lib, argv, modifiers)
-        elif cmd == "status":
-            sbd_status(lib, argv, modifiers)
-        elif cmd == "config":
-            sbd_config(lib, argv, modifiers)
-        elif cmd == "local_config_in_json":
-            local_sbd_config(lib, argv, modifiers)
-        else:
-            raise CmdLineInputError()
-    except CmdLineInputError as e:
-        utils.exit_on_cmdline_input_errror(
-            e, "stonith", "sbd {0}".format(cmd)
-        )
-
-
-def sbd_enable(lib, argv, modifiers):
-    sbd_cfg = parse_args.prepare_options(argv)
-    default_watchdog, watchdog_dict = _sbd_parse_watchdogs(
-        modifiers["watchdog"]
-    )
-    lib.sbd.enable_sbd(
-        default_watchdog,
-        watchdog_dict,
-        sbd_cfg,
-        allow_unknown_opts=modifiers["force"],
-        ignore_offline_nodes=modifiers["skip_offline_nodes"]
-    )
-
-
-def _sbd_parse_watchdogs(watchdog_list):
-    default_watchdog = None
-    watchdog_dict = {}
-
-    for watchdog_node in watchdog_list:
-        if "@" not in watchdog_node:
-            if default_watchdog:
-                raise CmdLineInputError("Multiple watchdog definitions.")
-            default_watchdog = watchdog_node
-        else:
-            watchdog, node_name = watchdog_node.rsplit("@", 1)
-            if node_name in watchdog_dict:
-                raise CmdLineInputError(
-                    "Multiple watchdog definitions for node '{node}'".format(
-                        node=node_name
-                    )
-                )
-            watchdog_dict[node_name] = watchdog
-
-    return default_watchdog, watchdog_dict
-
-
-def sbd_disable(lib, argv, modifiers):
-    if argv:
-        raise CmdLineInputError()
-
-    lib.sbd.disable_sbd(modifiers["skip_offline_nodes"])
-
-
-def sbd_status(lib, argv, modifiers):
-    def _bool_to_str(val):
-        if val is None:
-            return "N/A"
-        return "YES" if val else " NO"
-
-    if argv:
-        raise CmdLineInputError()
-
-    status_list = lib.sbd.get_cluster_sbd_status()
-    if not len(status_list):
-        utils.err("Unable to get SBD status from any node.")
-
-    print("SBD STATUS")
-    print("<node name>: <installed> | <enabled> | <running>")
-    for node_status in status_list:
-        status = node_status["status"]
-        print("{node}: {installed} | {enabled} | {running}".format(
-            node=node_status["node"].label,
-            installed=_bool_to_str(status.get("installed")),
-            enabled=_bool_to_str(status.get("enabled")),
-            running=_bool_to_str(status.get("running"))
-        ))
-
-
-def sbd_config(lib, argv, modifiers):
-    if argv:
-        raise CmdLineInputError()
-
-    config_list = lib.sbd.get_cluster_sbd_config()
-
-    if not config_list:
-        utils.err("No config obtained.")
-
-    config = config_list[0]["config"]
-
-    filtered_options = ["SBD_WATCHDOG_DEV", "SBD_OPTS", "SBD_PACEMAKER"]
-    for key, val in config.items():
-        if key in filtered_options:
-            continue
-        print("{key}={val}".format(key=key, val=val))
-
-    print()
-    print("Watchdogs:")
-    for config in config_list:
-        watchdog = "<unknown>"
-        if config["config"] is not None:
-            watchdog = config["config"].get("SBD_WATCHDOG_DEV", "<unknown>")
-        print("  {node}: {watchdog}".format(
-            node=config["node"].label,
-            watchdog=watchdog
-        ))
-
-
-def local_sbd_config(lib, argv, modifiers):
-    print(json.dumps(lib.sbd.get_local_sbd_config()))

@@ -1,189 +1,170 @@
-from __future__ import (
-    absolute_import,
-    division,
-    print_function,
-    unicode_literals,
-)
+from __future__ import absolute_import
+from __future__ import division
+from __future__ import print_function
+from __future__ import unicode_literals
 
 import sys
+import os
 import xml.dom.minidom
 from xml.dom.minidom import getDOMImplementation
 from xml.dom.minidom import parseString
 import re
 import textwrap
 import time
-import json
 
-from pcs import (
-    usage,
-    utils,
-    constraint,
-)
-from pcs.settings import pacemaker_wait_timeout_status as \
-    PACEMAKER_WAIT_TIMEOUT_STATUS
-import pcs.lib.cib.acl as lib_acl
-import pcs.lib.pacemaker as lib_pacemaker
-from pcs.cli.common.errors import CmdLineInputError
-from pcs.cli.common.parse_args import prepare_options
-from pcs.lib.errors import LibraryError
-from pcs.lib.pacemaker_values import timeout_to_seconds
-import pcs.lib.resource_agent as lib_ra
+import usage
+import utils
+import constraint
+import stonith
 
 
+PACEMAKER_WAIT_TIMEOUT_STATUS = 62
 RESOURCE_RELOCATE_CONSTRAINT_PREFIX = "pcs-relocate-"
 
 def resource_cmd(argv):
-    if len(argv) < 1:
-        sub_cmd, argv_next = "show", []
-    else:
-        sub_cmd, argv_next = argv[0], argv[1:]
+    if len(argv) == 0:
+        argv = ["show"]
 
-    lib = utils.get_library_wrapper()
-    modifiers = utils.get_modificators()
-
-    try:
-        if sub_cmd == "help":
-            usage.resource(argv)
-        elif sub_cmd == "list":
-            resource_list_available(lib, argv_next, modifiers)
-        elif sub_cmd == "describe":
-            resource_list_options(lib, argv_next, modifiers)
-        elif sub_cmd == "create":
-            if len(argv_next) < 2:
-                usage.resource(["create"])
-                sys.exit(1)
-            res_id = argv_next.pop(0)
-            res_type = argv_next.pop(0)
-            ra_values, op_values, meta_values, clone_opts = parse_resource_options(
-                argv_next, with_clone=True
-            )
-            resource_create(
-                res_id, res_type, ra_values, op_values, meta_values, clone_opts,
-                group=utils.pcs_options.get("--group", None)
-            )
-        elif sub_cmd == "move":
-            resource_move(argv_next)
-        elif sub_cmd == "ban":
-            resource_move(argv_next, False, True)
-        elif sub_cmd == "clear":
-            resource_move(argv_next, True)
-        elif sub_cmd == "standards":
-            resource_standards(lib, argv_next, modifiers)
-        elif sub_cmd == "providers":
-            resource_providers(lib, argv_next, modifiers)
-        elif sub_cmd == "agents":
-            resource_agents(lib, argv_next, modifiers)
-        elif sub_cmd == "update":
-            if len(argv_next) == 0:
-                usage.resource(["update"])
-                sys.exit(1)
-            res_id = argv_next.pop(0)
-            resource_update(res_id, argv_next)
-        elif sub_cmd == "add_operation":
-            utils.err("add_operation has been deprecated, please use 'op add'")
-        elif sub_cmd == "remove_operation":
-            utils.err("remove_operation has been deprecated, please use 'op remove'")
-        elif sub_cmd == "meta":
-            if len(argv_next) < 2:
-                usage.resource(["meta"])
-                sys.exit(1)
-            res_id = argv_next.pop(0)
-            resource_meta(res_id, argv_next)
-        elif sub_cmd == "delete":
-            if len(argv_next) == 0:
-                usage.resource(["delete"])
-                sys.exit(1)
-            res_id = argv_next.pop(0)
-            resource_remove(res_id)
-        elif sub_cmd == "show":
-            resource_show(argv_next)
-        elif sub_cmd == "group":
-            resource_group(argv_next)
-        elif sub_cmd == "ungroup":
-            resource_group(["remove"] + argv_next)
-        elif sub_cmd == "clone":
-            resource_clone(argv_next)
-        elif sub_cmd == "unclone":
-            resource_clone_master_remove(argv_next)
-        elif sub_cmd == "master":
-            resource_master(argv_next)
-        elif sub_cmd == "enable":
-            resource_enable(argv_next)
-        elif sub_cmd == "disable":
-            resource_disable(argv_next)
-        elif sub_cmd == "restart":
-            resource_restart(argv_next)
-        elif sub_cmd == "debug-start":
-            resource_force_action(sub_cmd, argv_next)
-        elif sub_cmd == "debug-stop":
-            resource_force_action(sub_cmd, argv_next)
-        elif sub_cmd == "debug-promote":
-            resource_force_action(sub_cmd, argv_next)
-        elif sub_cmd == "debug-demote":
-            resource_force_action(sub_cmd, argv_next)
-        elif sub_cmd == "debug-monitor":
-            resource_force_action(sub_cmd, argv_next)
-        elif sub_cmd == "manage":
-            resource_manage(argv_next, True)
-        elif sub_cmd == "unmanage":
-            resource_manage(argv_next, False)
-        elif sub_cmd == "failcount":
-            resource_failcount(argv_next)
-        elif sub_cmd == "op":
-            if len(argv_next) < 1:
-                usage.resource(["op"])
-                sys.exit(1)
-            op_subcmd = argv_next.pop(0)
-            if op_subcmd == "defaults":
-                if len(argv_next) == 0:
-                    show_defaults("op_defaults")
-                else:
-                    set_default("op_defaults", argv_next)
-            elif op_subcmd == "add":
-                if len(argv_next) == 0:
-                    usage.resource(["op"])
-                    sys.exit(1)
-                else:
-                    res_id = argv_next.pop(0)
-                    utils.replace_cib_configuration(
-                        resource_operation_add(
-                            utils.get_cib_dom(), res_id, argv_next
-                        )
-                    )
-            elif op_subcmd in ["remove", "delete"]:
-                if len(argv_next) == 0:
-                    usage.resource(["op"])
-                    sys.exit(1)
-                else:
-                    res_id = argv_next.pop(0)
-                    resource_operation_remove(res_id, argv_next)
-        elif sub_cmd == "defaults":
-            if len(argv_next) == 0:
-                show_defaults("rsc_defaults")
-            else:
-                set_default("rsc_defaults", argv_next)
-        elif sub_cmd == "cleanup":
-            resource_cleanup(argv_next)
-        elif sub_cmd == "history":
-            resource_history(argv_next)
-        elif sub_cmd == "relocate":
-            resource_relocate(argv_next)
-        elif sub_cmd == "utilization":
-            if len(argv_next) == 0:
-                print_resources_utilization()
-            elif len(argv_next) == 1:
-                print_resource_utilization(argv_next.pop(0))
-            else:
-                set_resource_utilization(argv_next.pop(0), argv_next)
-        elif sub_cmd == "get_resource_agent_info":
-            get_resource_agent_info(argv_next)
+    sub_cmd = argv.pop(0)
+    if (sub_cmd == "help"):
+        usage.resource(argv)
+    elif (sub_cmd == "list"):
+        resource_list_available(argv)
+    elif (sub_cmd == "describe"):
+        if len(argv) == 1:
+            resource_list_options(argv[0])
         else:
             usage.resource()
             sys.exit(1)
-    except LibraryError as e:
-        utils.process_library_reports(e.args)
-    except CmdLineInputError as e:
-        utils.exit_on_cmdline_input_errror(e, "resource", sub_cmd)
+    elif (sub_cmd == "create"):
+        if len(argv) < 2:
+            usage.resource()
+            sys.exit(1)
+        res_id = argv.pop(0)
+        res_type = argv.pop(0)
+        ra_values, op_values, meta_values, clone_opts = parse_resource_options(
+            argv, with_clone=True
+        )
+        resource_create(res_id, res_type, ra_values, op_values, meta_values, clone_opts)
+    elif (sub_cmd == "move"):
+        resource_move(argv)
+    elif (sub_cmd == "ban"):
+        resource_move(argv,False,True)
+    elif (sub_cmd == "clear"):
+        resource_move(argv,True)
+    elif (sub_cmd == "standards"):
+        resource_standards()
+    elif (sub_cmd == "providers"):
+        resource_providers()
+    elif (sub_cmd == "agents"):
+        resource_agents(argv)
+    elif (sub_cmd == "update"):
+        if len(argv) == 0:
+            usage.resource()
+            sys.exit(1)
+        res_id = argv.pop(0)
+        resource_update(res_id,argv)
+    elif (sub_cmd == "add_operation"):
+        utils.err("add_operation has been deprecated, please use 'op add'")
+    elif (sub_cmd == "remove_operation"):
+        utils.err("remove_operation has been deprecated, please use 'op remove'")
+    elif (sub_cmd == "meta"):
+        if len(argv) < 2:
+            usage.resource()
+            sys.exit(1)
+        res_id = argv.pop(0)
+        resource_meta(res_id,argv)
+    elif (sub_cmd == "delete"):
+        if len(argv) == 0:
+            usage.resource()
+            sys.exit(1)
+        res_id = argv.pop(0)
+        resource_remove(res_id)
+    elif (sub_cmd == "show"):
+        resource_show(argv)
+    elif (sub_cmd == "group"):
+        resource_group(argv)
+    elif (sub_cmd == "ungroup"):
+        resource_group(["remove"] + argv)
+    elif (sub_cmd == "clone"):
+        resource_clone(argv)
+    elif (sub_cmd == "unclone"):
+        resource_clone_master_remove(argv)
+    elif (sub_cmd == "master"):
+        resource_master(argv)
+    elif (sub_cmd == "enable"):
+        resource_enable(argv)
+    elif (sub_cmd == "disable"):
+        resource_disable(argv)
+    elif (sub_cmd == "restart"):
+        resource_restart(argv)
+    elif (sub_cmd == "debug-start"):
+        resource_force_action(sub_cmd, argv)
+    elif (sub_cmd == "debug-stop"):
+        resource_force_action(sub_cmd, argv)
+    elif (sub_cmd == "debug-promote"):
+        resource_force_action(sub_cmd, argv)
+    elif (sub_cmd == "debug-demote"):
+        resource_force_action(sub_cmd, argv)
+    elif (sub_cmd == "debug-monitor"):
+        resource_force_action(sub_cmd, argv)
+    elif (sub_cmd == "manage"):
+        resource_manage(argv, True)
+    elif (sub_cmd == "unmanage"):
+        resource_manage(argv, False)
+    elif (sub_cmd == "failcount"):
+        resource_failcount(argv)
+    elif (sub_cmd == "op"):
+        if len(argv) < 1:
+            usage.resource(["op"])
+            sys.exit(1)
+        op_subcmd = argv.pop(0)
+        if op_subcmd == "defaults":
+            if len(argv) == 0:
+                show_defaults("op_defaults")
+            else:
+                set_default("op_defaults", argv)
+        elif op_subcmd == "add":
+            if len(argv) == 0:
+                usage.resource(["op"])
+                sys.exit(1)
+            else:
+                res_id = argv.pop(0)
+                utils.replace_cib_configuration(
+                    resource_operation_add(utils.get_cib_dom(), res_id, argv)
+                )
+        elif op_subcmd in ["remove","delete"]:
+            if len(argv) == 0:
+                usage.resource(["op"])
+                sys.exit(1)
+            else:
+                res_id = argv.pop(0)
+                resource_operation_remove(res_id, argv)
+    elif (sub_cmd == "defaults"):
+        if len(argv) == 0:
+            show_defaults("rsc_defaults")
+        else:
+            set_default("rsc_defaults", argv)
+    elif (sub_cmd == "cleanup"):
+        if len(argv) == 0:
+            resource_cleanup_all()
+        else:
+            res_id = argv.pop(0)
+            resource_cleanup(res_id)
+    elif (sub_cmd == "history"):
+        resource_history(argv)
+    elif (sub_cmd == "relocate"):
+        resource_relocate(argv)
+    elif (sub_cmd == "utilization"):
+        if len(argv) == 0:
+            print_resources_utilization()
+        elif len(argv) == 1:
+            print_resource_utilization(argv.pop(0))
+        else:
+            set_resource_utilization(argv.pop(0), argv)
+    else:
+        usage.resource()
+        sys.exit(1)
 
 def parse_resource_options(argv, with_clone=False):
     ra_values = []
@@ -227,126 +208,220 @@ def parse_resource_options(argv, with_clone=False):
         return ra_values, op_values, meta_values, clone_opts
     return ra_values, op_values, meta_values
 
+# List available resources
+# TODO make location more easily configurable
+def resource_list_available(argv):
+    def get_name_and_desc(full_res_name, metadata):
+        sd = ""
+        try:
+            dom = parseString(metadata)
+            shortdesc = dom.documentElement.getElementsByTagName("shortdesc")
+            if len(shortdesc) > 0:
+                sd = " - " +  format_desc(
+                    len(full_res_name + " - "),
+                    shortdesc[0].firstChild.nodeValue.strip().replace("\n", " ")
+                )
+        except xml.parsers.expat.ExpatError:
+            sd = ""
+        finally:
+            return full_res_name + sd
 
-def resource_list_available(lib, argv, modifiers):
-    if len(argv) > 1:
-        raise CmdLineInputError()
+    ret = []
+    if len(argv) != 0:
+        filter_string = argv[0]
+    else:
+        filter_string = ""
 
-    search = argv[0] if argv else None
-    agent_list = lib.resource_agent.list_agents(modifiers["describe"], search)
+    # ocf agents
+    os.environ['OCF_ROOT'] = "/usr/lib/ocf/"
+    providers = sorted(os.listdir("/usr/lib/ocf/resource.d"))
+    for provider in providers:
+        resources = sorted(os.listdir("/usr/lib/ocf/resource.d/" + provider))
+        for resource in resources:
+            if resource.startswith(".") or resource == "ocf-shellfuncs":
+                continue
+            full_res_name = "ocf:" + provider + ":" + resource
+            if full_res_name.lower().count(filter_string.lower()) == 0:
+                continue
 
-    if not agent_list:
-        if search:
-            utils.err("No resource agents matching the filter.")
+            if "--nodesc" in utils.pcs_options:
+                ret.append(full_res_name)
+                continue
+
+            metadata = utils.get_metadata("/usr/lib/ocf/resource.d/" + provider + "/" + resource)
+            if metadata == False:
+                continue
+            ret.append(get_name_and_desc(
+                "ocf:" + provider + ":" + resource,
+                metadata
+            ))
+
+    # lsb agents
+    lsb_dir = "/etc/init.d/"
+    agents = sorted(os.listdir(lsb_dir))
+    for agent in agents:
+        if os.access(lsb_dir + agent, os.X_OK):
+            ret.append("lsb:" + agent)
+
+    # systemd agents
+    if utils.is_systemctl():
+        agents, retval = utils.run(["systemctl", "list-unit-files", "--full"])
+        agents = agents.split("\n")
+    for agent in agents:
+        match = re.search(r'^([\S]*)\.service',agent)
+        if match:
+            ret.append("systemd:" + match.group(1))
+
+    # nagios metadata
+    nagios_metadata_path = "/usr/share/pacemaker/nagios/plugins-metadata"
+    if os.path.isdir(nagios_metadata_path):
+        for metadata_file in sorted(os.listdir(nagios_metadata_path)):
+            if metadata_file.startswith("."):
+                continue
+            full_res_name = "nagios:" + metadata_file
+            if full_res_name.lower().endswith(".xml"):
+                full_res_name = full_res_name[:-len(".xml")]
+            if "--nodesc" in utils.pcs_options:
+                ret.append(full_res_name)
+                continue
+            try:
+                ret.append(get_name_and_desc(
+                    full_res_name,
+                    open(
+                        os.path.join(nagios_metadata_path, metadata_file),
+                        "r"
+                    ).read()
+                ))
+            except EnvironmentError as e:
+                pass
+
+    # output
+    if not ret:
         utils.err(
             "No resource agents available. "
             "Do you have resource agents installed?"
         )
+    if filter_string != "":
+        found = False
+        for rline in ret:
+            if rline.lower().find(filter_string.lower()) != -1:
+                print(rline)
+                found = True
+        if not found:
+            utils.err("No resource agents matching the filter.")
+    else:
+        print("\n".join(ret))
 
-    for agent_info in agent_list:
-        name = agent_info["name"]
-        shortdesc = agent_info["shortdesc"]
-        if shortdesc:
-            print("{0} - {1}".format(
-                name,
-                _format_desc(len(name + " - "), shortdesc.replace("\n", " "))
-            ))
+def resource_parse_options(metadata, standard, provider, resource):
+    try:
+        short_desc = ""
+        long_desc = ""
+        dom = parseString(metadata)
+        long_descs = dom.documentElement.getElementsByTagName("longdesc")
+        for ld in long_descs:
+            if ld.parentNode.tagName == "resource-agent" and ld.firstChild:
+                long_desc = ld.firstChild.data.strip()
+                break
+
+        short_descs = dom.documentElement.getElementsByTagName("shortdesc")
+        for sd in short_descs:
+            if sd.parentNode.tagName == "resource-agent" and sd.firstChild:
+                short_desc = sd.firstChild.data.strip()
+                break
+
+        if provider:
+            title_1 = "%s:%s:%s" % (standard, provider, resource)
         else:
-            print(name)
+            title_1 = "%s:%s" % (standard, resource)
 
+        if short_desc:
+            title_1 += " - " + format_desc(len(title_1 + " - "), short_desc)
+        print(title_1)
+        print()
+        if long_desc:
+            print(long_desc)
+            print()
 
-def resource_list_options(lib, argv, modifiers):
-    if len(argv) != 1:
-        raise CmdLineInputError()
-    agent_name = argv[0]
+        params = dom.documentElement.getElementsByTagName("parameter")
+        if len(params) > 0:
+            print("Resource options:")
+        for param in params:
+            name = param.getAttribute("name")
+            if param.getAttribute("required") == "1":
+                name += " (required)"
+            desc = ""
+            longdesc_els = param.getElementsByTagName("longdesc")
+            if longdesc_els and longdesc_els[0].firstChild:
+                desc = longdesc_els[0].firstChild.nodeValue.strip().replace("\n", " ")
+            if not desc:
+                desc = "No description available"
+            indent = name.__len__() + 4
+            desc = format_desc(indent, desc)
+            print("  " + name + ": " + desc)
+    except xml.parsers.expat.ExpatError as e:
+        utils.err("Unable to parse xml for '%s': %s" % (resource, e))
 
-    print(_format_agent_description(
-        lib.resource_agent.describe_agent(agent_name)
-    ))
+def resource_list_options(resource):
+    found_resource = False
+    resource = get_full_ra_type(resource,True)
 
+    # we know this is the nagios resource standard
+    if "nagios:" in resource:
+        resource_split = resource.split(":",2)
+        resource = resource_split[1]
+        standard = "nagios"
+        try:
+            with open("/usr/share/pacemaker/nagios/plugins-metadata/" + resource + ".xml",'r') as f:
+                resource_parse_options(f.read(), standard, None, resource)
+        except IOError as e:
+            utils.err ("Unable to find resource: %s" % resource)
+        return
 
-def _format_agent_description(description, stonith=False):
-    output = []
+    # we know this is the nagios resource standard
+    if "ocf:" in resource:
+        resource_split = resource.split(":",3)
+        provider = resource_split[1]
+        resource = resource_split[2]
+        standard = "ocf"
+        metadata = utils.get_metadata("/usr/lib/ocf/resource.d/" + provider + "/" + resource)
+        if metadata:
+            resource_parse_options(metadata, standard, provider, resource)
+        else:
+            utils.err ("Unable to find resource: %s" % resource)
+        return
 
-    if description.get("name") and description.get("shortdesc"):
-        output.append("{0} - {1}".format(
-            description["name"],
-            _format_desc(
-                len(description["name"] + " - "),
-                description["shortdesc"]
-            )
-        ))
-    elif description.get("name"):
-        output.append(description["name"])
-    elif description.get("shortdesc"):
-        output.append(description["shortdesc"])
+    # no standard was give, lets search all ocf providers first
+    providers = sorted(os.listdir("/usr/lib/ocf/resource.d"))
+    for provider in providers:
+        metadata = utils.get_metadata("/usr/lib/ocf/resource.d/" + provider + "/" + resource)
+        if metadata == False:
+            continue
+        else:
+            resource_parse_options(metadata, "ocf", provider, resource)
+            found_resource = True
 
-    if description.get("longdesc"):
-        output.append("")
-        output.append(description["longdesc"])
+    # still not found, now lets look at nagios plugins
+    if not found_resource:
+        try:
+            with open("/usr/share/pacemaker/nagios/plugins-metadata/" + resource + ".xml",'r') as f:
+                resource_parse_options(f.read(), "nagios", None, resource)
+        except IOError as e:
+            utils.err ("Unable to find resource: %s" % resource)
 
-    if description.get("parameters"):
-        output_params = []
-        for param in description["parameters"]:
-            if param.get("advanced", False):
-                continue
-            param_title = " ".join(filter(None, [
-                param.get("name"),
-                "(required)" if param.get("required", False) else None
-            ]))
-            param_desc = param.get("longdesc", "").replace("\n", " ")
-            if not param_desc:
-                param_desc = param.get("shortdesc", "").replace("\n", " ")
-                if not param_desc:
-                    param_desc = "No description available"
-            output_params.append("  {0}: {1}".format(
-                param_title,
-                _format_desc(len(param_title) + 4, param_desc)
-            ))
-        if output_params:
-            output.append("")
-            if stonith:
-                output.append("Stonith options:")
-            else:
-                output.append("Resource options:")
-            output.extend(output_params)
-
-    if description.get("actions"):
-        output_actions = []
-        for action in utils.filter_default_op_from_actions(
-            description["actions"]
-        ):
-            parts = ["  {0}:".format(action.get("name", ""))]
-            parts.extend([
-                "{0}={1}".format(name, value)
-                for name, value in sorted(action.items())
-                if name != "name"
-            ])
-            output_actions.append(" ".join(parts))
-        if output_actions:
-            output.append("")
-            output.append("Default operations:")
-            output.extend(output_actions)
-
-    return "\n".join(output)
-
-
-# Return the string formatted with a line length of terminal width  and indented
-def _format_desc(indent, desc):
+# Return the string formatted with a line length of 79 and indented
+def format_desc(indent, desc):
     desc = " ".join(desc.split())
-    dummy_rows, columns = utils.getTerminalSize()
+    rows, columns = utils.getTerminalSize()
     columns = int(columns)
-    if columns < 40:
-        columns = 40
+    if columns < 40: columns = 40
     afterindent = columns - indent
-    if afterindent < 1:
-        afterindent = columns
-
     output = ""
     first = True
+
     for line in textwrap.wrap(desc, afterindent):
         if not first:
-            output += " " * indent
+            for i in range(0,indent):
+                output += " "
         output += line
         output += "\n"
         first = False
@@ -355,10 +430,7 @@ def _format_desc(indent, desc):
 
 # Create a resource using cibadmin
 # ra_class, ra_type & ra_provider must all contain valid info
-def resource_create(
-    ra_id, ra_type, ra_values, op_values, meta_values=[], clone_opts=[],
-    group=None
-):
+def resource_create(ra_id, ra_type, ra_values, op_values, meta_values=[], clone_opts=[]):
     if "--wait" in utils.pcs_options:
         wait_timeout = utils.validate_wait_get_timeout()
         if "--disabled" in utils.pcs_options:
@@ -378,55 +450,17 @@ def resource_create(
     if not ra_id_valid:
         utils.err(ra_id_error)
 
-
-    try:
-        if ":" in ra_type:
-            full_agent_name = ra_type
-            if full_agent_name.startswith("stonith:"):
-                # Maybe we can just try to get a metadata object and if it fails
-                # then we know the agent is not valid. Then the is_valid_agent
-                # method can be completely removed.
-                is_valid_agent = lib_ra.StonithAgent(
-                    utils.cmd_runner(),
-                    full_agent_name[len("stonith:"):]
-                ).is_valid_metadata()
-            else:
-                is_valid_agent = lib_ra.ResourceAgent(
-                    utils.cmd_runner(),
-                    full_agent_name
-                ).is_valid_metadata()
-            if not is_valid_agent:
-                if "--force" not in utils.pcs_options:
-                    utils.err("Unable to create resource '{0}', it is not installed on this system (use --force to override)".format(full_agent_name))
-                elif not full_agent_name.startswith("stonith:"):
-                    # stonith is covered in stonith.stonith_create
-                    if not re.match("^[^:]+(:[^:]+){1,2}$", full_agent_name):
-                        utils.err(
-                            "Invalid resource agent name '{0}'".format(
-                                full_agent_name
-                            )
-                        )
-                    print(
-                        "Warning: '{0}' is not installed or does not provide valid metadata".format(
-                            full_agent_name
-                        )
-                    )
-        else:
-            full_agent_name = lib_ra.guess_exactly_one_resource_agent_full_name(
-                utils.cmd_runner(),
-                ra_type
-            ).get_name()
-            print("Creating resource '{0}'".format(full_agent_name))
-    except lib_ra.ResourceAgentError as e:
-        utils.process_library_reports(
-            [lib_ra.resource_agent_error_to_report_item(e)]
-        )
-    except LibraryError as e:
-        utils.process_library_reports(e.args)
-    agent_name_parts = split_resource_agent_name(full_agent_name)
-
-
     dom = utils.get_cib_dom()
+
+    # If we're not using --force, try to change the case of ra_type to match any
+    # installed resources
+    if not "--force" in utils.pcs_options:
+        new_ra_type = utils.is_valid_resource(ra_type, True)
+        if new_ra_type != True and new_ra_type != False:
+            ra_type = new_ra_type
+
+    if not utils.is_valid_resource(ra_type) and not ("--force" in utils.pcs_options):
+        utils.err ("Unable to create resource '%s', it is not installed on this system (use --force to override)" % ra_type)
 
     if utils.does_id_exist(dom, ra_id):
         utils.err("unable to create resource/fence device '%s', '%s' already exists on this system" % (ra_id,ra_id))
@@ -446,8 +480,8 @@ def resource_create(
     # If the user specifies an operation value and we find a similar one in
     # the default operations we remove if from the default operations
     op_values_agent = []
-    if "--no-default-ops" not in utils.pcs_options:
-        default_op_values = utils.get_default_op_values(full_agent_name)
+    if "--no-default-ops" not in utils.pcs_options: 
+        default_op_values = utils.get_default_op_values(ra_type)
         for def_op in default_op_values:
             match = False
             for op in op_values:
@@ -470,7 +504,7 @@ def resource_create(
                 continue
             match = re.match("interval=(.+)", op_setting)
             if match:
-                interval = timeout_to_seconds(match.group(1))
+                interval = utils.get_timeout_seconds(match.group(1))
                 if interval is not None:
                     if interval in action_intervals[op_action]:
                         old_interval = interval
@@ -493,6 +527,8 @@ def resource_create(
     if not is_monitor_present:
         op_values.append(['monitor'])
 
+    op_values_all = op_values_agent + op_values
+
     if "--disabled" in utils.pcs_options:
         meta_values = [
             meta for meta in meta_values if not meta.startswith("target-role=")
@@ -506,40 +542,20 @@ def resource_create(
         meta_values = []
 
     instance_attributes = convert_args_to_instance_variables(ra_values,ra_id)
-    primitive_values = agent_name_parts[:]
+    primitive_values = get_full_ra_type(ra_type)
     primitive_values.insert(0,("id",ra_id))
     meta_attributes = convert_args_to_meta_attrs(meta_values, ra_id)
-    if "--force" not in utils.pcs_options:
+    if not "--force" in utils.pcs_options and utils.does_resource_have_options(ra_type):
         params = utils.convert_args_to_tuples(ra_values)
-        bad_opts, missing_req_opts = [], []
-        try:
-            if full_agent_name.startswith("stonith:"):
-                metadata = lib_ra.StonithAgent(
-                    utils.cmd_runner(),
-                    full_agent_name[len("stonith:"):]
-                )
-            else:
-                metadata = lib_ra.ResourceAgent(
-                    utils.cmd_runner(),
-                    full_agent_name
-                )
-            bad_opts, missing_req_opts = metadata.validate_parameters_values(
-                dict(params)
-            )
-        except lib_ra.ResourceAgentError as e:
-            utils.process_library_reports(
-                [lib_ra.resource_agent_error_to_report_item(e)]
-            )
-        except LibraryError as e:
-            utils.process_library_reports(e.args)
+        bad_opts, missing_req_opts = utils.validInstanceAttributes(ra_id, params , get_full_ra_type(ra_type, True))
         if len(bad_opts) != 0:
             utils.err ("resource option(s): '%s', are not recognized for resource type: '%s' (use --force to override)" \
-                    % (", ".join(sorted(bad_opts)), full_agent_name))
+                    % (", ".join(bad_opts), get_full_ra_type(ra_type, True)))
         if len(missing_req_opts) != 0:
             utils.err(
                 "missing required option(s): '%s' for resource type: %s"
                     " (use --force to override)"
-                % (", ".join(missing_req_opts), full_agent_name)
+                % (", ".join(missing_req_opts), get_full_ra_type(ra_type, True))
             )
 
     resource_elem = create_xml_element("primitive", primitive_values, instance_attributes + meta_attributes)
@@ -554,19 +570,20 @@ def resource_create(
         )
 
     if "--clone" in utils.pcs_options or len(clone_opts) > 0:
-        dom, dummy_clone_id = resource_clone_create(dom, [ra_id] + clone_opts)
-        if group:
+        dom, clone_id = resource_clone_create(dom, [ra_id] + clone_opts)
+        if "--group" in utils.pcs_options:
             print("Warning: --group ignored when creating a clone")
         if "--master" in utils.pcs_options:
             print("Warning: --master ignored when creating a clone")
     elif "--master" in utils.pcs_options:
-        dom, dummy_master_id = resource_master_create(
+        dom, master_id = resource_master_create(
             dom, [ra_id] + master_meta_values
         )
-        if group:
+        if "--group" in utils.pcs_options:
             print("Warning: --group ignored when creating a master")
-    elif group:
-        dom = resource_group_add(dom, group, [ra_id])
+    elif "--group" in utils.pcs_options:
+        groupname = utils.pcs_options["--group"]
+        dom = resource_group_add(dom, groupname, [ra_id])
 
     utils.replace_cib_configuration(dom)
 
@@ -782,46 +799,37 @@ def resource_move(argv,clear=False,ban=False):
                 msg.append("\n" + output)
             utils.err("\n".join(msg).strip())
 
+def resource_standards(return_output=False):
+    output, retval = utils.run(["crm_resource","--list-standards"], True)
+    # Return value is ignored because it contains the number of standards
+    # returned, not an error code
+    output = output.strip()
+    if return_output == True:
+        return output
+    print(output)
 
-def resource_standards(lib, argv, modifiers):
-    if argv:
-        raise CmdLineInputError()
+def resource_providers():
+    output, retval = utils.run(["crm_resource","--list-ocf-providers"],True)
+    # Return value is ignored because it contains the number of providers
+    # returned, not an error code
+    print(output.strip())
 
-    standards = lib.resource_agent.list_standards()
-
-    if standards:
-        print("\n".join(standards))
-    else:
-        utils.err("No standards found")
-
-
-def resource_providers(lib, argv, modifiers):
-    if argv:
-        raise CmdLineInputError()
-
-    providers = lib.resource_agent.list_ocf_providers()
-
-    if providers:
-        print("\n".join(providers))
-    else:
-        utils.err("No OCF providers found")
-
-
-def resource_agents(lib, argv, modifiers):
+def resource_agents(argv):
     if len(argv) > 1:
-        raise CmdLineInputError()
-
-    standard = argv[0] if argv else None
-
-    agents = lib.resource_agent.list_agents_for_standard_and_provider(standard)
-
-    if agents:
-        print("\n".join(agents))
+        usage.resource()
+        sys.exit(1)
+    elif len(argv) == 1:
+        standards = [argv[0]]
     else:
-        utils.err("No agents found{0}".format(
-            " for {0}".format(argv[0]) if argv else ""
-        ))
+        output = resource_standards(True)
+        standards = output.split('\n')
 
+    for s in standards:
+        output, retval = utils.run(["crm_resource", "--list-agents", s])
+        preg = re.compile(r'\d+ agents found for standard.*$', re.MULTILINE)
+        output = preg.sub("", output)
+        output = output.strip()
+        print(output)
 
 # Update a resource, removing any args that are empty and adding/updating
 # args that are not empty
@@ -837,22 +845,39 @@ def resource_update(res_id,args):
         wait_timeout = utils.validate_wait_get_timeout()
         wait = True
 
-    resource = utils.dom_get_resource(dom, res_id)
+    resource = None
+    for r in dom.getElementsByTagName("primitive"):
+        if r.getAttribute("id") == res_id:
+            resource = r
+            break
+
     if not resource:
-        clone = utils.dom_get_clone(dom, res_id)
+        clone = None
+        for c in dom.getElementsByTagName("clone"):
+            if c.getAttribute("id") == res_id:
+                clone = r
+                break
+
         if clone:
-            clone_child = utils.dom_elem_get_clone_ms_resource(clone)
-            if clone_child:
-                child_id = clone_child.getAttribute("id")
-                return resource_update_clone_master(
-                    dom, clone, "clone", child_id, args, wait, wait_timeout
-                )
-        master = utils.dom_get_master(dom, res_id)
+            for a in c.childNodes:
+                if a.localName == "primitive" or a.localName == "group":
+                    return resource_update_clone_master(
+                        dom, clone, "clone", a.getAttribute("id"), args,
+                        wait, wait_timeout
+                    )
+
+        master = None
+        for m in dom.getElementsByTagName("master"):
+            if m.getAttribute("id") == res_id:
+                master = r 
+                break
+
         if master:
             return resource_update_clone_master(
                 dom, master, "master", res_id, args, wait, wait_timeout
             )
-        utils.err("Unable to find resource: %s" % res_id)
+
+        utils.err ("Unable to find resource: %s" % res_id)
 
     instance_attributes = resource.getElementsByTagName("instance_attributes")
     if len(instance_attributes) == 0:
@@ -861,9 +886,9 @@ def resource_update(res_id,args):
         resource.appendChild(instance_attributes)
     else:
         instance_attributes = instance_attributes[0]
-
+    
     params = utils.convert_args_to_tuples(ra_values)
-    if "--force" not in utils.pcs_options and (resource.getAttribute("class") == "ocf" or resource.getAttribute("class") == "stonith"):
+    if not "--force" in utils.pcs_options and (resource.getAttribute("class") == "ocf" or resource.getAttribute("class") == "stonith"):
         resClass = resource.getAttribute("class")
         resProvider = resource.getAttribute("provider")
         resType = resource.getAttribute("type")
@@ -871,28 +896,10 @@ def resource_update(res_id,args):
             resource_type = resClass + ":" + resType
         else:
             resource_type = resClass + ":" + resProvider + ":" + resType
-        bad_opts = []
-        try:
-            if resource_type.startswith("stonith:"):
-                metadata = lib_ra.StonithAgent(
-                    utils.cmd_runner(),
-                    resource_type[len("stonith:"):]
-                )
-            else:
-                metadata = lib_ra.ResourceAgent(
-                    utils.cmd_runner(),
-                    resource_type
-                )
-            bad_opts, _ = metadata.validate_parameters_values(dict(params))
-        except lib_ra.ResourceAgentError as e:
-            utils.process_library_reports(
-                [lib_ra.resource_agent_error_to_report_item(e)]
-            )
-        except LibraryError as e:
-            utils.process_library_reports(e.args)
+        bad_opts, missing_req_opts = utils.validInstanceAttributes(res_id, params, resource_type)
         if len(bad_opts) != 0:
             utils.err ("resource option(s): '%s', are not recognized for resource type: '%s' (use --force to override)" \
-                    % (", ".join(sorted(bad_opts)), utils.getResourceType(resource)))
+                    % (", ".join(bad_opts), utils.getResourceType(resource)))
 
 
     for (key,val) in params:
@@ -912,11 +919,31 @@ def resource_update(res_id,args):
             ia.setAttribute("value", val)
             instance_attributes.appendChild(ia)
 
-    remote_node_name = utils.dom_get_resource_remote_node_name(resource)
-    utils.dom_update_meta_attr(
-        resource,
-        utils.convert_args_to_tuples(meta_values)
-    )
+    meta_attributes = resource.getElementsByTagName("meta_attributes")
+    if len(meta_attributes) == 0:
+        meta_attributes = dom.createElement("meta_attributes")
+        meta_attributes.setAttribute("id", res_id + "-meta_attributes")
+        resource.appendChild(meta_attributes)
+    else:
+        meta_attributes = meta_attributes[0]
+    
+    meta_attrs = utils.convert_args_to_tuples(meta_values)
+    for (key,val) in meta_attrs:
+        meta_found = False
+        for ma in meta_attributes.getElementsByTagName("nvpair"):
+            if ma.getAttribute("name") == key:
+                meta_found = True
+                if val == "":
+                    meta_attributes.removeChild(ma)
+                else:
+                    ma.setAttribute("value", val)
+                break
+        if not meta_found:
+            ma = dom.createElement("nvpair")
+            ma.setAttribute("id", res_id + "-meta_attributes-" + key)
+            ma.setAttribute("name", key)
+            ma.setAttribute("value", val)
+            meta_attributes.appendChild(ma)
 
     operations = resource.getElementsByTagName("operations")
     if len(operations) == 0:
@@ -968,17 +995,6 @@ def resource_update(res_id,args):
 
     utils.replace_cib_configuration(dom)
 
-    if (
-        remote_node_name
-        and
-        remote_node_name != utils.dom_get_resource_remote_node_name(resource)
-    ):
-        # if the resource was a remote node and it is not anymore, (or its name
-        # changed) we need to tell pacemaker about it
-        output, retval = utils.run([
-            "crm_node", "--force", "--remove", remote_node_name
-        ])
-
     if "--wait" in utils.pcs_options:
         args = ["crm_resource", "--wait"]
         if wait_timeout:
@@ -1000,11 +1016,11 @@ def resource_update_clone_master(
     dom, clone, clone_type, res_id, args, wait, wait_timeout
 ):
     if clone_type == "clone":
-        dom, dummy_clone_id = resource_clone_create(dom, [res_id] + args, True)
+        dom, clone_id = resource_clone_create(dom, [res_id] + args, True)
     elif clone_type == "master":
-        dom, dummy_master_id = resource_master_create(dom, [res_id] + args, True)
+        dom, master_id = resource_master_create(dom, [res_id] + args, True)
 
-    utils.replace_cib_configuration(dom)
+    dom = utils.replace_cib_configuration(dom)
 
     if wait:
         args = ["crm_resource", "--wait"]
@@ -1108,7 +1124,7 @@ def resource_operation_add(
                     "operation %s with interval %ss already specified for %s:\n%s"
                     % (
                         op_el.getAttribute("name"),
-                        timeout_to_seconds(
+                        utils.get_timeout_seconds(
                             op_el.getAttribute("interval"), True
                         ),
                         res_id,
@@ -1205,21 +1221,9 @@ def resource_meta(res_id, argv):
     if "--wait" in utils.pcs_options:
         wait_timeout = utils.validate_wait_get_timeout()
 
-    remote_node_name = utils.dom_get_resource_remote_node_name(resource_el)
     utils.dom_update_meta_attr(resource_el, utils.convert_args_to_tuples(argv))
 
     utils.replace_cib_configuration(dom)
-
-    if (
-        remote_node_name
-        and
-        remote_node_name != utils.dom_get_resource_remote_node_name(resource_el)
-    ):
-        # if the resource was a remote node and it is not anymore, (or its name
-        # changed) we need to tell pacemaker about it
-        output, retval = utils.run([
-            "crm_node", "--force", "--remove", remote_node_name
-        ])
 
     if "--wait" in utils.pcs_options:
         args = ["crm_resource", "--wait"]
@@ -1259,26 +1263,30 @@ def convert_args_to_instance_variables(ra_values, ra_id):
     ret = ("instance_attributes", [[("id"),(attribute_id)]], ivs)
     return [ret]
 
-def split_resource_agent_name(full_agent_name):
-    match = re.match(
-        "^(?P<standard>[^:]+)(:(?P<provider>[^:]+))?:(?P<type>[^:]+)$",
-        full_agent_name
-    )
-    if not match:
-        utils.err(
-            "Invalid resource agent name '{0}'".format(
-                full_agent_name
-            )
-        )
-    parts = [
-        ("class", match.group("standard")),
-        ("type", match.group("type")),
-    ]
-    if match.group("provider"):
-        parts.append(
-            ("provider", match.group("provider"))
-        )
-    return parts
+
+# Passed a resource type (ex. ocf:heartbeat:IPaddr2 or IPaddr2) and returns
+# a list of tuples mapping the types to xml attributes
+def get_full_ra_type(ra_type, return_string = False):
+    if (ra_type.count(":") == 0):
+        if os.path.isfile("/usr/lib/ocf/resource.d/heartbeat/%s" % ra_type):
+            ra_type = "ocf:heartbeat:" + ra_type
+        elif os.path.isfile("/usr/lib/ocf/resource.d/pacemaker/%s" % ra_type):
+            ra_type = "ocf:pacemaker:" + ra_type
+        elif os.path.isfile("/usr/share/pacemaker/nagios/plugins-metadata/%s.xml" % ra_type):
+            ra_type = "nagios:" + ra_type
+        else:
+            ra_type = "ocf:heartbeat:" + ra_type
+
+    
+    if return_string:
+        return ra_type
+
+    ra_def = ra_type.split(":")
+    # If len = 2 then we're creating a fence device
+    if len(ra_def) == 2:
+        return([("class",ra_def[0]),("type",ra_def[1])])
+    else:
+        return([("class",ra_def[0]),("type",ra_def[2]),("provider",ra_def[1])])
 
 
 def create_xml_element(tag, options, children = []):
@@ -1422,17 +1430,21 @@ def resource_clone_create(cib_dom, argv, update_existing=False):
         if element.parentNode.tagName != "clone":
             utils.err("%s is not currently a clone" % name)
         clone = element.parentNode
+        for child in clone.childNodes:
+            if (
+                child.nodeType == child.ELEMENT_NODE
+                and
+                child.tagName == "meta_attributes"
+            ):
+                meta = child
+                break
     else:
         clone = cib_dom.createElement("clone")
         clone.setAttribute("id", utils.find_unique_id(cib_dom, name + "-clone"))
         clone.appendChild(element)
         re.appendChild(clone)
 
-    generic_values, op_values, meta_values = parse_resource_options(argv)
-    if op_values:
-        utils.err("op settings must be changed on base resource, not the clone")
-    final_meta = prepare_options(generic_values + meta_values)
-    utils.dom_update_meta_attr(clone, sorted(final_meta.items()))
+    utils.dom_update_meta_attr(clone, utils.convert_args_to_tuples(argv))
 
     return cib_dom, clone.getAttribute("id")
 
@@ -1579,7 +1591,7 @@ def resource_master_create(dom, argv, update=False, master_id=None):
         # element in the group, we remove the group
         if resource.parentNode.tagName == "group" and resource.parentNode.getElementsByTagName("primitive").length <= 1:
             resource.parentNode.parentNode.removeChild(resource.parentNode)
-
+        
         master_element = dom.createElement("master")
         if master_id_autogenerated:
             master_element.setAttribute(
@@ -1592,17 +1604,52 @@ def resource_master_create(dom, argv, update=False, master_id=None):
         resources.appendChild(master_element)
 
     if len(argv) > 0:
-        generic_values, op_values, meta_values = parse_resource_options(argv)
-        if op_values:
-            utils.err("op settings must be changed on base resource, not the master")
-        final_meta = prepare_options(generic_values + meta_values)
-        utils.dom_update_meta_attr(master_element, list(final_meta.items()))
-
+        utils.dom_update_meta_attr(
+            master_element,
+            utils.convert_args_to_tuples(argv)
+        )
     return dom, master_element.getAttribute("id")
+
+def resource_master_remove(argv):
+    if len(argv) < 1:
+        usage.resource()
+        sys.exit(1)
+
+    dom = utils.get_cib_dom()
+    master_id = argv.pop(0)
+
+    master_found = False
+# Check to see if there's a resource/group with the master_id if so, we remove the parent
+    for rg in (dom.getElementsByTagName("primitive") + dom.getElementsByTagName("group")):
+        if rg.getAttribute("id") == master_id and rg.parentNode.tagName == "master":
+            master_id = rg.parentNode.getAttribute("id")
+
+    resources_to_cleanup = []
+    for master in dom.getElementsByTagName("master"):
+        if master.getAttribute("id") == master_id:
+            childNodes = master.getElementsByTagName("primitive")
+            for child in childNodes:
+                resources_to_cleanup.append(child.getAttribute("id"))
+            master_found = True
+            break
+
+    if not master_found:
+            utils.err("Unable to find multi-state resource with id %s" % master_id)
+
+    constraints_element = dom.getElementsByTagName("constraints")
+    if len(constraints_element) > 0:
+        constraints_element = constraints_element[0]
+        constraints = []
+        for resource_id in resources_to_cleanup:
+            remove_resource_references(
+                dom, resource_id, constraints_element=constraints_element
+            )
+    master.parentNode.removeChild(master)
+    print("Removing Master - " + master_id)
+    utils.replace_cib_configuration(dom)
 
 def resource_remove(resource_id, output = True):
     dom = utils.get_cib_dom()
-    # if resource is a clone or a master, work with its child instead
     cloned_resource = utils.dom_get_clone_ms_resource(dom, resource_id)
     if cloned_resource:
         resource_id = cloned_resource.getAttribute("id")
@@ -1613,7 +1660,7 @@ def resource_remove(resource_id, output = True):
         group_dom = parseString(group)
         print("Stopping all resources in group: %s..." % resource_id)
         resource_disable([resource_id])
-        if "--force" not in utils.pcs_options and not utils.usefile:
+        if not "--force" in utils.pcs_options and not utils.usefile:
             output, retval = utils.run(["crm_resource", "--wait"])
             if retval != 0 and "unrecognized option '--wait'" in output:
                 output = ""
@@ -1623,7 +1670,7 @@ def resource_remove(resource_id, output = True):
                 ):
                     res_id = res.getAttribute("id")
                     res_stopped = False
-                    for _ in range(15):
+                    for i in range(15):
                         time.sleep(1)
                         if not utils.resource_running_on(res_id)["is_running"]:
                             res_stopped = True
@@ -1650,20 +1697,21 @@ def resource_remove(resource_id, output = True):
             resource_remove(res.getAttribute("id"))
         sys.exit(0)
 
-    # now we know resource is not a group, a clone nor a master
-    # because of the conditions above
-    if not utils.does_exist('//resources/descendant::primitive[@id="'+resource_id+'"]'):
-        utils.err("Resource '{0}' does not exist.".format(resource_id))
-
     group_xpath = '//group/primitive[@id="'+resource_id+'"]/..'
     group = utils.get_cib_xpath(group_xpath)
     num_resources_in_group = 0
+
+    if not utils.does_exist('//resources/descendant::primitive[@id="'+resource_id+'"]'):
+        if utils.does_exist('//resources/master[@id="'+resource_id+'"]'):
+            return resource_master_remove([resource_id])
+
+        utils.err("Resource '{0}' does not exist.".format(resource_id))
 
     if (group != ""):
         num_resources_in_group = len(parseString(group).documentElement.getElementsByTagName("primitive"))
 
     if (
-        "--force" not in utils.pcs_options
+        not "--force" in utils.pcs_options
         and
         not utils.usefile
         and
@@ -1676,7 +1724,7 @@ def resource_remove(resource_id, output = True):
         if retval != 0 and "unrecognized option '--wait'" in output:
             output = ""
             retval = 0
-            for _ in range(15):
+            for i in range(15):
                 time.sleep(1)
                 if not utils.resource_running_on(resource_id)["is_running"]:
                     break
@@ -1696,12 +1744,11 @@ def resource_remove(resource_id, output = True):
     )
     dom = utils.get_cib_dom()
     resource_el = utils.dom_get_resource(dom, resource_id)
-    remote_node_name = None
     if resource_el:
-        remote_node_name = utils.dom_get_resource_remote_node_name(resource_el)
-        if remote_node_name:
+        remote_node = utils.dom_get_resource_remote_node_name(resource_el)
+        if remote_node:
             dom = constraint.remove_constraints_containing_node(
-                dom, remote_node_name, output
+                dom, remote_node, output
             )
             utils.replace_cib_configuration(dom)
             dom = utils.get_cib_dom()
@@ -1762,34 +1809,12 @@ def resource_remove(resource_id, output = True):
         args = ["cibadmin", "-o", "resources", "-D", "--xpath", to_remove_xpath]
         if output == True:
             print("Deleting Resource ("+msg+") - " + resource_id)
-        dummy_cmdoutput,retVal = utils.run(args)
+        cmdoutput,retVal = utils.run(args)
         if retVal != 0:
             if output == True:
                 utils.err("Unable to remove resource '%s' (do constraints exist?)" % (resource_id))
             return False
-    if remote_node_name and not utils.usefile:
-        output, retval = utils.run([
-            "crm_node", "--force", "--remove", remote_node_name
-        ])
     return True
-
-def stonith_level_rm_device(cib_dom, stn_id):
-    topology_el_list = cib_dom.getElementsByTagName("fencing-topology")
-    if not topology_el_list:
-        return cib_dom
-    topology_el = topology_el_list[0]
-    for level_el in topology_el.getElementsByTagName("fencing-level"):
-        device_list = level_el.getAttribute("devices").split(",")
-        if stn_id in device_list:
-            new_device_list = [dev for dev in device_list if dev != stn_id]
-            if new_device_list:
-                level_el.setAttribute("devices", ",".join(new_device_list))
-            else:
-                level_el.parentNode.removeChild(level_el)
-    if not topology_el.getElementsByTagName("fencing-level"):
-        topology_el.parentNode.removeChild(topology_el)
-    return cib_dom
-
 
 def remove_resource_references(
     dom, resource_id, output=False, constraints_element=None
@@ -1797,8 +1822,7 @@ def remove_resource_references(
     constraint.remove_constraints_containing(
         resource_id, output, constraints_element, dom
     )
-    stonith_level_rm_device(dom, resource_id)
-    lib_acl.dom_remove_permissions_referencing(dom, resource_id)
+    stonith.stonith_level_rm_device(dom, resource_id)
     return dom
 
 # This removes a resource from a group, but keeps it in the config
@@ -1967,17 +1991,6 @@ def resource_group_list(argv):
         print(" ".join(line_parts))
 
 def resource_show(argv, stonith=False):
-    mutually_exclusive_opts = ("--full", "--groups", "--hide-inactive")
-    modifiers = [
-        key for key in utils.pcs_options if key in mutually_exclusive_opts
-    ]
-    if (len(modifiers) > 1) or (argv and modifiers):
-        utils.err(
-            "you can specify only one of resource id, {0}".format(
-                ", ".join(mutually_exclusive_opts)
-            )
-        )
-
     if "--groups" in utils.pcs_options:
         resource_group_list(argv)
         return
@@ -1994,28 +2007,15 @@ def resource_show(argv, stonith=False):
         return
 
     if len(argv) == 0:
-        monitor_command = ["crm_mon", "--one-shot"]
-        if "--hide-inactive" not in utils.pcs_options:
-            monitor_command.append('--inactive')
-        output, retval = utils.run(monitor_command)
+        output, retval = utils.run(["crm_mon", "-1", "-r"])
         if retval != 0:
             utils.err("unable to get cluster status from crm_mon\n"+output.rstrip())
         preg = re.compile(r'.*(stonith:.*)')
         resources_header = False
         in_resources = False
         has_resources = False
-        no_resources_line = (
-            "NO stonith devices configured" if stonith
-            else "NO resources configured"
-        )
         for line in output.split('\n'):
-            if line == "No active resources":
-                print(line)
-                return
-            if line == "No resources":
-                print(no_resources_line)
-                return
-            if line in ("Full list of resources:", "Active resources:"):
+            if line == "Full list of resources:":
                 resources_header = True
                 continue
             if line == "":
@@ -2024,7 +2024,10 @@ def resource_show(argv, stonith=False):
                     in_resources = True
                 elif in_resources:
                     if not has_resources:
-                        print(no_resources_line)
+                        if not stonith:
+                            print("NO resources configured")
+                        else:
+                            print("NO stonith devices configured")
                     return
                 continue
             if in_resources:
@@ -2344,7 +2347,7 @@ def resource_failcount(argv):
         sys.exit(1)
 
     if len(argv) > 0:
-        node = argv.pop(0)
+        node = argv.pop(0) 
         all_nodes = False
     else:
         all_nodes = True
@@ -2415,7 +2418,7 @@ def set_default(def_type, argv):
         if (len(args) != 2):
             print("Invalid Property: " + arg)
             continue
-        utils.setAttribute(def_type, args[0], args[1], exit_on_error=True)
+        utils.setAttribute(def_type, args[0], args[1])
 
 def print_node(node, tab = 0):
     spaces = " " * tab
@@ -2486,7 +2489,7 @@ def print_operations(node, spaces):
         else:
             first = False
         output += op.attrib["name"] + " "
-        for attr,val in sorted(op.attrib.items()):
+        for attr,val in op.attrib.items():
             if attr in ["id","name"] :
                 continue
             output += attr + "=" + val + " "
@@ -2503,7 +2506,7 @@ def print_operations(node, spaces):
 def operation_to_string(op_el):
     parts = []
     parts.append(op_el.getAttribute("name"))
-    for name, value in sorted(op_el.attributes.items()):
+    for name, value in op_el.attributes.items():
         if name in ["id", "name"]:
             continue
         parts.append(name + "=" + value)
@@ -2525,25 +2528,24 @@ def get_attrs(node, prepend_string = "", append_string = ""):
     else:
         return output.rstrip()
 
-def resource_cleanup(argv):
-    resource = None
-    node = None
+def resource_cleanup(res_id):
+    (output, retval) = utils.run(["crm_resource", "-C", "-r", res_id])
+    if retval != 0:
+        utils.err("Unable to cleanup resource: %s" % res_id + "\n" + output)
+    else:
+        print(output)
 
-    if len(argv) > 1:
-        raise CmdLineInputError()
-    if argv:
-        resource = argv[0]
-    if "--node" in utils.pcs_options:
-        node = utils.pcs_options["--node"]
-    force = "--force" in utils.pcs_options
-
-    print(lib_pacemaker.resource_cleanup(
-        utils.cmd_runner(), resource, node, force
-    ))
+def resource_cleanup_all():
+    (output, retval) = utils.run(["crm_resource", "-C"])
+    if retval != 0:
+        utils.err("Unexpected error occured. 'crm_resource -C' err_code: %s\n%s" % (retval, output))
+    else:
+        print(output)
 
 def resource_history(args):
     dom = utils.get_cib_dom()
     resources = {}
+    calls = {}
     lrm_res = dom.getElementsByTagName("lrm_resource")
     for res in lrm_res:
         res_id = res.getAttribute("id")
@@ -2551,14 +2553,14 @@ def resource_history(args):
             resources[res_id] = {}
         for rsc_op in res.getElementsByTagName("lrm_rsc_op"):
             resources[res_id][rsc_op.getAttribute("call-id")] = [res_id, rsc_op]
-
+    
     for res in sorted(resources):
         print("Resource: %s" % res)
         for cid in sorted(resources[res]):
-            (last_date, dummy_retval) = utils.run(["date","-d", "@" + resources[res][cid][1].getAttribute("last-rc-change")])
+            (last_date,retval) = utils.run(["date","-d", "@" + resources[res][cid][1].getAttribute("last-rc-change")])
             last_date = last_date.rstrip()
             rc_code = resources[res][cid][1].getAttribute("rc-code")
-            operation = resources[res][cid][1].getAttribute("operation")
+            operation = resources[res][cid][1].getAttribute("operation") 
             if rc_code != "0":
                 print("  Failed on %s" % last_date)
             elif operation == "stop":
@@ -2643,7 +2645,7 @@ def resource_relocate_get_locations(cib_dom, resources=None):
     updated_cib, updated_resources = resource_relocate_set_stickiness(
         cib_dom, resources
     )
-    dummy_simout, transitions, new_cib = utils.simulate_cib(updated_cib)
+    simout, transitions, new_cib = utils.simulate_cib(updated_cib)
     operation_list = utils.get_operations_from_transitions(transitions)
     locations = utils.get_resources_location_from_operations(
         new_cib, operation_list
@@ -2658,8 +2660,8 @@ def resource_relocate_get_locations(cib_dom, resources=None):
     ]
 
 def resource_relocate_show(cib_dom):
-    updated_cib, dummy_updated_resources = resource_relocate_set_stickiness(cib_dom)
-    simout, dummy_transitions, dummy_new_cib = utils.simulate_cib(updated_cib)
+    updated_cib, updated_resources = resource_relocate_set_stickiness(cib_dom)
+    simout, transitions, new_cib = utils.simulate_cib(updated_cib)
     in_status = False
     in_status_resources = False
     in_transitions = False
@@ -2769,7 +2771,8 @@ def set_resource_utilization(resource_id, argv):
     resource_el = utils.dom_get_resource(cib, resource_id)
     if resource_el is None:
         utils.err("Unable to find a resource: {0}".format(resource_id))
-    utils.dom_update_utilization(resource_el, prepare_options(argv))
+
+    utils.dom_update_utilization(resource_el, utils.convert_args_to_tuples(argv))
     utils.replace_cib_configuration(cib)
 
 def print_resource_utilization(resource_id):
@@ -2788,28 +2791,8 @@ def print_resources_utilization():
     for resource_el in cib.getElementsByTagName("primitive"):
         u = utils.get_utilization_str(resource_el)
         if u:
-            utilization[resource_el.getAttribute("id")] = u
+           utilization[resource_el.getAttribute("id")] = u
 
     print("Resource Utilization:")
     for resource in sorted(utilization):
         print(" {0}: {1}".format(resource, utilization[resource]))
-
-
-def get_resource_agent_info(argv):
-# This is used only by pcsd, will be removed in new architecture
-    if len(argv) != 1:
-        utils.err("One parameter expected")
-
-    agent = argv[0]
-
-    runner = utils.cmd_runner()
-
-    try:
-        metadata = lib_ra.ResourceAgent(runner, agent)
-        print(json.dumps(metadata.get_full_info()))
-    except lib_ra.ResourceAgentError as e:
-        utils.process_library_reports(
-            [lib_ra.resource_agent_error_to_report_item(e)]
-        )
-    except LibraryError as e:
-        utils.process_library_reports(e.args)

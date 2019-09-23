@@ -2,27 +2,27 @@
   <tr id="cluster_title_row" {{bind-attr style=Pcs.manage_page}}><td id="page_header" colspan=3 style="vertical-align:middle;">
       <table id="manage_cluster_commands"><tr>
 	  <td>
-	    集群管理
+	    MANAGE CLUSTERS
 	  </td>
 	  </td>
 	  <td>
 	      <a href="#" class="x sprites"></a>
 	    <div class="link">
-	      <a id="manage_remove_cluster" href="#" onclick="verify_remove_clusters();">删除集群</a>
+	      <a id="manage_remove_cluster" href="#" onclick="verify_remove_clusters();">Remove</a>
 	    </div>
 	  </td>
 	  <td>
 	    <a href="#" class="plus sprites"></a>
 	    <div class="link">
 	      <a id="manage_add_cluster" href="#" onclick="add_existing_dialog();">
-		添加已有集群
+		Add Existing
 	      </a>
 	    </div>
 	  </td>
 	  <td>
 	    <a href="#" class="plus sprites"></a>
 	    <div class="link">
-	      <a id="manage_create_cluster" href="#" onclick="create_cluster_dialog();">新建集群</a>
+	      <a id="manage_create_cluster" href="#" onclick="create_cluster_dialog();">Create New</a>
 	    </div>
 	  </td>
 	</tr>
@@ -39,7 +39,7 @@
     </td>
     <td id="node_info" colspan=2>
       <div id="node_info_header">
-	<div id="node_info_header_title">集群信息</div>
+	<div id="node_info_header_title">INFORMATION ABOUT CLUSTERS</div>
       </div>
       <div id="node_sub_info">
         {{#if Pcs.clusterController.cur_cluster}}
@@ -47,7 +47,7 @@
           <table>
             <tr>
               <td style="text-align:right">
-                <b>集群:</b>&nbsp;
+                <b>Cluster:</b>&nbsp;
               </td>
               <td>
                 {{#if Pcs.clusterController.cur_cluster.forbidden}}
@@ -113,18 +113,13 @@
               <td>
                 <table class="datatable">
                   <tr>
-                    <th style="width: 170px;">RESOURCE</th>
-                    <th style="width: 150px;">STATUS</th>
+                    <th style="width: 150px;">RESOURCE</th>
+                    <th style="width: 100px;">STATUS</th>
                   </tr>
                   {{#each r in Pcs.clusterController.cur_cluster.resource_list}}
                   <tr {{bind-attr title=r.tooltip}} {{bind-attr class=r.status_class}}>
                     <td><a {{bind-attr href=r.url_link}}>{{r.id}}</a></td>
-                    <td {{bind-attr style=r.status_style}}>
-                      {{{r.status_icon}}}{{r.status}}
-                      {{#if r.is_unmanaged}}
-                        (unmanaged)
-                      {{/if}}
-                    </td>
+                    <td {{bind-attr style=r.status_style}}>{{{r.status_icon}}}{{r.status}}</td>
                   </tr>
                   {{else}}
                   <tr>
@@ -149,8 +144,8 @@
               <td>
                 <table class="datatable">
                   <tr>
-                    <th style="width: 170px;">FENCE-DEVICE</th>
-                    <th style="width: 150px;">STATUS</th>
+                    <th style="width: 150px;">FENCE-DEVICE</th>
+                    <th style="width: 100px;">STATUS</th>
                   </tr>
                   {{#each f in Pcs.clusterController.cur_cluster.fence_list}}
                   <tr {{bind-attr title=f.tooltip}} {{bind-attr class=f.status_class_fence}}>
@@ -171,7 +166,7 @@
           {{/unless}}
         </div>
         {{else}}
-        <div id="no_cluster_selected">选择集群，并查看该集群详细信息。</div>
+        <div id="no_cluster_selected">Select a cluster to view more detailed cluster information</div>
         {{/if}}
       </div>
     </td>
@@ -215,7 +210,7 @@
       <tr><td align=center style="color: red" colspan=2"><span id="addr0_addr1_mismatch_error_msg" style="display:none;">Ring 1 addresses do not match to Ring 0 addresses</span></td></tr>
       <tr><td align=center style="color: red" colspan=2"><span id="cman_udpu_transport_error_msg" style="display:none;">Cannot use UDPU transport on RHEL 6 cluster. Please select UDP transport in Advanced options.</span></td></tr>
       <tr><td align=center style="color: red" colspan=2"><span id="rhel_version_mismatch_error_msg" style="display:none;">Cannot create a cluster using nodes running different versions of RHEL.</span></td></tr>
-      <tr><td align=center style="color: red" colspan=2"><span id="cman_mismatch_error_msg" style="display:none;">Cannot mix nodes running RHEL 6 and nodes running RHEL 6 in one cluster.</span></td></tr>
+      <tr><td align=center style="color: red" colspan=2"><span id="cman_mismatch_error_msg" style="display:none;">Cannot mix nodes running RHEL 6 and nodes running RHEL 7 in one cluster.</span></td></tr>
     </table>
     <span onclick='$(".advanced_open").toggle();$("#advanced_cluster_create_options").toggle();'><span class="advanced_open rightarrow sprites"></span><span class="advanced_open downarrow sprites" style="display:none;"></span>Advanced Options:</span>
     <div id="advanced_cluster_create_options" style="display:none;">
@@ -431,4 +426,40 @@ Specify ring 1 address for each node if you want to use RRP." %>
       </div>
     </div>
   </form>
+</div>
+<div id="manage_error" style="display: none;">
+  <br>
+  <% if @error == "badclustername" %>
+    The cluster name, '<%=@errorval%>' has not yet been configured in pcsd.  Use 'Add Existing' to add a node which is part of the cluster.
+  <% end %>
+  <% if @error == "noname" %>
+    The node, '<%= @errorval %>', does not currently have a cluster configured.  You must create a cluster using this node before adding it to pcsd.
+  <% end %>
+  <% if @error == "duplicatename" %>
+    The cluster name, '<%=@errorval%>' has already been added to pcsd.  You may not add two clusters with the same name into pcsd.
+  <% end %>
+  <% if @error == "duplicatenodename" %>
+    The node, '<%=@errorval%>' is already configured in pcsd.  You may not add a node to two different clusters in pcsd.
+  <% end %>
+  <% if @error == "cannotgettokens" %>
+    Unable to get authentication info from cluster '<%=@errorval%>'.
+  <% end %>
+  <% if @error == "cannotsavetokens" %>
+    Unable to authenticate all nodes on node '<%=@errorval%>'.
+  <% end %>
+  <% if @error == "authimposible" %>
+    Operation successful.<br>Unable to do correct authentication of cluster because it is running old version of pcs/pcsd.
+  <% end %>
+  <% if @error == "unabletocreate" %>
+    Unable to create new cluster. If cluster already exists on one or more of the nodes run 'pcs cluster destroy' on all nodes to remove current cluster configuration.<br><br><%=nl2br(@errorval)%>
+  <% end %>
+  <% if @error == "configversionsconflict" %>
+    Configuration conflict detected.<br><br>Some nodes had a newer configuration than the local node.  Local node's configuration was updated.  Please repeat the last action if appropriate.
+  <% end %>
+  <% if @error == "permissiondenied" %>
+    Permission denied.
+  <% end %>
+  <% if @error == "genericerror" %>
+    <%=nl2br(@errorval)%>
+  <% end %>
 </div>

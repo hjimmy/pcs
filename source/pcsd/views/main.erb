@@ -1,6 +1,6 @@
 <!DOCTYPE html>
 <head>
-  <title>天固彩石高可用集群</title>
+  <title>Pacemaker/Corosync Configuration</title>
   <link rel="stylesheet" type="text/css" href="/css/style.css" />
   <link rel="stylesheet" type="text/css" href="/css/overpass.css" />
   <link rel="stylesheet" type="text/css" href="/css/liberation.css" />
@@ -28,7 +28,7 @@
     });
     var origMainTRHeight = 0;
     function resizeDialog() {
-      $('#new_resource_agent').dialog('option','position','center');
+      $('#add_resource').dialog('option','position','center');
     }
     function resizeTable(refresh) {
       if (refresh == true) {
@@ -63,6 +63,26 @@
 </head>
 <html>
   <body>
+  <script type="text/x-handlebars" data-template-name="components/list-view">
+  <div style="width: 300px;" id="node_list" {{bind-attr class=element-class}}>
+    <table cellpadding="0" cellspacing="0" class="list-view" style="width: 100%; border: none;">
+      <tr>
+        <th style="width:27px;"><input type="checkbox" onchange="checkBoxToggle(this,false)"></th><th style="width:47px;"></th><th>{{table-title}}</th><th style="width:18px;"></th>
+      </tr>
+      {{#each element in elements}}
+      <tr class="list-view-element" onmouseover="$(this).addClass('mouse_on_row');" onmouseout="$(this).removeClass('mouse_on_row');" onclick="list_view_select(get_list_view_element_id(this));" {{bind-attr id=element.name}}>
+        <td class="node_list_check">{{view Ember.Checkbox checkedBinding="checked" class="node_list_check"}}</td>
+        <td class="node_list_sprite">{{#if default-icon}}{{{default-icon}}}{{else}}{{#if element.status_icon}}{{{element.status_icon}}}{{else}}<div class="check sprites"></div>{{/if}}{{/if}}</td>
+        <td class="node_name" nowrap {{bind-attr style=element.style}}>{{element.name}}</td>
+        <td>
+          <div style="display: none;" class="arrow sprites"></div>
+        </td>
+      </tr>
+      {{/each}}
+      </table>
+    </div>
+  </script>
+
   <script type="text/x-handlebars" data-template-name="components/resource-tree-view">
   <div style="width: 450px;">
     <table cellpadding="0" cellspacing="0" class="tree-view" style="width: 100%; border: none;">
@@ -79,8 +99,8 @@
   </script>
 
   <script type="text/x-handlebars" data-template-name="components/resource-tree-element">
-    <table class="tree-element"  cellpadding="0" cellspacing="0" style="width: 100%; border: none;" {{bind-attr id=node.treeview_element_id}}>
-    <tr class="tree-element-name" onclick="tree_view_onclick(get_tree_view_resource_id(this));" onmouseover="$(this).addClass('mouse_on_row');" onmouseout="$(this).removeClass('mouse_on_row');" {{bind-attr nodeID=node.id}}>
+    <table class="tree-element"  cellpadding="0" cellspacing="0" style="width: 100%; border: none;" {{bind-attr id=node._id}}>
+    <tr class="tree-element-name" onclick="tree_view_onclick(get_tree_view_element_id(this));" onmouseover="$(this).addClass('mouse_on_row');" onmouseout="$(this).removeClass('mouse_on_row');" {{bind-attr nodeID=node.id}}>
         <td style="width:20px;" class="node_list_check">
           <input type="checkbox" onchange="tree_view_checkbox_onchange(this)">
         </td>
@@ -123,7 +143,7 @@
   <script type="text/x-handlebars" data-template-name="components/resource-edit">
   {{#if resource}}
     <div id="node_info_header">
-      <div class="node_info_header_title" >编辑 {{page_name}}&nbsp;</div>
+      <div class="node_info_header_title" >Edit {{page_name}}&nbsp;</div>
       <div id="node_info_header_title_name">{{resource._id}}</div>
     </div>
     <div id="node_sub_info">
@@ -140,7 +160,6 @@
       </table>
     </div>
     <div id="node_options_buttons">
-    <div>
     {{#if resource.stonith}}
       <div class="xdark sprites" style="float: left"></div>
       <div id="stonith_delete_link" class="link" onclick="verify_remove_fence_devices(curStonith());">Remove</div>
@@ -155,32 +174,7 @@
       <div id="resource_cleanup_link" class="link" onclick="cleanup_resource();">Cleanup</div>
       <div class="xdark sprites" style="float: left"></div>
       <div id="resource_delete_link" class="link" onclick="verify_remove_resources(curResource());">Remove</div>
-      </div>
-      <div>
-      {{#if Pcs.is_supported_unmanaged_resource}}
-        <div>
-        <div class="checkdark sprites" style="float: left"></div>
-        <div
-          id="resource_manage_link"
-          class="link"
-          onclick="manage_resource(curResource());"
-        >
-          Manage
-        </div>
-        </div>
-        <div>
-        <div class="cancel sprites" style="float: left"></div>
-        <div
-          id="resource_unmanage_link"
-          class="link"
-          onclick="unmanage_resource(curResource());"
-        >
-          Unmanage
-        </div>
-        </div>
-      {{/if}}
     {{/if}}
-    </div>
       <!--
       <div class="move sprites" style="float: left"></div>
       <div id="resource_move_link" class="link">Move</div>
@@ -199,33 +193,13 @@
           <td class="bold" nowrap>Type:</td>
           <td class="reg" nowrap>{{resource.res_type}}</td>
         </tr>
-        {{#if resource.is_primitive}}
-        {{#if resource.resource_agent.shortdesc}}
-          <tr>
-            <td>
-              <div class="bold">Description:</div>
-            </td>
-            <td>
-              <span class="reg" style="float:left;">
-                {{resource.resource_agent.shortdesc}}
-              </span>
-              <span {{bind-attr title=resource.resource_agent.longdesc_html}} onclick="$(this).closest('table').find('.long_desc_div').toggle();" class="infoicon sprites" style="margin-top:2px;"></span>
-            </td>
-          </tr>
-          <tr>
-            <td></td>
-            <td>
-              <div class="long_desc_div reg" style="display:none; font-size:12px; max-width:350px;">{{{resource.resource_agent.longdesc_html}}}</div>
-            </td>
-          </tr>
-        {{/if}}
-        {{/if}}
         {{#unless resource.stonith}}
         {{#if resource.is_primitive}}
           <tr>
             <td class="bold" nowrap>Current Location:</td>
             <td id="cur_res_loc" class="reg">{{resource.nodes_running_on_string}}</td>
           </tr>
+          {{#unless old_pcsd}}
           {{#unless resource.parent}}
             <tr>
               <td class="bold" nowrap>Clone:</td>
@@ -242,23 +216,23 @@
             <tr>
               <td class="bold" nowrap>Group:</td>
               <td id="cur_res_loc" class="reg">
-                {{group-selector resource_id=resource._id}}
+                {{{resource.group_selector}}}
               </td>
             </tr>
           {{else}}
             {{#if resource.parent.is_group}}
-            {{#if resource.show_group_selector}}
             <tr>
               <td class="bold" nowrap>Group:</td>
               <td id="cur_res_loc" class="reg">
-                {{group-selector resource_id=resource._id}}
+                {{{resource.group_selector}}}
               </td>
             </tr>
             {{/if}}
-            {{/if}}
+          {{/unless}}
           {{/unless}}
         {{/if}}
         {{/unless}}
+        {{#unless old_pcsd}}
         {{#if resource.is_group}}
         {{#unless resource.parent}}
           <tr>
@@ -273,14 +247,12 @@
               <input type="button" onclick="resource_master(curResource());" value="Create master/slave">
             </td>
           </tr>
-          {{#unless old_pcsd}}
-            <tr>
-              <td class="bold" nowrap>Group:</td>
-              <td id="cur_res_loc" class="reg">
-                <input type="button" onclick="resource_ungroup(curResource());" value="Ungroup">
-              </td>
-            </tr>
-          {{/unless}}
+          <tr>
+            <td class="bold" nowrap>Group:</td>
+            <td id="cur_res_loc" class="reg">
+              <input type="button" onclick="resource_ungroup(curResource());" value="Ungroup">
+            </td>
+          </tr>
         {{/unless}}
         {{/if}}
         {{#if resource.is_multi_instance}}
@@ -291,50 +263,27 @@
             </td>
           </tr>
         {{/if}}
+        {{/unless}}
       </table>
       {{#unless resource.stonith}}
         {{location_constraints-table constraints=resource.location_constraints}}
         {{ordering_constraints-table constraints=resource.ordering_constraints resource_id=resource._id}}
         {{ordering_set_constraints-table constraints=resource.ordering_set_constraints}}
         {{colocation_constraints-table constraints=resource.colocation_constraints}}
-        {{#if Pcs.is_supported_constraint_colocation_set}}
-          {{colocation_set_constraints-table constraints=resource.colocation_set_constraints}}
-        {{/if}}
-        {{#if Pcs.is_ticket_constraints_supported}}
-          {{ticket_constraints-table constraints=resource.ticket_constraints resource_id=resource._id}}
-          {{ticket_set_constraints-table constraints=resource.ticket_set_constraints}}
-        {{/if}}
         {{meta_attributes-table resource=resource}}
         {{#if utilization_support}}
           {{#if resource.is_primitive}}
-            {{utilization-table
-                entity=resource
-                utilization=resource.utilization
-                type="resource"
-                table_id="resource_utilization_attributes"
-            }}
+            {{utilization-table entity=resource utilization=resource.utilization type="resource"}}
           {{/if}}
         {{/if}}
         <br style="clear:left;">
       {{/unless}}
     </div>
     {{#if stonith}}
-      <div style="clear:left; margin-top: 2em;" id="stonith_agent_form">
-        {{fence-form
-            resource=resource
-            agent=resource.resource_agent
-            table_id_suffix="_existing"
-        }}
-      </div>
+      <div style="clear:left; margin-top: 2em;" id="stonith_agent_form"></div>
     {{else}}
     {{#if resource.is_primitive}}
-      <div style="clear:left; margin-top: 2em;" id="resource_agent_form">
-        {{resource-form
-            resource=resource
-            agent=resource.resource_agent
-            table_id_suffix="_existing"
-        }}
-      </div>
+      <div style="clear:left; margin-top: 2em;" id="resource_agent_form"></div>
     {{/if}}
     {{/if}}
   {{else}}
@@ -368,7 +317,7 @@
 			  <td>{{cons.score}}</td>
 			  <td {{bind-attr constraint_id=cons.id}} style="text-align:center">
 			    {{#unless cons.temp}}
-				<a onclick="return remove_constraint_action(this);" href="#" class="remove">X</a>
+				<a onclick="remove_constraint($(this).parent().attr('constraint_id'));return false;" href="#" class="remove">X</a>
 			    {{/unless}}
 			  </td>
 			{{/if}}
@@ -408,7 +357,7 @@
 			    {{/if}}
 			    <td>{{cons.score}}</td>
 			    <td {{bind-attr constraint_id=cons.id}} style="text-align:center">
-				  <a onclick="return remove_constraint_action(this);" href="#" class="remove">X</a>
+				  <a onclick="remove_constraint($(this).parent().attr('constraint_id'));return false;" href="#" class="remove">X</a>
 			    </td>
 			  </tr>
 			{{else}}
@@ -463,7 +412,7 @@
                 <tr>
                   <td>{{cons.id}}</td>
                   <td {{bind-attr constraint_id="cons.id"}} style="text-align:center;">
-                    <a onclick="return remove_constraint_action(this);" href="#" class="remove">X</a>
+                    <a onclick="remove_constraint($(this).parent().attr('constraint_id')); return false;" href="#" class="remove">X</a>
                   </td>
                 </tr>
                 {{#each set in cons.sets}}
@@ -490,189 +439,6 @@ Use the 'Add' button to submit the form.">
         </table>
   </script>
 
-  <script
-    type="text/x-handlebars"
-    data-template-name="components/ticket_constraints-table"
-  >
-    <table style="clear:left;float:left;">
-      <tr>
-        <td
-          style="display: block;"
-          onclick="show_hide_constraints(this)"
-          class="datatable_header hover-pointer"
-          id="ticket_constraints"
-        >
-          <span style="" class="downarrow sprites"></span>
-          <span style="display: none;" class="rightarrow sprites"></span>
-          Resource Ticket Preferences
-          ({{#if constraints.length}}{{constraints.length}}{{else}}0{{/if}})
-        </td>
-      </tr>
-      <tr>
-        <td>
-          <div id="locationdep">
-            <table class="datatable">
-              <tr>
-                <th>Ticket</th>
-                <th>Resource Role</th>
-                <th>Loss Policy</th>
-                <th>Remove</th>
-              </tr>
-              {{#each cons in constraints}}
-                <tr>
-                  <td>{{cons.ticket}}</td>
-                  <td>{{cons.rsc-role}}</td>
-                  <td>{{cons.loss-policy}}</td>
-                  <td
-                    {{bind-attr constraint_id=cons.id}}
-                    style="text-align:center"
-                  >
-                    <a
-                      onclick="return remove_constraint_action(this);"
-                      href="#"
-                      class="remove"
-                    >X</a>
-                  </td>
-                </tr>
-              {{else}}
-                <tr>
-                  <td colspan="4" style="color: gray;">NONE</td>
-                </tr>
-              {{/each}}
-              <tr id="new_ticket_constraint">
-                <td class="constraint-ticket-add-attribute">
-                  <input type="text" name="ticket"/>
-                </td>
-                <td class="constraint-ticket-add-attribute">
-                  <select name="role"/>
-                    <option value=""></option>
-                    <option value="Stopped">Stopped</option>
-                    <option value="Started">Started</option>
-                    <option value="Master">Master</option>
-                    <option value="Slave">Slave</option>
-                  </selct>
-                </td>
-                <td class="constraint-ticket-add-attribute">
-                  <select name="loss-policy"/>
-                    <option value=""></option>
-                    <option value="fence">fence</option>
-                    <option value="stop">stop</option>
-                    <option value="freeze">freeze</option>
-                    <option value="demote">demote</option>
-                  </selct>
-                </td>
-                <td>
-                  <button type="button" name="add"
-                    onclick="add_constraint(
-                      '#new_ticket_constraint',
-                      'ticket',
-                      false
-                    );"
-                  >Add</button>
-                </td>
-              </tr>
-            </table>
-          </div>
-        </td>
-      </tr>
-    </table>
-  </script>
-
-  <script
-    type="text/x-handlebars"
-    data-template-name="components/ticket_set_constraints-table"
-  >
-    <table style="clear:left;float:left;">
-      <tr>
-        <td
-          id="ticket_set_constraints"
-          class="datatable_header hover-pointer"
-          style="display: block;"
-          onclick="show_hide_constraints(this)"
-        >
-          <span style="" class="downarrow sprites"></span>
-          <span style="display: none;" class="rightarrow sprites"></span>
-          Resource Ticket Set Preferences
-          ({{#if constraints.length}}{{constraints.length}}{{else}}0{{/if}})
-        </td>
-      </tr>
-      <tr>
-        <td>
-          <div id="locationdep">
-            <table class="datatable">
-              <tr>
-                <th>Preference Name/Set of Resources</th>
-                <th>Ticket</th>
-                <th>Loss Policy</th>
-                <th style="text-align: center;">Remove</th>
-              </tr>
-              {{#each cons in constraints}}
-                <tr>
-                  <td>{{cons.id}}</td>
-                  <td>{{cons.ticket}}</td>
-                  <td>{{cons.loss-policy}}</td>
-                  <td
-                    {{bind-attr constraint_id="cons.id"}}
-                    style="text-align:center;"
-                  >
-                    <a
-                      onclick="return remove_constraint_action(this);"
-                      href="#"
-                      class="remove"
-                    >X</a>
-                  </td>
-                </tr>
-                {{#each set in cons.sets}}
-                <tr>
-                  <td style="padding-left:2em;" colspan="4">
-                    Set:{{#each rsc in set.resources}} {{rsc}}{{/each}}
-                  </td>
-                </tr>
-                {{/each}}
-              {{else}}
-                <tr><td style="color: gray;" colspan="4">NONE</td></tr>
-              {{/each}}
-              <tr id="new_ticket_constraint_resource_set" title="
-                Enter the resources you want to be in one set into the 'Set'
-                field separated by space.
-                Use the 'New Set' button to create more sets.
-                Use the 'Add' button to submit the form.
-              ">
-                <td>Set: <input type="text" name="resource_ids[]"></td>
-                <td class="constraint-ticket-add-attribute">
-                  <input type="text" name="ticket"/>
-                </td>
-                <td class="constraint-ticket-add-attribute">
-                  <select name="loss-policy"/>
-                    <option value=""></option>
-                    <option value="fence">fence</option>
-                    <option value="stop">stop</option>
-                    <option value="freeze">freeze</option>
-                    <option value="demote">demote</option>
-                  </selct>
-                </td>
-                <td style="vertical-align: bottom;">
-                  <button type="button" name="new-row"
-                    onclick="new_constraint_set_row(
-                      '#new_ticket_constraint_resource_set'
-                    );"
-                  >New Set</button>
-                  <button type="button" name="add"
-                    onclick="add_constraint_set(
-                      '#new_ticket_constraint_resource_set',
-                      'ticket',
-                      false
-                    );"
-                  >Add</button>
-                </td>
-              </tr>
-            </table>
-          </div>
-        </td>
-      </tr>
-    </table>
-  </script>
-
   <script type="text/x-handlebars" data-template-name="components/colocation_constraints-table">
     <table style="clear:left;float:left">
 		<tr><td onclick="show_hide_constraints(this)" class="datatable_header hover-pointer" id="colocation_constraints"><span style="" class="downarrow sprites"></span><span style="display: none;" class="rightarrow sprites"></span>Resource Colocation Preferences ({{#if constraints.length}}{{constraints.length}}{{else}}0{{/if}})</td></tr>
@@ -685,7 +451,7 @@ Use the 'Add' button to submit the form.">
 			    <td>{{cons.together}}</td>
 			    <td>{{cons.score}}</td>
 			    <td {{bind-attr constraint_id=cons.id}} style="text-align:center">
-				  <a onclick="return remove_constraint_action(this);" href="#" class="remove">X</a>
+				  <a onclick="remove_constraint($(this).parent().attr('constraint_id'));return false;" href="#" class="remove">X</a>
 			    </td>
 			  </tr>
 			  {{else}}
@@ -703,47 +469,6 @@ Use the 'Add' button to submit the form.">
 		  </td>
 		</tr>
 	      </table>
-  </script>
-
-  <script type="text/x-handlebars" data-template-name="components/colocation_set_constraints-table">
-    <table style="clear:left;float:left;">
-          <tr><td style="display: block;" onclick="show_hide_constraints(this)" class="datatable_header hover-pointer" id="colocation_set_constraints"><span style="" class="downarrow sprites"></span><span style="display: none;" class="rightarrow sprites"></span>Resource Colocation Set Preferences ({{#if constraints.length}}{{constraints.length}}{{else}}0{{/if}})</td></tr>
-          <tr><td>
-            <div id="locationdep">
-              <table class="datatable">
-                <tr>
-                  <th>Preference Name/Set of Resources</th>
-                  <th style="text-align: center;">Remove</th>
-                </tr>
-                {{#each cons in constraints}}
-                <tr>
-                  <td>{{cons.id}}</td>
-                  <td {{bind-attr constraint_id="cons.id"}} style="text-align:center;">
-                    <a onclick="return remove_constraint_action(this);" href="#" class="remove">X</a>
-                  </td>
-                </tr>
-                {{#each set in cons.sets}}
-                <tr>
-                  <td style="padding-left:2em;">Set:{{#each rsc in set.resources}} {{rsc}}{{/each}}</td>
-                  <td></td>
-                </tr>
-                {{/each}}
-                {{else}}
-                <tr><td style="color: gray;">NONE</td><td></td></tr>
-                {{/each}}
-                <tr id="new_res_col_set" title="Enter the resources you want to be in one set into the 'Set' field separated by space.
-Use the 'New Set' button to create more sets.
-Use the 'Add' button to submit the form.">
-                  <td>Set: <input type="text" name="resource_ids[]"></td>
-                  <td style="vertical-align: bottom;">
-                    <button type="button" onclick="new_constraint_set_row('#new_res_col_set');" name="new-row">New Set</button>
-                    <button type="button" onclick="add_constraint_set('#new_res_col_set', 'col', false);" name="add">Add</button>
-                  </td>
-                </tr>
-              </table>
-            </div>
-          </td></tr>
-        </table>
   </script>
 
   <script type="text/x-handlebars" data-template-name="components/meta_attributes-table">
@@ -778,11 +503,7 @@ Use the 'Add' button to submit the form.">
   <script type="text/x-handlebars" data-template-name="components/utilization-table">
     <table style="clear:left; float:left;">
       <tr>
-        <td
-            {{action toggleBody}}
-            {{bind-attr id=table_id}}
-            class="datatable_header hover-pointer"
-        >
+        <td {{action toggleBody}} class="datatable_header hover-pointer">
           {{#if show_content}}
             <span class="downarrow sprites"></span>
           {{else}}
@@ -831,238 +552,6 @@ Use the 'Add' button to submit the form.">
     </table>
   </script>
 
-  <script type="text/x-handlebars" data-template-name="components/parameters-table-element">
-    <td class="reg">
-      <span style="float: left;">
-        {{param.name}}
-      </span>
-      {{#if param.description}}
-        <span style="margin-left: 0.5em" class="infoicon sprites" {{bind-attr title=param.description}}></span>
-      {{/if}}
-    </td>
-    <td>
-      {{input
-          size="30"
-          type="text"
-          name=param.form_name
-          value=param.cur_val
-          placeholder=param.default
-      }}
-    </td>
-  </script>
-
-  <script type="text/x-handlebars" data-template-name="components/parameters-table">
-  {{#if parameters}}
-    <table style="clear:left; margin-top: 1em;" class="args-table">
-      {{#if show_title}}
-        <tr>
-          <td
-              {{action toggleBody}}
-              {{bind-attr id=table_id_full}}
-              colspan="2"
-              nowrap
-          >
-            {{#if show_content}}
-              <span class="downarrow sprites"></span>
-            {{else}}
-              <span class="rightarrow sprites"></span>
-            {{/if}}
-            <span class="bold">{{table_name}}</span>
-          </td>
-        </tr>
-      {{/if}}
-      <tbody {{bind-attr style=content_style}}>
-        {{#each parameter in parameters}}
-          {{parameters-table-element param=parameter}}
-        {{/each}}
-      </tbody>
-    </table>
-  {{/if}}
-  </script>
-
-  <script type="text/x-handlebars" data-template-name="components/resource-form">
-    <div style="clear:left; margin-top: 1em;">
-      <form method="post" action="/update_resource">
-        {{#if resource}}
-          <input type="hidden" name="resource_id" {{bind-attr value=resource.id}} />
-        {{/if}}
-        <input type="hidden" name="resource_type" {{bind-attr value=agent.name}} />
-        {{#unless resource}}
-          <div id="resource_group">
-            <table class="args-table">
-              <tbody>
-                <tr>
-                  <td>
-                    <div class="bold">Description:</div>
-                  </td>
-                  <td>
-                    <span class="reg" style="float:left;">
-                      {{agent.shortdesc}}
-                    </span>
-                    <span {{bind-attr title=agent.longdesc_html}} onclick="$(this).closest('table').find('.long_desc_div').toggle();" class="infoicon sprites" style="margin-top:2px;"></span>
-                  </td>
-                </tr>
-                <tr>
-                  <td></td>
-                  <td>
-                    <div class="long_desc_div reg" style="display:none; font-size:12px; max-width:350px;">{{{agent.longdesc_html}}}</div>
-                  </td>
-                </tr>
-                <tr title="Select a group to add the resource to.">
-                  <td nowrap>
-                    <div class="bold">
-                      Resource Group:
-                    </div>
-                  </td>
-                  <td>
-                    {{group-selector
-                        group_list=Pcs.resourcesContainer.group_list
-                        group_input_name="resource_group"
-                    }}
-                  </td>
-                </tr>
-                <tr title='Makes the resource run multiple times on the cluster. By default the resource will run once on each of the nodes.'>
-                  <td nowrap>
-                    <div class="bold">
-                      Clone:
-                    </div>
-                  </td>
-                  <td>
-                    <input type="hidden" name="_orig_resource_clone" value="">
-                    <input type=checkbox name="resource_clone">
-                  </td>
-                </tr>
-                <tr title='Makes the resource run multiple times on the cluster and distinguish between Master and Slave operating mode for each instance. By default the resource will run on one node in Master mode and on all other nodes in Slave mode.'>
-                  <td nowrap>
-                    <div class="bold">
-                      Master/Slave:
-                    </div>
-                  </td>
-                  <td>
-                    <input type="hidden" name="_orig_resource_ms" value="">
-                    <input type=checkbox name="resource_ms" >
-                  </td>
-                </tr>
-                <tr title="Do not start the resource automatically after creating.">
-                  <td nowrap>
-                    <div class="bold"
-                      >Disabled:
-                    </div>
-                  </td>
-                  <td>
-                    <input type=checkbox name="disabled">
-                  </td>
-                </tr>
-                <tr>
-                  <td class="reg">
-                    Resource ID
-                  </td>
-                  <td>
-                    <input style="margin-right: 50px;" type="text" name="name" size="30" class="text_field">
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        {{/unless}}
-        {{parameters-table
-            table_id="required_args"
-            table_id_suffix=table_id_suffix
-            table_name="Required Arguments"
-            parameters=agent.required_parameters
-            show_content=true
-        }}
-        {{parameters-table
-            table_id="optional_args"
-            table_id_suffix=table_id_suffix
-            table_name="Optional Arguments"
-            parameters=agent.optional_parameters
-        }}
-        {{#if resource}}
-          <input class="apply_changes" type="button" onclick="$(this).hide();create_resource($(this)
-          .parents('form'),true); return false;" value="保存修改" style="margin-top: 1em;" />
-          <input type="button" onclick="tree_view_onclick(curResource()); return false;"  value="刷新" />
-        {{else}}
-          <center>
-            <input class="apply_changes" type="button" onclick="$(this).hide();create_resource($(this)
-            .parents('form'),false); return false;" value="Create Resource" style="margin-top: 1em;" />
-          </center>
-        {{/if}}
-      </form>
-    </div>
-  </script>
-
-  <script type="text/x-handlebars" data-template-name="components/fence-form">
-    <div style="clear:left; margin-top: 2em;">
-      <form method="post" action="/update_fence_device">
-        {{#if resource}}
-          <input type="hidden" name="resource_id" {{bind-attr value=resource.id}} />
-        {{/if}}
-        <input type="hidden" name="resource_type" {{bind-attr value=agent.name}} />
-        {{#unless resource}}
-          <table class="args-table">
-            <tbody>
-              {{#if agent.shortdesc}}
-              <tr>
-                <td>
-                  <div class="bold">Description:</div>
-                </td>
-                <td>
-                  <span class="reg" style="float:left;">
-                    {{agent.shortdesc}}
-                  </span>
-                  <span {{bind-attr title=agent.longdesc_html}} onclick="$(this).closest('table').find('.long_desc_div').toggle();" class="infoicon sprites" style="margin-top:2px;"></span>
-                </td>
-              </tr>
-              <tr>
-                <td></td>
-                <td>
-                  <div class="long_desc_div reg" style="display:none; font-size:12px; max-width:350px;">{{{agent.longdesc_html}}}</div>
-                </td>
-              </tr>
-              {{/if}}
-              <tr>
-                <td class="reg">
-                  Fence Instance Name
-                </td>
-                <td>
-                  <input style="margin-right: 50px;" type="text" name="name" size="30" class="text_field">
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        {{/unless}}
-        {{parameters-table
-            table_id="required_fenceargs"
-            table_id_suffix=table_id_suffix
-            table_name="Required Arguments"
-            parameters=agent.required_parameters
-            show_content=true
-        }}
-        {{parameters-table
-            table_id="optional_fenceargs"
-            table_id_suffix=table_id_suffix
-            table_name="Optional Arguments"
-            parameters=agent.optional_parameters
-        }}
-        {{parameters-table
-            table_id="advanced_fenceargs"
-            table_id_suffix=table_id_suffix
-            table_name="Advanced Arguments"
-            parameters=agent.advanced_parameters
-        }}
-        {{#if resource}}
-          <input class="apply_changes" type="button" onclick="$(this).hide();create_resource($(this).parents('form'), true, true); return false;" value="保存修改" style="margin-top: 1em;" />
-          <input type="button" onclick="tree_view_onclick(curStonith()); return false;" value="刷新" />
-        {{else}}
-          <center>
-            <input class="apply_changes" type="button" type="submit" onclick="$(this).hide();create_resource($(this).parents('form'), false, true); return false;" value="Create Fence Instance" style="margin-top: 1em;" />
-          </center>
-        {{/if}}
-      </form>
-    </div>
-  </script>
-
   <script type="text/x-handlebars" data-template-name="components/value-selector">
     {{selector-helper content value prompt}}
   </script>
@@ -1099,47 +588,7 @@ Use the 'Add' button to submit the form.">
       {{/if}}{{/if}}
     </td>
   </script>
-
-  <script type="text/x-handlebars" data-template-name="components/group-selector">
-    {{value-selector
-        name=group_input_name
-        content=group_select_content
-        value=group_select_value
-        prompt="None"
-    }}
-    {{#if Pcs.is_supported_moving_resource_in_group}}
-    {{#if group_select_value}}
-    {{#if resource_select_content}}
-      {{value-selector
-          name="in_group_position"
-          content=position_select_content
-          value=position_select_value
-          prompt=""
-      }}
-      {{value-selector
-          name="in_group_reference_resource_id"
-          content=resource_select_content
-          value=resource_select_value
-          prompt=""
-      }}
-    {{/if}}
-    {{/if}}
-    {{/if}}
-    {{#if resource_id}}
-      <br/>
-      <button
-        onclick="
-          resource_change_group(curResource(), $(this).parent().find('select'));
-          return false;
-        "
-      >
-        Update group
-      </button>
-      <button {{action refresh}}>Refresh</button>
-    {{/if}}
-
-  </script>
-
+  
   <script type="text/x-handlebars">
 <div id="wrapper">
 
@@ -1160,7 +609,7 @@ Use the 'Add' button to submit the form.">
                   <div style="float:left;">
                     <div class="menuheader">
                       <div id="dropdownr" class="label"  style="white-space:nowrap" onclick="window.location='/manage'">
-                        <table style="background: #4b77be">
+                        <table style="background: #000000">
                           <tr>
                             <td>
                               <%=@manage ? "Select Cluster" : "Cluster: " + @cluster_name%>
@@ -1173,7 +622,7 @@ Use the 'Add' button to submit the form.">
                       </div>
                       <div style="width:100%;" class="menu">
                         <% if not @manage %>
-                          <a href="/manage" class="menu-item">&nbsp;集群管理&nbsp;&nbsp;</a>
+                          <a href="/manage" class="menu-item">Manage&nbsp;Clusters&nbsp;&nbsp;</a>
                         <% end %>
                         <% @clusters.each { |c| %>
                           <a href="<%=c.ui_address%>" class="menu-item"><%=c.name%>&nbsp;&nbsp;</a>
@@ -1189,7 +638,7 @@ Use the 'Add' button to submit the form.">
                     <div class="menuheader">
                       <div id="dropdownr" class="label"><%=session[:username]%><div style="float:right;" class="downarrow sprites"></div></div>
                       <div style="width:100%" class="menu">
-                        <a href="/logout" class="menu-item">注销&nbsp;&nbsp;</a>
+                        <a href="/logout" class="menu-item">Logout&nbsp;&nbsp;</a>
                       </div>
                     </div>
                     <!-- <div id="dropdownr">
@@ -1203,18 +652,18 @@ Use the 'Add' button to submit the form.">
           <table>
             <% if !@manage %>
               <tr>
-                <td class="menuitem first">{{#link-to "Nodes" }}主机{{/link-to}}</td>
-                <td class="menuitem">{{#link-to "Resources" }}资源{{/link-to}}</td>
-                <td class="menuitem">{{#link-to "Fence Devices" }}FENCE设备{{/link-to}}</td>
-                <td class="menuitem">{{#link-to "ACLs" }}访问控制{{/link-to}}</td>
-                <td class="menuitem">{{#link-to "Configuration" }}集群属性{{/link-to}}</td>
-                <td class="menuitem"><a href="/manage">集群管理</a></td>
-                <!--<td class="menuitem">{{#link-to "Wizards" }}向导{{/link-to}}</td>-->
+                <td class="menuitem first">{{#link-to "Nodes" }}NODES{{/link-to}}</td>
+                <td class="menuitem">{{#link-to "Resources" }}RESOURCES{{/link-to}}</td>
+                <td class="menuitem">{{#link-to "Fence Devices" }}FENCE DEVICES{{/link-to}}</td>
+                <td class="menuitem">{{#link-to "ACLs" }}ACLS{{/link-to}}</td>
+                <td class="menuitem">{{#link-to "Configuration" }}CLUSTER PROPERTIES{{/link-to}}</td>
+                <td class="menuitem"><a href="/manage">MANAGE CLUSTERS</a></td>
+                <!--<td class="menuitem">{{#link-to "Wizards" }}WIZARDS{{/link-to}}</td>-->
               </tr>
             <% else %>
               <tr>
-                <td class="menuitem first"><a href="/manage">集群管理</a></td>
-                <td class="menuitem"><a href="/permissions">权限</a></td>
+                <td class="menuitem first"><a href="/manage">MANAGE CLUSTERS</a></td>
+                <td class="menuitem"><a href="/permissions">PERMISSIONS</a></td>
               </tr>
             <% end %>
           </table>

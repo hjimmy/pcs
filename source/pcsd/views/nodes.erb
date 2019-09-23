@@ -1,6 +1,6 @@
   <table id="main">
     <tr id="node_title_row" {{bind-attr style="Pcs.node_page"}}><td id="page_header" colspan=3>
-	主机
+	NODES
       </td>
     </tr>
     <tr id="node_header_row" {{bind-attr style="Pcs.node_page"}}>
@@ -9,13 +9,13 @@
 	  <input type="checkbox" onchange="checkBoxToggle($(this), true);">
 	</div>
 	<div id="no_coro_support">
-	  <div class="x sprites"></div><div class="link" onclick="verify_remove_nodes(); return false;">&nbsp;删除&nbsp;&nbsp;&nbsp;&nbsp;</div>
-	  <div class="plus sprites"></div><div class="link" onclick="add_node_dialog(); return false;">&nbsp;添加</div>
+	  <div class="x sprites"></div><div class="link" onclick="verify_remove_nodes(); return false;">&nbsp;Remove&nbsp;&nbsp;&nbsp;&nbsp;</div>
+	  <div class="plus sprites"></div><div class="link" onclick="add_node_dialog(); return false;">&nbsp;Add</div>
 	</div>
       </td>
       <td class="borderbottom">&nbsp;</td>
       <td id="tab_name" width="85">
-	<div style="float: left">&nbsp;编辑主机&nbsp;</div><div class="check sprites"></div>
+	<div style="float: left">&nbsp;Edit Node&nbsp;</div><div class="check sprites"></div>
       </td>
     </tr>
     <tr id="node_list_row" {{bind-attr style="Pcs.node_page"}}>
@@ -43,7 +43,7 @@
         <div id="node_info_div" style="opacity: 0;">
           <div id="test">
             <div id="node_info_header">
-              <div id="node_info_header_title" class="node_info_header_title">编辑主机&nbsp;</div>
+              <div id="node_info_header_title" class="node_info_header_title">Edit Node&nbsp;</div>
               <div id="node_info_header_title_name">
                 {{Pcs.nodesController.cur_node.name}}
               </div>
@@ -185,11 +185,6 @@
                       {{/if}}
                       {{/if}}
                     </td></tr>
-                    {{#if Pcs.is_sbd_enabled_or_running }}
-                    <tr><td>sbd</td><td><div style="float:left;margin-right:6px;" class="check sprites"></div>
-                      {{{Pcs.nodesController.cur_node.sbd_status_str}}}
-                    </td></tr>
-                    {{/if}}
                     <tr><td>pcsd</td><td><div style="float:left;margin-right:6px;" class="check sprites"></div>
                       {{#if Pcs.nodesController.cur_node.pcsd}}
                       <span id="pcsd_status" style="float:left" class="status">Running ({{Pcs.nodesController.cur_node.pcsd_startup}})</span>
@@ -247,8 +242,9 @@
               </tr>
             </table>
             <table style="clear:left;float:left;margin-top:25px;">
-              <tr><td onclick="show_hide_constraints(this)" class="datatable_header hover-pointer">Node Attributes ({{#if Pcs.nodesController.cur_node_attr.length}}{{Pcs.nodesController.cur_node_attr.length}}{{else}}0{{/if}})<span style="" class="downarrow sprites" id="node_attributes"></span><span style="display: none;" class="rightarrow sprites"></span></td></tr>
+              <tr><td onclick="show_hide_constraints(this)" class="datatable_header hover-pointer">Node Attributes ({{#if Pcs.nodesController.cur_node_attr.length}}{{Pcs.nodesController.cur_node_attr.length}}{{else}}0{{/if}})<span style="" class="downarrow sprites"></span><span style="display: none;" class="rightarrow sprites"></span></td></tr>
               <tr><td>
+                <div id="node_attributes">
                   <table class="datatable">
                     <tr><th>Attribute</th><th>Value</th><th>Remove</th></tr>
                     {{#each attr in Pcs.nodesController.cur_node_attr}}
@@ -267,12 +263,14 @@
                       <td><button type="button" onclick="add_node_attr('#new_node_attr_col');" name="add">Add</button></td>
                     </tr>
                   </table>
+                </div>
               </td>
               </tr>
             </table>
             <table style="clear:left;float:left;margin-top:25px;">
-              <tr><td onclick="show_hide_constraints(this)" class="datatable_header hover-pointer">Fence Levels ({{#if Pcs.nodesController.cur_node_fence_levels.length}}{{Pcs.nodesController.cur_node_fence_levels.length}}{{else}}0{{/if}})<span style="" class="downarrow sprites" id="fence_levels"></span><span style="display: none;" class="rightarrow sprites"></span></td></tr>
+              <tr><td onclick="show_hide_constraints(this)" class="datatable_header hover-pointer">Fence Levels ({{#if Pcs.nodesController.cur_node_fence_levels.length}}{{Pcs.nodesController.cur_node_fence_levels.length}}{{else}}0{{/if}})<span style="" class="downarrow sprites"></span><span style="display: none;" class="rightarrow sprites"></span></td></tr>
               <tr><td>
+                <div id="fencelevels">
                   <table class="datatable">
                     <tr><th>Level</th><th>Fence Devices</th><th>Remove</th></tr>
                     {{#each Pcs.nodesController.cur_node_fence_levels}}
@@ -298,16 +296,13 @@
                       <td><button type="button" onclick="add_remove_fence_level($(this).parent());" name="add">Add</button></td>
                     </tr>
                   </table>
+                </div>
               </td>
               </tr>
             </table>
             {{#if Pcs.nodesController.utilization_support}}
             <table style="clear:left; float:left; margin-top: 25px;"><tr><td>
-            {{utilization-table
-                entity=Pcs.nodesController.cur_node
-                utilization=Pcs.nodesController.cur_node.utilization
-                table_id="node_utilization_attributes"
-            }}
+            {{utilization-table entity=Pcs.nodesController.cur_node utilization=Pcs.nodesController.cur_node.utilization}}
             </td></tr></table>
             {{/if}}
     </div>
@@ -340,14 +335,6 @@
         <td>Auto Start/Enable:</td>
         <td><input type="checkbox" name="auto_start" value="1" checked></td>
       </tr>
-      {{#if Pcs.is_sbd_enabled}}
-      <tr>
-        <td>SBD watchdog:</td>
-        <td>
-          <input type="text" name="watchdog" placeholder="/dev/watchdog" />
-        </td>
-      </tr>
-      {{/if}}
       {{#if Pcs.is_cman_with_udpu_transport}}
       <tr>
         <td colspan="2" style="color: orange">This is a RHEL 6 cluster with UDPU transport,<br>cluster restart is required to apply node addition.</td>

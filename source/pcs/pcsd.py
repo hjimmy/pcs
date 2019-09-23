@@ -1,17 +1,16 @@
-from __future__ import (
-    absolute_import,
-    division,
-    print_function,
-    unicode_literals,
-)
+from __future__ import absolute_import
+from __future__ import division
+from __future__ import print_function
+from __future__ import unicode_literals
 
 import sys
 import os
 import errno
+import json
 
-from pcs import usage
-from pcs import utils
-from pcs import settings
+import usage
+import utils
+import settings
 
 
 def pcsd_cmd(argv):
@@ -53,7 +52,7 @@ def pcsd_certkey(argv):
             utils.err(err, False)
         sys.exit(1)
 
-    if "--force" not in utils.pcs_options and (os.path.exists(settings.pcsd_cert_location) or os.path.exists(settings.pcsd_key_location)):
+    if not "--force" in utils.pcs_options and (os.path.exists(settings.pcsd_cert_location) or os.path.exists(settings.pcsd_key_location)):
         utils.err("certificate and/or key already exists, your must use --force to overwrite")
 
     try:

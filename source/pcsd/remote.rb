@@ -4,8 +4,6 @@ require 'open4'
 require 'set'
 require 'timeout'
 require 'rexml/document'
-require 'base64'
-require 'tempfile'
 
 require 'pcs.rb'
 require 'resource.rb'
@@ -16,13 +14,14 @@ require 'permissions.rb'
 require 'auth.rb'
 
 # Commands for remote access
-def remote(params, request, auth_user)
+def remote(params, request, session)
   remote_cmd_without_pacemaker = {
       :status => method(:node_status),
       :status_all => method(:status_all),
       :cluster_status => method(:cluster_status_remote),
       :auth => method(:auth),
       :check_auth => method(:check_auth),
+      :fix_auth_of_cluster => method(:fix_auth_of_cluster),
       :setup_cluster => method(:setup_cluster),
       :create_cluster => method(:create_cluster),
       :get_quorum_info => method(:get_quorum_info),
@@ -48,53 +47,37 @@ def remote(params, request, auth_user)
       :cluster_enable => method(:cluster_enable),
       :cluster_disable => method(:cluster_disable),
       :resource_status => method(:resource_status),
+      :check_gui_status => method(:check_gui_status),
       :get_sw_versions => method(:get_sw_versions),
       :node_available => method(:remote_node_available),
-      :add_node_all => lambda { |params_, request_, auth_user_|
-        remote_add_node(params_, request_, auth_user_, true)
+      :add_node_all => lambda { |params_, request_, session_|
+        remote_add_node(params_, request_, session_, true)
       },
-      :add_node => lambda { |params_, request_, auth_user_|
-        remote_add_node(params_, request_, auth_user_, false)
+      :add_node => lambda { |params_, request_, session_|
+        remote_add_node(params_, request_, session_, false)
       },
       :remove_nodes => method(:remote_remove_nodes),
       :remove_node => method(:remote_remove_node),
       :cluster_destroy => method(:cluster_destroy),
       :get_wizard => method(:get_wizard),
       :wizard_submit => method(:wizard_submit),
+      :auth_gui_against_nodes => method(:auth_gui_against_nodes),
       :get_tokens => method(:get_tokens),
       :get_cluster_tokens => method(:get_cluster_tokens),
       :save_tokens => method(:save_tokens),
-      :get_cluster_properties_definition => method(:get_cluster_properties_definition),
-      :check_sbd => method(:check_sbd),
-      :set_sbd_config => method(:set_sbd_config),
-      :get_sbd_config => method(:get_sbd_config),
-      :sbd_disable => method(:sbd_disable),
-      :sbd_enable => method(:sbd_enable),
-      :remove_stonith_watchdog_timeout=> method(:remove_stonith_watchdog_timeout),
-      :set_stonith_watchdog_timeout_to_zero => method(:set_stonith_watchdog_timeout_to_zero),
-      :remote_enable_sbd => method(:remote_enable_sbd),
-      :remote_disable_sbd => method(:remote_disable_sbd),
-      :qdevice_net_get_ca_certificate => method(:qdevice_net_get_ca_certificate),
-      :qdevice_net_sign_node_certificate => method(:qdevice_net_sign_node_certificate),
-      :qdevice_net_client_init_certificate_storage => method(:qdevice_net_client_init_certificate_storage),
-      :qdevice_net_client_import_certificate => method(:qdevice_net_client_import_certificate),
-      :qdevice_net_client_destroy => method(:qdevice_net_client_destroy),
-      :qdevice_client_enable => method(:qdevice_client_enable),
-      :qdevice_client_disable => method(:qdevice_client_disable),
-      :qdevice_client_start => method(:qdevice_client_start),
-      :qdevice_client_stop => method(:qdevice_client_stop),
-      :booth_set_config => method(:booth_set_config),
-      :booth_save_files => method(:booth_save_files),
-      :booth_get_config => method(:booth_get_config),
-
+      :add_node_to_cluster => method(:add_node_to_cluster),
+      :get_cluster_properties_definition => method(:get_cluster_properties_definition)
   }
   remote_cmd_with_pacemaker = {
-      :pacemaker_node_status => method(:remote_pacemaker_node_status),
       :resource_start => method(:resource_start),
       :resource_stop => method(:resource_stop),
       :resource_cleanup => method(:resource_cleanup),
+      :resource_form => method(:resource_form),
+      :fence_device_form => method(:fence_device_form),
       :update_resource => method(:update_resource),
       :update_fence_device => method(:update_fence_device),
+      :resource_metadata => method(:resource_metadata),
+      :fence_device_metadata => method(:fence_device_metadata),
       :get_avail_resource_agents => method(:get_avail_resource_agents),
       :get_avail_fence_agents => method(:get_avail_fence_agents),
       :remove_resource => method(:remove_resource),
@@ -118,42 +101,28 @@ def remote(params, request, auth_user)
       :resource_unclone => method(:resource_unclone),
       :resource_ungroup => method(:resource_ungroup),
       :set_resource_utilization => method(:set_resource_utilization),
-      :set_node_utilization => method(:set_node_utilization),
-      :get_resource_agent_metadata => method(:get_resource_agent_metadata),
-      :get_fence_agent_metadata => method(:get_fence_agent_metadata),
-      :manage_resource => method(:manage_resource),
-      :unmanage_resource => method(:unmanage_resource),
-      :create_alert => method(:create_alert),
-      :update_alert => method(:update_alert),
-      :create_recipient => method(:create_recipient),
-      :update_recipient => method(:update_recipient),
-      :remove_alerts_and_recipients => method("remove_alerts_and_recipients"),
+      :set_node_utilization => method(:set_node_utilization)
   }
 
   command = params[:command].to_sym
-  begin
-    if remote_cmd_without_pacemaker.include? command
-      return remote_cmd_without_pacemaker[command].call(
-        params, request, auth_user
-      )
-    elsif remote_cmd_with_pacemaker.include? command
-      if pacemaker_running?
-        return remote_cmd_with_pacemaker[command].call(params, request, auth_user)
-      else
-        return [200,'{"pacemaker_not_running":true}']
-      end
+
+  if remote_cmd_without_pacemaker.include? command
+    return remote_cmd_without_pacemaker[command].call(params, request, session)
+  elsif remote_cmd_with_pacemaker.include? command
+    if pacemaker_running?
+      return remote_cmd_with_pacemaker[command].call(params, request, session)
     else
-      return [404, "Unknown Request"]
+      return [200,'{"pacemaker_not_running":true}']
     end
-  rescue NotImplementedException => e
-    return [501, "#{e}"]
+  else
+    return [404, "Unknown Request"]
   end
 end
 
 # provides remote cluster status to a local gui
-def cluster_status_gui(auth_user, cluster_name, dont_update_config=false)
+def cluster_status_gui(session, cluster_name, dont_update_config=false)
   cluster_nodes = get_cluster_nodes(cluster_name)
-  status = cluster_status_from_nodes(auth_user, cluster_nodes, cluster_name)
+  status = cluster_status_from_nodes(session, cluster_nodes, cluster_name)
   unless status
     return 403, 'Permission denied'
   end
@@ -177,15 +146,15 @@ def cluster_status_gui(auth_user, cluster_name, dont_update_config=false)
       Cfgsync::save_sync_new_version(
           sync_config, get_corosync_nodes(), $cluster_name, true
       )
-      return cluster_status_gui(auth_user, cluster_name, true)
+      return cluster_status_gui(session, cluster_name, true)
     end
   end
   return JSON.generate(status)
 end
 
 # get cluster status and return it to a remote gui or other client
-def cluster_status_remote(params, request, auth_user)
-  if not allowed_for_local_cluster(auth_user, Permissions::READ)
+def cluster_status_remote(params, request, session)
+  if not allowed_for_local_cluster(session, Permissions::READ)
     return 403, 'Permission denied'
   end
 
@@ -205,43 +174,39 @@ def cluster_status_remote(params, request, auth_user)
   end
 
   cluster_nodes = get_nodes().flatten
-  status = cluster_status_from_nodes(auth_user, cluster_nodes, cluster_name)
+  status = cluster_status_from_nodes(session, cluster_nodes, cluster_name)
   unless status
     return 403, 'Permission denied'
   end
   return JSON.generate(status)
 end
 
-def cluster_start(params, request, auth_user)
+def cluster_start(params, request, session)
   if params[:name]
     code, response = send_request_with_token(
-      auth_user, params[:name], 'cluster_start', true
+      session, params[:name], 'cluster_start', true
     )
   else
-    if not allowed_for_local_cluster(auth_user, Permissions::WRITE)
+    if not allowed_for_local_cluster(session, Permissions::WRITE)
       return 403, 'Permission denied'
     end
     $logger.info "Starting Daemons"
-    output, stderr, retval = run_cmd(auth_user, PCS, 'cluster', 'start')
+    output =  `#{PCS} cluster start`
     $logger.debug output
-    if retval != 0
-      return [400, (output + stderr).join]
-    else
-      return output
-    end
+    return output
   end
 end
 
-def cluster_stop(params, request, auth_user)
+def cluster_stop(params, request, session)
   if params[:name]
     params_without_name = params.reject {|key, value|
       key == "name" or key == :name
     }
     code, response = send_request_with_token(
-      auth_user, params[:name], 'cluster_stop', true, params_without_name
+      session, params[:name], 'cluster_stop', true, params_without_name
     )
   else
-    if not allowed_for_local_cluster(auth_user, Permissions::WRITE)
+    if not allowed_for_local_cluster(session, Permissions::WRITE)
       return 403, 'Permission denied'
     end
     options = []
@@ -254,9 +219,7 @@ def cluster_stop(params, request, auth_user)
     end
     options << "--force" if params["force"]
     $logger.info "Stopping Daemons"
-    stdout, stderr, retval = run_cmd(
-      auth_user, PCS, "cluster", "stop", *options
-    )
+    stdout, stderr, retval = run_cmd(session, PCS, "cluster", "stop", *options)
     if retval != 0
       return [400, stderr.join]
     else
@@ -265,17 +228,17 @@ def cluster_stop(params, request, auth_user)
   end
 end
 
-def config_backup(params, request, auth_user)
+def config_backup(params, request, session)
   if params[:name]
     code, response = send_request_with_token(
-      auth_user, params[:name], 'config_backup', true
+      session, params[:name], 'config_backup', true
     )
   else
-    if not allowed_for_local_cluster(auth_user, Permissions::FULL)
+    if not allowed_for_local_cluster(session, Permissions::FULL)
       return 403, 'Permission denied'
     end
     $logger.info "Backup node configuration"
-    stdout, stderr, retval = run_cmd(auth_user, PCS, "config", "backup")
+    stdout, stderr, retval = run_cmd(session, PCS, "config", "backup")
     if retval == 0
         $logger.info "Backup successful"
         return [200, stdout]
@@ -285,14 +248,14 @@ def config_backup(params, request, auth_user)
   end
 end
 
-def config_restore(params, request, auth_user)
+def config_restore(params, request, session)
   if params[:name]
     code, response = send_request_with_token(
-      auth_user, params[:name], 'config_restore', true,
+      session, params[:name], 'config_restore', true,
       {:tarball => params[:tarball]}
     )
   else
-    if not allowed_for_local_cluster(auth_user, Permissions::FULL)
+    if not allowed_for_local_cluster(session, Permissions::FULL)
       return 403, 'Permission denied'
     end
     $logger.info "Restore node configuration"
@@ -320,13 +283,13 @@ def config_restore(params, request, auth_user)
   end
 end
 
-def node_restart(params, request, auth_user)
+def node_restart(params, request, session)
   if params[:name]
     code, response = send_request_with_token(
-      auth_user, params[:name], 'node_restart', true
+      session, params[:name], 'node_restart', true
     )
   else
-    if not allowed_for_local_cluster(auth_user, Permissions::WRITE)
+    if not allowed_for_local_cluster(session, Permissions::WRITE)
       return 403, 'Permission denied'
     end
     $logger.info "Restarting Node"
@@ -336,46 +299,48 @@ def node_restart(params, request, auth_user)
   end
 end
 
-def node_standby(params, request, auth_user)
+def node_standby(params, request, session)
   if params[:name]
     code, response = send_request_with_token(
-      auth_user, params[:name], 'node_standby', true
+      session, params[:name], 'node_standby', true, {"node"=>params[:name]}
     )
+    # data={"node"=>params[:name]} for backward compatibility with older versions of pcs/pcsd
   else
-    if not allowed_for_local_cluster(auth_user, Permissions::WRITE)
+    if not allowed_for_local_cluster(session, Permissions::WRITE)
       return 403, 'Permission denied'
     end
     $logger.info "Standby Node"
-    stdout, stderr, retval = run_cmd(auth_user, PCS, "node", "standby")
+    stdout, stderr, retval = run_cmd(session, PCS, "cluster", "standby")
     return stdout
   end
 end
 
-def node_unstandby(params, request, auth_user)
+def node_unstandby(params, request, session)
   if params[:name]
     code, response = send_request_with_token(
-      auth_user, params[:name], 'node_unstandby', true
+      session, params[:name], 'node_unstandby', true, {"node"=>params[:name]}
     )
+    # data={"node"=>params[:name]} for backward compatibility with older versions of pcs/pcsd
   else
-    if not allowed_for_local_cluster(auth_user, Permissions::WRITE)
+    if not allowed_for_local_cluster(session, Permissions::WRITE)
       return 403, 'Permission denied'
     end
     $logger.info "Unstandby Node"
-    stdout, stderr, retval = run_cmd(auth_user, PCS, "node", "unstandby")
+    stdout, stderr, retval = run_cmd(session, PCS, "cluster", "unstandby")
     return stdout
   end
 end
 
-def cluster_enable(params, request, auth_user)
+def cluster_enable(params, request, session)
   if params[:name]
     code, response = send_request_with_token(
-      auth_user, params[:name], 'cluster_enable', true
+      session, params[:name], 'cluster_enable', true
     )
   else
-    if not allowed_for_local_cluster(auth_user, Permissions::WRITE)
+    if not allowed_for_local_cluster(session, Permissions::WRITE)
       return 403, 'Permission denied'
     end
-    success = enable_cluster(auth_user)
+    success = enable_cluster(session)
     if not success
       return JSON.generate({"error" => "true"})
     end
@@ -383,16 +348,16 @@ def cluster_enable(params, request, auth_user)
   end
 end
 
-def cluster_disable(params, request, auth_user)
+def cluster_disable(params, request, session)
   if params[:name]
     code, response = send_request_with_token(
-      auth_user, params[:name], 'cluster_disable', true
+      session, params[:name], 'cluster_disable', true
     )
   else
-    if not allowed_for_local_cluster(auth_user, Permissions::WRITE)
+    if not allowed_for_local_cluster(session, Permissions::WRITE)
       return 403, 'Permission denied'
     end
-    success = disable_cluster(auth_user)
+    success = disable_cluster(session)
     if not success
       return JSON.generate({"error" => "true"})
     end
@@ -400,16 +365,16 @@ def cluster_disable(params, request, auth_user)
   end
 end
 
-def get_quorum_info(params, request, auth_user)
-  if not allowed_for_local_cluster(auth_user, Permissions::READ)
+def get_quorum_info(params, request, session)
+  if not allowed_for_local_cluster(session, Permissions::READ)
     return 403, 'Permission denied'
   end
   if ISRHEL6
     stdout_status, stderr_status, retval = run_cmd(
-      PCSAuth.getSuperuserAuth(), CMAN_TOOL, "status"
+      PCSAuth.getSuperuserSession, CMAN_TOOL, "status"
     )
     stdout_nodes, stderr_nodes, retval = run_cmd(
-      PCSAuth.getSuperuserAuth(),
+      PCSAuth.getSuperuserSession,
       CMAN_TOOL, "nodes", "-F", "id,type,votes,name"
     )
     if stderr_status.length > 0
@@ -421,7 +386,7 @@ def get_quorum_info(params, request, auth_user)
     end
   else
     stdout, stderr, retval = run_cmd(
-      PCSAuth.getSuperuserAuth(), COROSYNC_QUORUMTOOL, "-p", "-s"
+      PCSAuth.getSuperuserSession, COROSYNC_QUORUMTOOL, "-p", "-s"
     )
     # retval is 0 on success if node is not in partition with quorum
     # retval is 1 on error OR on success if node has quorum
@@ -433,11 +398,11 @@ def get_quorum_info(params, request, auth_user)
   end
 end
 
-def get_cib(params, request, auth_user)
-  if not allowed_for_local_cluster(auth_user, Permissions::READ)
+def get_cib(params, request, session)
+  if not allowed_for_local_cluster(session, Permissions::READ)
     return 403, 'Permission denied'
   end
-  cib, stderr, retval = run_cmd(auth_user, CIBADMIN, "-Ql")
+  cib, stderr, retval = run_cmd(session, CIBADMIN, "-Ql")
   if retval != 0
     if not pacemaker_running?
       return [400, '{"pacemaker_not_running":true}']
@@ -448,15 +413,15 @@ def get_cib(params, request, auth_user)
   end
 end
 
-def get_corosync_conf_remote(params, request, auth_user)
-  if not allowed_for_local_cluster(auth_user, Permissions::READ)
+def get_corosync_conf_remote(params, request, session)
+  if not allowed_for_local_cluster(session, Permissions::READ)
     return 403, 'Permission denied'
   end
   return get_corosync_conf()
 end
 
-def set_cluster_conf(params, request, auth_user)
-  if not allowed_for_local_cluster(auth_user, Permissions::FULL)
+def set_cluster_conf(params, request, session)
+  if not allowed_for_local_cluster(session, Permissions::FULL)
     return 403, 'Permission denied'
   end
   if params[:cluster_conf] != nil and params[:cluster_conf].strip != ""
@@ -469,8 +434,8 @@ def set_cluster_conf(params, request, auth_user)
   end
 end
 
-def set_corosync_conf(params, request, auth_user)
-  if not allowed_for_local_cluster(auth_user, Permissions::FULL)
+def set_corosync_conf(params, request, session)
+  if not allowed_for_local_cluster(session, Permissions::FULL)
     return 403, 'Permission denied'
   end
   if params[:corosync_conf] != nil and params[:corosync_conf].strip != ""
@@ -483,14 +448,14 @@ def set_corosync_conf(params, request, auth_user)
   end
 end
 
-def get_sync_capabilities(params, request, auth_user)
+def get_sync_capabilities(params, request, session)
   return JSON.generate({
     'syncable_configs' => Cfgsync::get_cfg_classes_by_name().keys,
   })
 end
 
-def set_sync_options(params, request, auth_user)
-  if not allowed_for_local_cluster(auth_user, Permissions::FULL)
+def set_sync_options(params, request, session)
+  if not allowed_for_local_cluster(session, Permissions::FULL)
     return 403, 'Permission denied'
   end
 
@@ -539,8 +504,8 @@ def set_sync_options(params, request, auth_user)
   return [400, 'Exactly one option has to be specified']
 end
 
-def get_configs(params, request, auth_user)
-  if not allowed_for_local_cluster(auth_user, Permissions::FULL)
+def get_configs(params, request, session)
+  if not allowed_for_local_cluster(session, Permissions::FULL)
     return 403, 'Permission denied'
   end
   if not $cluster_name or $cluster_name.empty?
@@ -563,8 +528,8 @@ def get_configs(params, request, auth_user)
   return JSON.generate(out)
 end
 
-def set_configs(params, request, auth_user)
-  if not allowed_for_local_cluster(auth_user, Permissions::FULL)
+def set_configs(params, request, session)
+  if not allowed_for_local_cluster(session, Permissions::FULL)
     return 403, 'Permission denied'
   end
   return JSON.generate({'status' => 'bad_json'}) if not params['configs']
@@ -610,8 +575,8 @@ def set_configs(params, request, auth_user)
   }
 end
 
-def set_certs(params, request, auth_user)
-  if not allowed_for_local_cluster(auth_user, Permissions::FULL)
+def set_certs(params, request, session)
+  if not allowed_for_local_cluster(session, Permissions::FULL)
     return 403, 'Permission denied'
   end
 
@@ -654,8 +619,8 @@ def set_certs(params, request, auth_user)
   return [200, 'success']
 end
 
-def get_permissions_remote(params, request, auth_user)
-  if not allowed_for_local_cluster(auth_user, Permissions::GRANT)
+def get_permissions_remote(params, request, session)
+  if not allowed_for_local_cluster(session, Permissions::GRANT)
     return 403, 'Permission denied'
   end
 
@@ -669,8 +634,8 @@ def get_permissions_remote(params, request, auth_user)
   return [200, JSON.generate(data)]
 end
 
-def set_permissions_remote(params, request, auth_user)
-  if not allowed_for_local_cluster(auth_user, Permissions::GRANT)
+def set_permissions_remote(params, request, session)
+  if not allowed_for_local_cluster(session, Permissions::GRANT)
     return 403, 'Permission denied'
   end
 
@@ -740,7 +705,7 @@ def set_permissions_remote(params, request, auth_user)
         break
       end
     }
-    if not allowed_for_local_cluster(auth_user, Permissions::FULL)
+    if not allowed_for_local_cluster(session, Permissions::FULL)
       return [
         403,
         "Permission denied\nOnly #{SUPERUSER} and users with #{label} "\
@@ -761,12 +726,54 @@ def set_permissions_remote(params, request, auth_user)
   return 400, 'Unable to save permissions'
 end
 
-def remote_pcsd_restart(params, request, auth_user)
+def remote_pcsd_restart(params, request, session)
   pcsd_restart()
   return [200, 'success']
 end
 
-def get_sw_versions(params, request, auth_user)
+def check_gui_status(params, request, session)
+  node_results = {}
+  if params[:nodes] != nil and params[:nodes] != ""
+    node_array = params[:nodes].split(",")
+    online, offline, notauthorized = check_gui_status_of_nodes(
+      session, node_array
+    )
+    online.each { |node|
+      node_results[node] = "Online"
+    }
+    offline.each { |node|
+      node_results[node] = "Offline"
+    }
+    notauthorized.each { |node|
+      node_results[node] = "Unable to authenticate"
+    }
+  end
+  return JSON.generate(node_results)
+end
+
+def get_sw_versions(params, request, session)
+  if params[:nodes] != nil and params[:nodes] != ""
+    nodes = params[:nodes].split(",")
+    final_response = {}
+    threads = []
+    nodes.each {|node|
+      threads << Thread.new {
+        code, response = send_request_with_token(
+          session, node, 'get_sw_versions'
+        )
+        begin
+          node_response = JSON.parse(response)
+          if node_response and node_response["notoken"] == true
+            $logger.error("ERROR: bad token for #{node}")
+          end
+          final_response[node] = node_response
+        rescue JSON::ParserError => e
+        end
+      }
+    }
+    threads.each { |t| t.join }
+    return JSON.generate(final_response)
+  end
   versions = {
     "rhel" => get_rhel_version(),
     "pcs" => get_pcsd_version(),
@@ -777,25 +784,15 @@ def get_sw_versions(params, request, auth_user)
   return JSON.generate(versions)
 end
 
-def remote_node_available(params, request, auth_user)
-  if (
-    (not ISRHEL6 and File.exist?(Cfgsync::CorosyncConf.file_path)) or
-    (ISRHEL6 and File.exist?(Cfgsync::ClusterConf.file_path)) or
-    File.exist?("/var/lib/pacemaker/cib/cib.xml")
-  )
+def remote_node_available(params, request, session)
+  if (not ISRHEL6 and File.exist?(Cfgsync::CorosyncConf.file_path)) or (ISRHEL6 and File.exist?(Cfgsync::ClusterConf.file_path)) or File.exist?("/var/lib/pacemaker/cib/cib.xml")
     return JSON.generate({:node_available => false})
-  end
-  if pacemaker_remote_running?()
-    return JSON.generate({
-      :node_available => false,
-      :pacemaker_remote => true,
-    })
   end
   return JSON.generate({:node_available => true})
 end
 
-def remote_add_node(params, request, auth_user, all=false)
-  if not allowed_for_local_cluster(auth_user, Permissions::FULL)
+def remote_add_node(params, request, session, all=false)
+  if not allowed_for_local_cluster(session, Permissions::FULL)
     return 403, 'Permission denied'
   end
   auto_start = false
@@ -808,9 +805,7 @@ def remote_add_node(params, request, auth_user, all=false)
     if params[:new_ring1addr] != nil
       node += ',' + params[:new_ring1addr]
     end
-    retval, output = add_node(
-      auth_user, node, all, auto_start, params[:watchdog]
-    )
+    retval, output = add_node(session, node, all, auto_start)
   end
 
   if retval == 0
@@ -820,8 +815,8 @@ def remote_add_node(params, request, auth_user, all=false)
   return [400,output]
 end
 
-def remote_remove_nodes(params, request, auth_user)
-  if not allowed_for_local_cluster(auth_user, Permissions::FULL)
+def remote_remove_nodes(params, request, session)
+  if not allowed_for_local_cluster(session, Permissions::FULL)
     return 403, 'Permission denied'
   end
   count = 0
@@ -844,40 +839,29 @@ def remote_remove_nodes(params, request, auth_user)
   # - get possible quorum loss warning
   stop_params = node_list + options
   stdout, stderr, retval = run_cmd(
-    auth_user, PCS, "cluster", "stop", *stop_params
+    session, PCS, "cluster", "stop", *stop_params
   )
-  if retval != 0 and not params['force']
-    # If forced, keep going even if unable to stop all nodes (they may be dead).
-    # Add info this error is forceable if pcs did not do it (e.g. when unable
-    # to connect to some nodes).
-    message = stderr.join
-    if not message.include?(', use --force to override')
-      message += ', use --force to override'
-    end
-    return [400, message]
+  if retval != 0
+    return [400, stderr.join]
   end
 
   node_list.each {|node|
-    retval, output = remove_node(auth_user, node, true)
+    retval, output = remove_node(session, node, true)
     out = out + output.join("\n")
   }
   config = PCSConfig.new(Cfgsync::PcsdSettings.from_file().text())
   if config.get_nodes($cluster_name) == nil or config.get_nodes($cluster_name).length == 0
     return [200,"No More Nodes"]
   end
-  if retval != 0
-    return [400, out]
-  else
-    return [200, out]
-  end
+  return out
 end
 
-def remote_remove_node(params, request, auth_user)
-  if not allowed_for_local_cluster(auth_user, Permissions::FULL)
+def remote_remove_node(params, request, session)
+  if not allowed_for_local_cluster(session, Permissions::FULL)
     return 403, 'Permission denied'
   end
   if params[:remove_nodename] != nil
-    retval, output = remove_node(auth_user, params[:remove_nodename])
+    retval, output = remove_node(session, params[:remove_nodename])
   else
     return 400, "No nodename specified"
   end
@@ -889,8 +873,8 @@ def remote_remove_node(params, request, auth_user)
   return JSON.generate([retval,output])
 end
 
-def setup_cluster(params, request, auth_user)
-  if not allowed_for_superuser(auth_user)
+def setup_cluster(params, request, session)
+  if not allowed_for_superuser(session)
     return 403, 'Permission denied'
   end
   $logger.info("Setting up cluster: " + params.inspect)
@@ -939,7 +923,7 @@ def setup_cluster(params, request, auth_user)
   nodes_options = nodes + options
   nodes_options += options_udp if transport_udp
   stdout, stderr, retval = run_cmd(
-    auth_user, PCS, "cluster", "setup", "--enable", "--start",
+    session, PCS, "cluster", "setup", "--enable", "--start",
     "--name", params[:clustername], *nodes_options
   )
   if retval != 0
@@ -951,34 +935,22 @@ def setup_cluster(params, request, auth_user)
   return 200
 end
 
-def create_cluster(params, request, auth_user)
-  if not allowed_for_superuser(auth_user)
+def create_cluster(params, request, session)
+  if not allowed_for_superuser(session)
     return 403, 'Permission denied'
   end
-  if set_corosync_conf(params, request, auth_user)
-    cluster_start(params, request, auth_user)
+  if set_corosync_conf(params, request, session)
+    cluster_start(params, request, session)
   else
     return "Failed"
   end
 end
 
-def remote_pacemaker_node_status(params, request, auth_user)
-  if not allowed_for_local_cluster(auth_user, Permissions::READ)
-    return 403, 'Permission denied'
-  end
-  output, stderr, retval = run_cmd(auth_user, PCS, 'node', 'pacemaker-status')
-  if retval != 0
-    return [400, stderr]
-  else
-    return output
-  end
-end
-
-def node_status(params, request, auth_user)
+def node_status(params, request, session)
   if params[:node] and params[:node] != '' and params[:node] !=
     $cur_node_name and !params[:redirected]
     return send_request_with_token(
-      auth_user,
+      session,
       params[:node],
       'status?redirected=1',
       false,
@@ -988,24 +960,24 @@ def node_status(params, request, auth_user)
     )
   end
 
-  if not allowed_for_local_cluster(auth_user, Permissions::READ)
+  if not allowed_for_local_cluster(session, Permissions::READ)
     return 403, 'Permission denied'
   end
 
-  cib_dom = get_cib_dom(auth_user)
-  crm_dom = get_crm_mon_dom(auth_user)
+  cib_dom = get_cib_dom(session)
+  crm_dom = get_crm_mon_dom(session)
 
-  status = get_node_status(auth_user, cib_dom)
+  status = get_node_status(session, cib_dom)
   resources = get_resources(
     cib_dom,
     crm_dom,
     (params[:operations] and params[:operations] == '1')
   )
 
-  node = ClusterEntity::Node.load_current_node(crm_dom)
+  node = ClusterEntity::Node.load_current_node(session, crm_dom)
 
   _,_,not_authorized_nodes = check_gui_status_of_nodes(
-    auth_user,
+    session,
     status[:known_nodes],
     false,
     3
@@ -1064,8 +1036,6 @@ def node_status(params, request, auth_user)
     :cman => node.cman,
     :corosync_enabled => node.corosync_enabled,
     :pacemaker_enabled => node.pacemaker_enabled,
-    :pacemaker_remote => node.services[:pacemaker_remote][:running],
-    :pacemaker_remote_enabled => node.services[:pacemaker_remote][:enabled],
     :pcsd_enabled => node.pcsd_enabled,
     :corosync_online => status[:corosync_online],
     :corosync_offline => status[:corosync_offline],
@@ -1089,7 +1059,7 @@ def node_status(params, request, auth_user)
   return JSON.generate(old_status)
 end
 
-def status_all(params, request, auth_user, nodes=[], dont_update_config=false)
+def status_all(params, request, session, nodes=[], dont_update_config=false)
   if nodes == nil
     return JSON.generate({"error" => "true"})
   end
@@ -1099,7 +1069,7 @@ def status_all(params, request, auth_user, nodes=[], dont_update_config=false)
   forbidden_nodes = {}
   nodes.each {|node|
     threads << Thread.new {
-      code, response = send_request_with_token(auth_user, node, 'status')
+      code, response = send_request_with_token(session, node, 'status')
       if 403 == code
         forbidden_nodes[node] = true
       end
@@ -1141,14 +1111,14 @@ def status_all(params, request, auth_user, nodes=[], dont_update_config=false)
       Cfgsync::save_sync_new_version(
         sync_config, get_corosync_nodes(), $cluster_name, true
       )
-      return status_all(params, request, auth_user, node_list, true)
+      return status_all(params, request, session, node_list, true)
     end
   end
   $logger.debug("NODE LIST: " + node_list.inspect)
   return JSON.generate(final_response)
 end
 
-def clusters_overview(params, request, auth_user)
+def clusters_overview(params, request, session)
   cluster_map = {}
   forbidden_clusters = {}
   threads = []
@@ -1167,7 +1137,7 @@ def clusters_overview(params, request, auth_user)
       }
       overview_cluster = nil
       online, offline, not_authorized_nodes = check_gui_status_of_nodes(
-        auth_user,
+        session,
         get_cluster_nodes(cluster.name),
         false,
         3
@@ -1179,7 +1149,7 @@ def clusters_overview(params, request, auth_user)
       nodes_not_in_cluster = []
       for node in cluster_nodes_auth
         code, response = send_request_with_token(
-          auth_user, node, 'cluster_status', true, {}, true, nil, 8
+          session, node, 'cluster_status', true, {}, true, nil, 8
         )
         if code == 404
           not_supported = true
@@ -1315,7 +1285,7 @@ def clusters_overview(params, request, auth_user)
   return JSON.generate(overview)
 end
 
-def auth(params, request, auth_user)
+def auth(params, request, session)
   token = PCSAuth.validUser(params['username'],params['password'], true)
   # If we authorized to this machine, attempt to authorize everywhere
   node_list = []
@@ -1327,7 +1297,7 @@ def auth(params, request, auth_user)
     }
     if node_list.length > 0
       pcs_auth(
-        auth_user, node_list, params['username'], params['password'],
+        session, node_list, params['username'], params['password'],
         params["force"] == "1"
       )
     end
@@ -1336,7 +1306,7 @@ def auth(params, request, auth_user)
 end
 
 # If we get here, we're already authorized
-def check_auth(params, request, auth_user)
+def check_auth(params, request, session)
   if params.include?("check_auth_only")
     return [200, "{\"success\":true}"]
   end
@@ -1347,12 +1317,12 @@ def check_auth(params, request, auth_user)
 end
 
 # not used anymore, left here for backward compatability reasons
-def resource_status(params, request, auth_user)
-  if not allowed_for_local_cluster(auth_user, Permissions::READ)
+def resource_status(params, request, session)
+  if not allowed_for_local_cluster(session, Permissions::READ)
     return 403, 'Permission denied'
   end
   resource_id = params[:resource]
-  @resources,@groups = getResourcesGroups(auth_user)
+  @resources,@groups = getResourcesGroups(session)
   location = ""
   res_status = ""
   @resources.each {|r|
@@ -1374,12 +1344,12 @@ def resource_status(params, request, auth_user)
   return JSON.generate(status)
 end
 
-def resource_stop(params, request, auth_user)
-  if not allowed_for_local_cluster(auth_user, Permissions::WRITE)
+def resource_stop(params, request, session)
+  if not allowed_for_local_cluster(session, Permissions::WRITE)
     return 403, 'Permission denied'
   end
   stdout, stderr, retval = run_cmd(
-    auth_user, PCS, "resource", "disable", params[:resource]
+    session, PCS, "resource", "disable", params[:resource]
   )
   if retval == 0
     return JSON.generate({"success" => "true"})
@@ -1388,12 +1358,12 @@ def resource_stop(params, request, auth_user)
   end
 end
 
-def resource_cleanup(params, request, auth_user)
-  if not allowed_for_local_cluster(auth_user, Permissions::WRITE)
+def resource_cleanup(params, request, session)
+  if not allowed_for_local_cluster(session, Permissions::WRITE)
     return 403, 'Permission denied'
   end
   stdout, stderr, retval = run_cmd(
-    auth_user, PCS, "resource", "cleanup", params[:resource]
+    session, PCS, "resource", "cleanup", params[:resource]
   )
   if retval == 0
     return JSON.generate({"success" => "true"})
@@ -1402,52 +1372,100 @@ def resource_cleanup(params, request, auth_user)
   end
 end
 
-def resource_start(params, request, auth_user)
-  if not allowed_for_local_cluster(auth_user, Permissions::WRITE)
+def resource_start(params, request, session)
+  if not allowed_for_local_cluster(session, Permissions::WRITE)
     return 403, 'Permission denied'
   end
   stdout, stderr, retval = run_cmd(
-    auth_user, PCS, "resource", "enable", params[:resource]
+    session, PCS, "resource", "enable", params[:resource]
   )
   if retval == 0
     return JSON.generate({"success" => "true"})
   else
     return JSON.generate({"error" => "true", "stdout" => stdout, "stderror" => stderr})
+  end
+end
+
+def resource_form(params, request, session)
+  if not allowed_for_local_cluster(session, Permissions::READ)
+    return 403, 'Permission denied'
+  end
+
+  cib_dom = get_cib_dom(session)
+  @cur_resource = get_resource_by_id(params[:resource], cib_dom)
+  @groups = get_resource_groups(cib_dom)
+  @version = params[:version]
+
+  if @cur_resource.instance_of?(ClusterEntity::Primitive) and !@cur_resource.stonith
+    @cur_resource_group = @cur_resource.get_group
+    @cur_resource_clone = @cur_resource.get_clone
+    @cur_resource_ms = @cur_resource.get_master
+    @resource = ResourceAgent.new(@cur_resource.agentname)
+    if @cur_resource.provider == 'heartbeat'
+      @resource.required_options, @resource.optional_options, @resource.info = getResourceMetadata(session, HEARTBEAT_AGENTS_DIR + @cur_resource.type)
+    elsif @cur_resource.provider == 'pacemaker'
+      @resource.required_options, @resource.optional_options, @resource.info = getResourceMetadata(session, PACEMAKER_AGENTS_DIR + @cur_resource.type)
+    elsif @cur_resource._class == 'nagios'
+      @resource.required_options, @resource.optional_options, @resource.info = getResourceMetadata(session, NAGIOS_METADATA_DIR + @cur_resource.type + '.xml')
+    end
+    @existing_resource = true
+    if @resource
+      erb :resourceagentform
+    else
+      "Can't find resource"
+    end
+  else
+    "Resource #{params[:resource]} doesn't exist"
+  end
+end
+
+def fence_device_form(params, request, session)
+  if not allowed_for_local_cluster(session, Permissions::READ)
+    return 403, 'Permission denied'
+  end
+
+  @cur_resource = get_resource_by_id(params[:resource], get_cib_dom(session))
+
+  if @cur_resource.instance_of?(ClusterEntity::Primitive) and @cur_resource.stonith
+    @resource_agents = getFenceAgents(session, @cur_resource.agentname)
+    @existing_resource = true
+    @fenceagent = @resource_agents[@cur_resource.type]
+    erb :fenceagentform
+  else
+    "Can't find fence device"
   end
 end
 
 # Creates resource if params[:resource_id] is not set
-def update_resource (params, request, auth_user)
-  if not allowed_for_local_cluster(auth_user, Permissions::WRITE)
+def update_resource (params, request, session)
+  if not allowed_for_local_cluster(session, Permissions::WRITE)
     return 403, 'Permission denied'
   end
 
   param_line = getParamList(params)
   if not params[:resource_id]
-    cmd = [PCS, "resource", "create", params[:name], params[:resource_type]]
-    cmd += param_line
-    if params[:resource_group] and params[:resource_group] != ""
-      cmd += ['--group', params[:resource_group]]
-      if (
-        ['before', 'after'].include?(params[:in_group_position]) and
-        params[:in_group_reference_resource_id]
-      )
-        cmd << "--#{params[:in_group_position]}"
-        cmd << params[:in_group_reference_resource_id]
-      end
-      resource_group = params[:resource_group]
-    end
-    out, stderr, retval = run_cmd(auth_user, *cmd)
+    out, stderr, retval = run_cmd(
+      session,
+      PCS, "resource", "create", params[:name], params[:resource_type],
+      *param_line
+    )
     if retval != 0
       return JSON.generate({"error" => "true", "stderr" => stderr, "stdout" => out})
+    end
+    if params[:resource_group] and params[:resource_group] != ""
+      run_cmd(
+        session,
+        PCS, "resource","group", "add", params[:resource_group], params[:name]
+      )
+      resource_group = params[:resource_group]
     end
 
     if params[:resource_clone] and params[:resource_clone] != ""
       name = resource_group ? resource_group : params[:name]
-      run_cmd(auth_user, PCS, "resource", "clone", name)
+      run_cmd(session, PCS, "resource", "clone", name)
     elsif params[:resource_ms] and params[:resource_ms] != ""
       name = resource_group ? resource_group : params[:name]
-      run_cmd(auth_user, PCS, "resource", "master", name)
+      run_cmd(session, PCS, "resource", "master", name)
     end
 
     return JSON.generate({})
@@ -1459,7 +1477,7 @@ def update_resource (params, request, auth_user)
       params[:resource_id].sub!(/(.*):.*/,'\1')
     end
     run_cmd(
-      auth_user, PCS, "resource", "update", params[:resource_id], *param_line
+      session, PCS, "resource", "update", params[:resource_id], *param_line
     )
   end
 
@@ -1467,49 +1485,41 @@ def update_resource (params, request, auth_user)
     if params[:resource_group] == ""
       if params[:_orig_resource_group] != ""
         run_cmd(
-          auth_user, PCS, "resource", "group", "remove",
+          session, PCS, "resource", "group", "remove",
           params[:_orig_resource_group], params[:resource_id]
         )
       end
     else
-      cmd = [
-        PCS, "resource", "group", "add", params[:resource_group],
+      run_cmd(
+        session, PCS, "resource", "group", "add", params[:resource_group],
         params[:resource_id]
-      ]
-      if (
-        ['before', 'after'].include?(params[:in_group_position]) and
-        params[:in_group_reference_resource_id]
       )
-        cmd << "--#{params[:in_group_position]}"
-        cmd << params[:in_group_reference_resource_id]
-      end
-      run_cmd(auth_user, *cmd)
     end
   end
 
   if params[:resource_clone] and params[:_orig_resource_clone] == "false"
-    run_cmd(auth_user, PCS, "resource", "clone", params[:resource_id])
+    run_cmd(session, PCS, "resource", "clone", params[:resource_id])
   end
   if params[:resource_ms] and params[:_orig_resource_ms] == "false"
-    run_cmd(auth_user, PCS, "resource", "master", params[:resource_id])
+    run_cmd(session, PCS, "resource", "master", params[:resource_id])
   end
 
   if params[:_orig_resource_clone] == "true" and not params[:resource_clone]
     run_cmd(
-      auth_user, PCS, "resource", "unclone", params[:resource_id].sub(/:.*/,'')
+      session, PCS, "resource", "unclone", params[:resource_id].sub(/:.*/,'')
     )
   end
   if params[:_orig_resource_ms] == "true" and not params[:resource_ms]
     run_cmd(
-      auth_user, PCS, "resource", "unclone", params[:resource_id].sub(/:.*/,'')
+      session, PCS, "resource", "unclone", params[:resource_id].sub(/:.*/,'')
     )
   end
 
   return JSON.generate({})
 end
 
-def update_fence_device(params, request, auth_user)
-  if not allowed_for_local_cluster(auth_user, Permissions::WRITE)
+def update_fence_device(params, request, session)
+  if not allowed_for_local_cluster(session, Permissions::WRITE)
     return 403, 'Permission denied'
   end
 
@@ -1520,7 +1530,7 @@ def update_fence_device(params, request, auth_user)
 
   if not params[:resource_id]
     out, stderr, retval = run_cmd(
-      auth_user,
+      session,
       PCS, "stonith", "create", params[:name], params[:resource_type],
       *param_line
     )
@@ -1532,7 +1542,7 @@ def update_fence_device(params, request, auth_user)
 
   if param_line.length != 0
     out, stderr, retval = run_cmd(
-      auth_user, PCS, "stonith", "update", params[:resource_id], *param_line
+      session, PCS, "stonith", "update", params[:resource_id], *param_line
     )
     if retval != 0
       return JSON.generate({"error" => "true", "stderr" => stderr, "stdout" => out})
@@ -1541,97 +1551,78 @@ def update_fence_device(params, request, auth_user)
   return "{}"
 end
 
-def get_avail_resource_agents(params, request, auth_user)
-  if not allowed_for_local_cluster(auth_user, Permissions::READ)
+def get_avail_resource_agents(params, request, session)
+  if not allowed_for_local_cluster(session, Permissions::READ)
     return 403, 'Permission denied'
   end
-  agents = getResourceAgents(auth_user)
+  agents = getResourceAgents(session)
   return JSON.generate(agents)
 end
 
-def get_avail_fence_agents(params, request, auth_user)
-  if not allowed_for_local_cluster(auth_user, Permissions::READ)
+def get_avail_fence_agents(params, request, session)
+  if not allowed_for_local_cluster(session, Permissions::READ)
     return 403, 'Permission denied'
   end
-  agents = getFenceAgents(auth_user)
+  agents = getFenceAgents(session)
   return JSON.generate(agents)
 end
 
-def remove_resource(params, request, auth_user)
-  if not allowed_for_local_cluster(auth_user, Permissions::WRITE)
+def resource_metadata(params, request, session)
+  if not allowed_for_local_cluster(session, Permissions::READ)
+    return 403, 'Permission denied'
+  end
+  return 200 if not params[:resourcename] or params[:resourcename] == ""
+  resource_name = params[:resourcename][params[:resourcename].rindex(':')+1..-1]
+  class_provider = params[:resourcename][0,params[:resourcename].rindex(':')]
+
+  @resource = ResourceAgent.new(params[:resourcename])
+  if class_provider == "ocf:heartbeat"
+    @resource.required_options, @resource.optional_options, @resource.info = getResourceMetadata(session, HEARTBEAT_AGENTS_DIR + resource_name)
+  elsif class_provider == "ocf:pacemaker"
+    @resource.required_options, @resource.optional_options, @resource.info = getResourceMetadata(session, PACEMAKER_AGENTS_DIR + resource_name)
+  elsif class_provider == 'nagios'
+    @resource.required_options, @resource.optional_options, @resource.info = getResourceMetadata(session, NAGIOS_METADATA_DIR + resource_name + '.xml')
+  end
+  @new_resource = params[:new]
+  @resources, @groups = getResourcesGroups(session)
+
+  erb :resourceagentform
+end
+
+def fence_device_metadata(params, request, session)
+  if not allowed_for_local_cluster(session, Permissions::READ)
+    return 403, 'Permission denied'
+  end
+  return 200 if not params[:resourcename] or params[:resourcename] == ""
+  @fenceagent = FenceAgent.new(params[:resourcename])
+  @fenceagent.required_options, @fenceagent.optional_options, @fenceagent.advanced_options, @fenceagent.info = getFenceAgentMetadata(session, params[:resourcename])
+  @new_fenceagent = params[:new]
+
+  erb :fenceagentform
+end
+
+def remove_resource(params, request, session)
+  if not allowed_for_local_cluster(session, Permissions::WRITE)
     return 403, 'Permission denied'
   end
   force = params['force']
-  user = PCSAuth.getSuperuserAuth()
   no_error_if_not_exists = params.include?('no_error_if_not_exists')
-  resource_list = []
-  errors = ''
-  resource_to_remove = []
-  params.each { |param,_|
-    if param.start_with?('resid-')
-      resource_list << param.split('resid-', 2)[1]
-    end
-  }
-  tmp_file = nil
-  if force
-    resource_to_remove = resource_list
-  else
-    begin
-      tmp_file = Tempfile.new('temp_cib')
-      _, err, retval = run_cmd(user, PCS, 'cluster', 'cib', tmp_file.path)
+  errors = ""
+  params.each { |k,v|
+    if k.index("resid-") == 0
+      resid = k.gsub('resid-', '')
+      command = [PCS, 'resource', 'delete', resid]
+      command << '--force' if force
+      out, errout, retval = run_cmd(session, *command)
       if retval != 0
-        return [400, 'Unable to stop resource(s).']
-      end
-      cmd = [PCS, '-f', tmp_file.path, 'resource', 'disable']
-      resource_list.each { |resource|
-        out, err, retval = run_cmd(user, *(cmd + [resource]))
-        if retval != 0
-          unless (
-            (out + err).join('').include?('unable to find a resource') and
-            no_error_if_not_exists
-          )
-            errors += "Unable to stop resource '#{resource}': #{err.join('')}"
-          end
-        else
-          resource_to_remove << resource
+        unless out.index(" does not exist.") != -1 and no_error_if_not_exists
+          errors += errout.join(' ').strip + "\n"
         end
-      }
-      _, _, retval = run_cmd(
-        user, PCS, 'cluster', 'cib-push', tmp_file.path, '--config', '--wait'
-      )
-      if retval != 0
-        return [400, 'Unable to stop resource(s).']
-      end
-      errors.strip!
-      unless errors.empty?
-        $logger.info("Stopping resource(s) errors:\n#{errors}")
-        return [400, errors]
-      end
-    rescue IOError
-      return [400, 'Unable to stop resource(s).']
-    ensure
-      if tmp_file
-        tmp_file.close!
-      end
-    end
-  end
-  resource_to_remove.each { |resource|
-    cmd = [PCS, 'resource', 'delete', resource]
-    if force
-      cmd << '--force'
-    end
-    out, err, retval = run_cmd(auth_user, *cmd)
-    if retval != 0
-      unless (
-        (out + err).join('').include?(' does not exist.') and
-        no_error_if_not_exists
-      )
-        errors += err.join(' ').strip + "\n"
       end
     end
   }
   errors.strip!
-  if errors.empty?
+  if errors == ""
     return 200
   else
     $logger.info("Remove resource errors:\n"+errors)
@@ -1639,12 +1630,12 @@ def remove_resource(params, request, auth_user)
   end
 end
 
-def add_fence_level_remote(params, request, auth_user)
-  if not allowed_for_local_cluster(auth_user, Permissions::WRITE)
+def add_fence_level_remote(params, request, session)
+  if not allowed_for_local_cluster(session, Permissions::WRITE)
     return 403, 'Permission denied'
   end
   retval, stdout, stderr = add_fence_level(
-    auth_user, params["level"], params["devices"], params["node"], params["remove"]
+    session, params["level"], params["devices"], params["node"], params["remove"]
   )
   if retval == 0
     return [200, "Successfully added fence level"]
@@ -1653,12 +1644,12 @@ def add_fence_level_remote(params, request, auth_user)
   end
 end
 
-def add_node_attr_remote(params, request, auth_user)
-  if not allowed_for_local_cluster(auth_user, Permissions::WRITE)
+def add_node_attr_remote(params, request, session)
+  if not allowed_for_local_cluster(session, Permissions::WRITE)
     return 403, 'Permission denied'
   end
   retval = add_node_attr(
-    auth_user, params["node"], params["key"], params["value"]
+    session, params["node"], params["key"], params["value"]
   )
   # retval = 2 if removing attr which doesn't exist
   if retval == 0 or retval == 2
@@ -1668,11 +1659,11 @@ def add_node_attr_remote(params, request, auth_user)
   end
 end
 
-def add_acl_role_remote(params, request, auth_user)
-  if not allowed_for_local_cluster(auth_user, Permissions::GRANT)
+def add_acl_role_remote(params, request, session)
+  if not allowed_for_local_cluster(session, Permissions::GRANT)
     return 403, 'Permission denied'
   end
-  retval = add_acl_role(auth_user, params["name"], params["description"])
+  retval = add_acl_role(session, params["name"], params["description"])
   if retval == ""
     return [200, "Successfully added ACL role"]
   else
@@ -1683,15 +1674,15 @@ def add_acl_role_remote(params, request, auth_user)
   end
 end
 
-def remove_acl_roles_remote(params, request, auth_user)
-  if not allowed_for_local_cluster(auth_user, Permissions::GRANT)
+def remove_acl_roles_remote(params, request, session)
+  if not allowed_for_local_cluster(session, Permissions::GRANT)
     return 403, 'Permission denied'
   end
   errors = ""
   params.each { |name, value|
     if name.index("role-") == 0
       out, errout, retval = run_cmd(
-        auth_user, PCS, "acl", "role", "delete", value.to_s, "--autodelete"
+        session, PCS, "acl", "role", "delete", value.to_s, "--autodelete"
       )
       if retval != 0
         errors += "Unable to remove role #{value}"
@@ -1710,18 +1701,18 @@ def remove_acl_roles_remote(params, request, auth_user)
   end
 end
 
-def add_acl_remote(params, request, auth_user)
-  if not allowed_for_local_cluster(auth_user, Permissions::GRANT)
+def add_acl_remote(params, request, session)
+  if not allowed_for_local_cluster(session, Permissions::GRANT)
     return 403, 'Permission denied'
   end
   if params["item"] == "permission"
     retval = add_acl_permission(
-      auth_user,
+      session,
       params["role_id"], params["type"], params["xpath_id"], params["query_id"]
     )
   elsif (params["item"] == "user") or (params["item"] == "group")
     retval = add_acl_usergroup(
-      auth_user, params["role_id"], params["item"], params["usergroup"]
+      session, params["role_id"], params["item"], params["usergroup"]
     )
   else
     retval = "Error: Unknown adding request"
@@ -1737,15 +1728,15 @@ def add_acl_remote(params, request, auth_user)
   end
 end
 
-def remove_acl_remote(params, request, auth_user)
-  if not allowed_for_local_cluster(auth_user, Permissions::GRANT)
+def remove_acl_remote(params, request, session)
+  if not allowed_for_local_cluster(session, Permissions::GRANT)
     return 403, 'Permission denied'
   end
   if params["item"] == "permission"
-    retval = remove_acl_permission(auth_user, params["acl_perm_id"])
+    retval = remove_acl_permission(session, params["acl_perm_id"])
   elsif params["item"] == "usergroup"
     retval = remove_acl_usergroup(
-      auth_user, params["role_id"],params["usergroup_id"], params["item_type"]
+      session, params["role_id"],params["usergroup_id"]
     )
   else
     retval = "Error: Unknown removal request"
@@ -1758,12 +1749,12 @@ def remove_acl_remote(params, request, auth_user)
   end
 end
 
-def add_meta_attr_remote(params, request, auth_user)
-  if not allowed_for_local_cluster(auth_user, Permissions::WRITE)
+def add_meta_attr_remote(params, request, session)
+  if not allowed_for_local_cluster(session, Permissions::WRITE)
     return 403, 'Permission denied'
   end
   retval = add_meta_attr(
-    auth_user, params["res_id"], params["key"],params["value"]
+    session, params["res_id"], params["key"],params["value"]
   )
   if retval == 0
     return [200, "Successfully added meta attribute"]
@@ -1772,14 +1763,14 @@ def add_meta_attr_remote(params, request, auth_user)
   end
 end
 
-def add_constraint_remote(params, request, auth_user)
-  if not allowed_for_local_cluster(auth_user, Permissions::WRITE)
+def add_constraint_remote(params, request, session)
+  if not allowed_for_local_cluster(session, Permissions::WRITE)
     return 403, 'Permission denied'
   end
   case params["c_type"]
   when "loc"
     retval, error = add_location_constraint(
-      auth_user,
+      session,
       params["res_id"], params["node_id"], params["score"], params["force"],
       !params['disable_autocorrect']
     )
@@ -1794,7 +1785,7 @@ def add_constraint_remote(params, request, auth_user)
     end
 
     retval, error = add_order_constraint(
-      auth_user,
+      session,
       resA, resB, actionA, actionB, params["score"], true, params["force"],
       !params['disable_autocorrect']
     )
@@ -1811,14 +1802,8 @@ def add_constraint_remote(params, request, auth_user)
     end
 
     retval, error = add_colocation_constraint(
-      auth_user,
+      session,
       resA, resB, score, params["force"], !params['disable_autocorrect']
-    )
-  when "ticket"
-    retval, error = add_ticket_constraint(
-      auth_user,
-      params["ticket"], params["res_id"], params["role"], params["loss-policy"],
-      params["force"], !params['disable_autocorrect']
     )
   else
     return [400, "Unknown constraint type: #{params['c_type']}"]
@@ -1831,13 +1816,13 @@ def add_constraint_remote(params, request, auth_user)
   end
 end
 
-def add_constraint_rule_remote(params, request, auth_user)
-  if not allowed_for_local_cluster(auth_user, Permissions::WRITE)
+def add_constraint_rule_remote(params, request, session)
+  if not allowed_for_local_cluster(session, Permissions::WRITE)
     return 403, 'Permission denied'
   end
   if params["c_type"] == "loc"
     retval, error = add_location_constraint_rule(
-      auth_user,
+      session,
       params["res_id"], params["rule"], params["score"], params["force"],
       !params['disable_autocorrect']
     )
@@ -1852,32 +1837,15 @@ def add_constraint_rule_remote(params, request, auth_user)
   end
 end
 
-def add_constraint_set_remote(params, request, auth_user)
-  if not allowed_for_local_cluster(auth_user, Permissions::WRITE)
+def add_constraint_set_remote(params, request, session)
+  if not allowed_for_local_cluster(session, Permissions::WRITE)
     return 403, 'Permission denied'
   end
   case params["c_type"]
   when "ord"
     retval, error = add_order_set_constraint(
-      auth_user,
+      session,
       params["resources"].values, params["force"], !params['disable_autocorrect']
-    )
-  when "col"
-    retval, error = add_colocation_set_constraint(
-      auth_user,
-      params["resources"].values, params["force"], !params['disable_autocorrect']
-    )
-  when "ticket"
-    unless params["options"]["ticket"]
-      return [400, "Error adding constraint ticket: option ticket missing"]
-    end
-    retval, error = add_ticket_set_constraint(
-      auth_user,
-      params["options"]["ticket"],
-      (params["options"]["loss-policy"] or ""),
-      params["resources"].values,
-      params["force"],
-      !params['disable_autocorrect']
     )
   else
     return [400, "Unknown constraint type: #{params["c_type"]}"]
@@ -1890,12 +1858,12 @@ def add_constraint_set_remote(params, request, auth_user)
   end
 end
 
-def remove_constraint_remote(params, request, auth_user)
-  if not allowed_for_local_cluster(auth_user, Permissions::WRITE)
+def remove_constraint_remote(params, request, session)
+  if not allowed_for_local_cluster(session, Permissions::WRITE)
     return 403, 'Permission denied'
   end
   if params[:constraint_id]
-    retval = remove_constraint(auth_user, params[:constraint_id])
+    retval = remove_constraint(session, params[:constraint_id])
     if retval == 0
       return "Constraint #{params[:constraint_id]} removed"
     else
@@ -1906,12 +1874,12 @@ def remove_constraint_remote(params, request, auth_user)
   end
 end
 
-def remove_constraint_rule_remote(params, request, auth_user)
-  if not allowed_for_local_cluster(auth_user, Permissions::WRITE)
+def remove_constraint_rule_remote(params, request, session)
+  if not allowed_for_local_cluster(session, Permissions::WRITE)
     return 403, 'Permission denied'
   end
   if params[:rule_id]
-    retval = remove_constraint_rule(auth_user, params[:rule_id])
+    retval = remove_constraint_rule(session, params[:rule_id])
     if retval == 0
       return "Constraint rule #{params[:rule_id]} removed"
     else
@@ -1922,14 +1890,14 @@ def remove_constraint_rule_remote(params, request, auth_user)
   end
 end
 
-def add_group(params, request, auth_user)
-  if not allowed_for_local_cluster(auth_user, Permissions::WRITE)
+def add_group(params, request, session)
+  if not allowed_for_local_cluster(session, Permissions::WRITE)
     return 403, 'Permission denied'
   end
   rg = params["resource_group"]
   resources = params["resources"]
   output, errout, retval = run_cmd(
-    auth_user, PCS, "resource", "group", "add", rg, *(resources.split(" "))
+    session, PCS, "resource", "group", "add", rg, *(resources.split(" "))
   )
   if retval == 0
     return 200
@@ -1938,10 +1906,10 @@ def add_group(params, request, auth_user)
   end
 end
 
-def update_cluster_settings(params, request, auth_user)
+def update_cluster_settings(params, request, session)
   properties = params['config']
   to_update = []
-  current = getAllSettings(auth_user)
+  current = getAllSettings(session)
 
   # We need to be able to set cluster properties also from older version GUI.
   # This code handles proper processing of checkboxes.
@@ -1967,12 +1935,12 @@ def update_cluster_settings(params, request, auth_user)
   }
 
   if to_update.count { |x| x.downcase == 'enable-acl' } > 0
-    if not allowed_for_local_cluster(auth_user, Permissions::GRANT)
+    if not allowed_for_local_cluster(session, Permissions::GRANT)
       return 403, 'Permission denied'
     end
   end
   if to_update.count { |x| x.downcase != 'enable-acl' } > 0
-    if not allowed_for_local_cluster(auth_user, Permissions::WRITE)
+    if not allowed_for_local_cluster(session, Permissions::WRITE)
       return 403, 'Permission denied'
     end
   end
@@ -1984,9 +1952,7 @@ def update_cluster_settings(params, request, auth_user)
     to_update.each { |prop|
       cmd_args << "#{prop.downcase}=#{properties[prop]}"
     }
-    stdout, stderr, retval = run_cmd(
-      auth_user, PCS, 'property', 'set', *cmd_args
-    )
+    stdout, stderr, retval = run_cmd(session, PCS, 'property', 'set', *cmd_args)
     if retval != 0
       return [400, stderr.join('').gsub(', (use --force to override)', '')]
     end
@@ -1994,11 +1960,11 @@ def update_cluster_settings(params, request, auth_user)
   return [200, "Update Successful"]
 end
 
-def cluster_destroy(params, request, auth_user)
-  if not allowed_for_local_cluster(auth_user, Permissions::FULL)
+def cluster_destroy(params, request, session)
+  if not allowed_for_local_cluster(session, Permissions::FULL)
     return 403, 'Permission denied'
   end
-  out, errout, retval = run_cmd(auth_user, PCS, "cluster", "destroy")
+  out, errout, retval = run_cmd(session, PCS, "cluster", "destroy")
   if retval == 0
     return [200, "Successfully destroyed cluster"]
   else
@@ -2006,8 +1972,8 @@ def cluster_destroy(params, request, auth_user)
   end
 end
 
-def get_wizard(params, request, auth_user)
-  if not allowed_for_local_cluster(auth_user, Permissions::READ)
+def get_wizard(params, request, session)
+  if not allowed_for_local_cluster(session, Permissions::READ)
     return 403, 'Permission denied'
   end
   wizard = PCSDWizard.getWizard(params["wizard"])
@@ -2018,8 +1984,8 @@ def get_wizard(params, request, auth_user)
   end
 end
 
-def wizard_submit(params, request, auth_user)
-  if not allowed_for_local_cluster(auth_user, Permissions::WRITE)
+def wizard_submit(params, request, session)
+  if not allowed_for_local_cluster(session, Permissions::WRITE)
     return 403, 'Permission denied'
   end
   wizard = PCSDWizard.getWizard(params["wizard"])
@@ -2031,18 +1997,62 @@ def wizard_submit(params, request, auth_user)
 
 end
 
+def auth_gui_against_nodes(params, request, session)
+  node_auth_error = {}
+  new_tokens = {}
+  threads = []
+  params.each { |node|
+    threads << Thread.new {
+      if node[0].end_with?("-pass") and node[0].length > 5
+        nodename = node[0][0..-6]
+        if params.has_key?("all")
+          pass = params["pass-all"]
+        else
+          pass = node[1]
+        end
+        data = {
+          'node-0' => nodename,
+          'username' => SUPERUSER,
+          'password' => pass,
+          'force' => 1,
+        }
+        node_auth_error[nodename] = 1
+        code, response = send_request(session, nodename, 'auth', true, data)
+        if 200 == code
+          token = response.strip
+          if not token.empty?
+            new_tokens[nodename] = token
+            node_auth_error[nodename] = 0
+          end
+        end
+      end
+    }
+  }
+  threads.each { |t| t.join }
+
+  if not new_tokens.empty?
+    cluster_nodes = get_corosync_nodes()
+    tokens_cfg = Cfgsync::PcsdTokens.from_file()
+    sync_successful, sync_responses = Cfgsync::save_sync_new_tokens(
+      tokens_cfg, new_tokens, cluster_nodes, $cluster_name
+    )
+  end
+
+  return [200, JSON.generate({'node_auth_error' => node_auth_error})]
+end
+
 # not used anymore, left here for backward compatability reasons
-def get_tokens(params, request, auth_user)
+def get_tokens(params, request, session)
   # pcsd runs as root thus always returns hacluster's tokens
-  if not allowed_for_local_cluster(auth_user, Permissions::FULL)
+  if not allowed_for_local_cluster(session, Permissions::FULL)
     return 403, 'Permission denied'
   end
   return [200, JSON.generate(read_tokens)]
 end
 
-def get_cluster_tokens(params, request, auth_user)
+def get_cluster_tokens(params, request, session)
   # pcsd runs as root thus always returns hacluster's tokens
-  if not allowed_for_local_cluster(auth_user, Permissions::FULL)
+  if not allowed_for_local_cluster(session, Permissions::FULL)
     return 403, "Permission denied"
   end
   on, off = get_nodes
@@ -2051,9 +2061,9 @@ def get_cluster_tokens(params, request, auth_user)
   return [200, JSON.generate(get_tokens_of_nodes(nodes))]
 end
 
-def save_tokens(params, request, auth_user)
+def save_tokens(params, request, session)
   # pcsd runs as root thus always returns hacluster's tokens
-  if not allowed_for_local_cluster(auth_user, Permissions::FULL)
+  if not allowed_for_local_cluster(session, Permissions::FULL)
     return 403, "Permission denied"
   end
 
@@ -2079,8 +2089,72 @@ def save_tokens(params, request, auth_user)
   end
 end
 
-def resource_master(params, request, auth_user)
-  if not allowed_for_local_cluster(auth_user, Permissions::WRITE)
+def add_node_to_cluster(params, request, session)
+  clustername = params["clustername"]
+  new_node = params["new_nodename"]
+
+  if clustername == $cluster_name
+    if not allowed_for_local_cluster(session, Permissions::FULL)
+      return 403, 'Permission denied'
+    end
+  end
+
+  tokens = read_tokens
+
+  if not tokens.include? new_node
+    return [400, "New node is not authenticated."]
+  end
+
+  # Save the new node token on all nodes in a cluster the new node is beeing
+  # added to. Send the token to one node and let the cluster nodes synchronize
+  # it by themselves.
+  token_data = {"node:#{new_node}" => tokens[new_node]}
+  retval, out = send_cluster_request_with_token(
+    # new node doesn't have config with permissions yet
+    PCSAuth.getSuperuserSession(), clustername, '/save_tokens', true, token_data
+  )
+  # If the cluster runs an old pcsd which doesn't support /save_tokens,
+  # ignore 404 in order to not prevent the node to be added.
+  if retval != 404 and retval != 200
+    return [400, 'Failed to save the token of the new node in target cluster.']
+  end
+
+  retval, out = send_cluster_request_with_token(
+    session, clustername, "/add_node_all", true, params
+  )
+  if 403 == retval
+    return [retval, out]
+  end
+  if retval != 200
+    return [400, "Failed to add new node '#{new_node}' into cluster '#{clustername}': #{out}"]
+  end
+
+  return [200, "Node added successfully."]
+end
+
+def fix_auth_of_cluster(params, request, session)
+  if not params["clustername"]
+    return [400, "cluster name not defined"]
+  end
+
+  clustername = params["clustername"]
+  nodes = get_cluster_nodes(clustername)
+  tokens_data = add_prefix_to_keys(get_tokens_of_nodes(nodes), "node:")
+
+  retval, out = send_cluster_request_with_token(
+    PCSAuth.getSuperuserSession(), clustername, "/save_tokens", true,
+    tokens_data, true
+  )
+  if retval == 404
+    return [400, "Old version of PCS/PCSD is running on cluster nodes. Fixing authentication is not supported. Use 'pcs cluster auth' command to authenticate the nodes."]
+  elsif retval != 200
+    return [400, "Authentication failed."]
+  end
+  return [200, "Auhentication of nodes in cluster should be fixed."]
+end
+
+def resource_master(params, request, session)
+  if not allowed_for_local_cluster(session, Permissions::WRITE)
     return 403, 'Permission denied'
   end
 
@@ -2088,7 +2162,7 @@ def resource_master(params, request, auth_user)
     return [400, 'resource_id has to be specified.']
   end
   _, stderr, retval = run_cmd(
-    auth_user, PCS, 'resource', 'master', params[:resource_id]
+    session, PCS, 'resource', 'master', params[:resource_id]
   )
   if retval != 0
     return [400, 'Unable to create master/slave resource from ' +
@@ -2098,8 +2172,8 @@ def resource_master(params, request, auth_user)
   return 200
 end
 
-def resource_change_group(params, request, auth_user)
-  if not allowed_for_local_cluster(auth_user, Permissions::WRITE)
+def resource_change_group(params, request, session)
+  if not allowed_for_local_cluster(session, Permissions::WRITE)
     return 403, 'Permission denied'
   end
 
@@ -2109,7 +2183,7 @@ def resource_change_group(params, request, auth_user)
   if params[:group_id].empty?
     if params[:old_group_id]
       _, stderr, retval = run_cmd(
-        auth_user, PCS, 'resource', 'group', 'remove', params[:old_group_id],
+        session, PCS, 'resource', 'group', 'remove', params[:old_group_id],
         params[:resource_id]
       )
       if retval != 0
@@ -2120,17 +2194,10 @@ def resource_change_group(params, request, auth_user)
     end
     return 200
   end
-  cmd = [
+  _, stderr, retval = run_cmd(
+    session,
     PCS, 'resource', 'group', 'add', params[:group_id], params[:resource_id]
-  ]
-  if (
-  ['before', 'after'].include?(params[:in_group_position]) and
-    params[:in_group_reference_resource_id]
   )
-    cmd << "--#{params[:in_group_position]}"
-    cmd << params[:in_group_reference_resource_id]
-  end
-  _, stderr, retval = run_cmd(auth_user, *cmd)
   if retval != 0
     return [400, "Unable to add resource '#{params[:resource_id]}' to " +
       "group '#{params[:group_id]}': #{stderr.join('')}"
@@ -2139,8 +2206,8 @@ def resource_change_group(params, request, auth_user)
   return 200
 end
 
-def resource_ungroup(params, request, auth_user)
-  if not allowed_for_local_cluster(auth_user, Permissions::WRITE)
+def resource_ungroup(params, request, session)
+  if not allowed_for_local_cluster(session, Permissions::WRITE)
     return 403, 'Permission denied'
   end
 
@@ -2149,7 +2216,7 @@ def resource_ungroup(params, request, auth_user)
   end
 
   _, stderr, retval = run_cmd(
-    auth_user, PCS, 'resource', 'ungroup', params[:group_id]
+    session, PCS, 'resource', 'ungroup', params[:group_id]
   )
   if retval != 0
     return [400, 'Unable to ungroup group ' +
@@ -2159,8 +2226,8 @@ def resource_ungroup(params, request, auth_user)
   return 200
 end
 
-def resource_clone(params, request, auth_user)
-  if not allowed_for_local_cluster(auth_user, Permissions::WRITE)
+def resource_clone(params, request, session)
+  if not allowed_for_local_cluster(session, Permissions::WRITE)
     return 403, 'Permission denied'
   end
 
@@ -2169,7 +2236,7 @@ def resource_clone(params, request, auth_user)
   end
 
   _, stderr, retval = run_cmd(
-    auth_user, PCS, 'resource', 'clone', params[:resource_id]
+    session, PCS, 'resource', 'clone', params[:resource_id]
   )
   if retval != 0
     return [400, 'Unable to create clone resource from ' +
@@ -2179,8 +2246,8 @@ def resource_clone(params, request, auth_user)
   return 200
 end
 
-def resource_unclone(params, request, auth_user)
-  if not allowed_for_local_cluster(auth_user, Permissions::WRITE)
+def resource_unclone(params, request, session)
+  if not allowed_for_local_cluster(session, Permissions::WRITE)
     return 403, 'Permission denied'
   end
 
@@ -2189,7 +2256,7 @@ def resource_unclone(params, request, auth_user)
   end
 
   _, stderr, retval = run_cmd(
-    auth_user, PCS, 'resource', 'unclone', params[:resource_id]
+    session, PCS, 'resource', 'unclone', params[:resource_id]
   )
   if retval != 0
     return [400, 'Unable to unclone ' +
@@ -2199,8 +2266,8 @@ def resource_unclone(params, request, auth_user)
   return 200
 end
 
-def set_resource_utilization(params, reqest, auth_user)
-  unless allowed_for_local_cluster(auth_user, Permissions::WRITE)
+def set_resource_utilization(params, reqest, session)
+  unless allowed_for_local_cluster(session, Permissions::WRITE)
     return 403, 'Permission denied'
   end
 
@@ -2213,7 +2280,7 @@ def set_resource_utilization(params, reqest, auth_user)
   value = params[:value] || ''
 
   _, stderr, retval = run_cmd(
-    auth_user, PCS, 'resource', 'utilization', res_id, "#{name}=#{value}"
+    session, PCS, 'resource', 'utilization', res_id, "#{name}=#{value}"
   )
 
   if retval != 0
@@ -2224,8 +2291,8 @@ def set_resource_utilization(params, reqest, auth_user)
   return 200
 end
 
-def set_node_utilization(params, reqest, auth_user)
-  unless allowed_for_local_cluster(auth_user, Permissions::WRITE)
+def set_node_utilization(params, reqest, session)
+  unless allowed_for_local_cluster(session, Permissions::WRITE)
     return 403, 'Permission denied'
   end
 
@@ -2238,728 +2305,26 @@ def set_node_utilization(params, reqest, auth_user)
   value = params[:value] || ''
 
   _, stderr, retval = run_cmd(
-    auth_user, PCS, 'node', 'utilization', node, "#{name}=#{value}"
+    session, PCS, 'node', 'utilization', node, "#{name}=#{value}"
   )
 
   if retval != 0
     return [400, "Unable to set utilization '#{name}=#{value}' for node " +
-      "'#{node}': #{stderr.join('')}"
+      "'#{res_id}': #{stderr.join('')}"
     ]
   end
   return 200
 end
 
-def get_cluster_properties_definition(params, request, auth_user)
-  unless allowed_for_local_cluster(auth_user, Permissions::READ)
+def get_cluster_properties_definition(params, request, session)
+  unless allowed_for_local_cluster(session, Permissions::READ)
     return 403, 'Permission denied'
   end
   stdout, _, retval = run_cmd(
-    auth_user, PCS, 'property', 'get_cluster_properties_definition'
+    session, PCS, 'property', 'get_cluster_properties_definition'
   )
   if retval == 0
     return [200, stdout]
   end
   return [400, '{}']
-end
-
-def get_resource_agent_metadata(params, request, auth_user)
-  unless allowed_for_local_cluster(auth_user, Permissions::READ)
-    return 403, 'Permission denied'
-  end
-  agent = params[:resource_agent]
-  unless agent
-    return [400, 'Parameter "resource_agent" required.']
-  end
-  stdout, stderr, retval = run_cmd(
-    auth_user, PCS, 'resource', 'get_resource_agent_info', agent
-  )
-  if retval != 0
-    if stderr.join('').include?('is not supported')
-      return [200, JSON.generate({
-        :name => agent,
-        :longdesc => '',
-        :shortdesc => '',
-        :parameters => []
-      })]
-    else
-      return [400, stderr.join("\n")]
-    end
-  end
-  return [200, stdout.join("\n")]
-end
-
-def get_fence_agent_metadata(params, request, auth_user)
-  unless allowed_for_local_cluster(auth_user, Permissions::READ)
-    return 403, 'Permission denied'
-  end
-  agent = params[:fence_agent]
-  unless agent
-    return [400, 'Parameter "fence_agent" required.']
-  end
-  stdout, stderr, retval = run_cmd(
-    auth_user, PCS, 'stonith', 'get_fence_agent_info', agent
-  )
-  if retval != 0
-    return [400, stderr.join("\n")]
-  end
-  return [200, stdout.join("\n")]
-end
-
-def check_sbd(param, request, auth_user)
-  unless allowed_for_local_cluster(auth_user, Permissions::READ)
-    return 403, 'Permission denied'
-  end
-  out = {
-    :sbd => {
-      :installed => is_service_installed?(get_sbd_service_name()),
-      :enabled => is_service_enabled?(get_sbd_service_name()),
-      :running => is_service_running?(get_sbd_service_name())
-    }
-  }
-  watchdog = param[:watchdog]
-  if watchdog
-    out[:watchdog] = {
-      :path => watchdog,
-      :exist => File.exist?(watchdog)
-    }
-  end
-  return [200, JSON.generate(out)]
-end
-
-def set_sbd_config(param, request, auth_user)
-  unless allowed_for_local_cluster(auth_user, Permissions::WRITE)
-    return 403, 'Permission denied'
-  end
-  config = param[:config]
-  unless config
-    return [400, 'Parameter "config" required']
-  end
-
-  file = nil
-  begin
-    file = File.open(SBD_CONFIG, 'w')
-    file.flock(File::LOCK_EX)
-    file.write(config)
-  rescue => e
-    msg = "Unable to save SBD configuration: #{e}"
-    $logger.error(msg)
-    return [400, msg]
-  ensure
-    if file
-      file.flock(File::LOCK_UN)
-      file.close()
-    end
-  end
-  msg = 'SBD configuration saved.'
-  $logger.info(msg)
-  return [200, msg]
-end
-
-def get_sbd_config(param, request, auth_user)
-  unless allowed_for_local_cluster(auth_user, Permissions::READ)
-    return 403, 'Permission denied'
-  end
-  out = []
-  file = nil
-  begin
-    file = File.open(SBD_CONFIG, 'r')
-    file.flock(File::LOCK_SH)
-    out = file.readlines()
-  rescue => e
-    msg = "Unable to get SBD configuration: #{e}"
-    $logger.error(msg)
-    return [400, msg]
-  ensure
-    if file
-      file.flock(File::LOCK_UN)
-      file.close()
-    end
-  end
-  return [200, out.join('')]
-end
-
-def sbd_disable(param, request, auth_user)
-  unless allowed_for_local_cluster(auth_user, Permissions::WRITE)
-    return 403, 'Permission denied'
-  end
-  if disable_service(get_sbd_service_name())
-    msg = 'SBD disabled'
-    $logger.info(msg)
-    return [200, msg]
-  else
-    msg = 'Disabling SBD failed'
-    $logger.error(msg)
-    return [400, msg]
-  end
-end
-
-def sbd_enable(param, request, auth_user)
-  unless allowed_for_local_cluster(auth_user, Permissions::WRITE)
-    return 403, 'Permission denied'
-  end
-  if enable_service(get_sbd_service_name())
-    msg = 'SBD enabled'
-    $logger.info(msg)
-    return [200, msg]
-  else
-    msg = 'Enabling SBD failed'
-    $logger.error(msg)
-    return [400, msg]
-  end
-end
-
-def remove_stonith_watchdog_timeout(param, request, auth_user)
-  unless allowed_for_local_cluster(auth_user, Permissions::WRITE)
-    return 403, 'Permission denied'
-  end
-  if set_cluster_prop_force(auth_user, 'stonith-watchdog-timeout', '')
-    $logger.info('Cluster property "stonith-watchdog-timeout" removed')
-    return [200, 'OK']
-  else
-    $logger.info('Failed to remove cluster property "stonith-watchdog-timeout"')
-    return [400, 'ERROR']
-  end
-end
-
-def set_stonith_watchdog_timeout_to_zero(param, request, auth_user)
-  unless allowed_for_local_cluster(auth_user, Permissions::WRITE)
-    return 403, 'Permission denied'
-  end
-  if set_cluster_prop_force(auth_user, 'stonith-watchdog-timeout', '0')
-    $logger.info('Cluster property "stonith-watchdog-timeout" set to "0"')
-    return [200, 'OK']
-  else
-    $logger.info(
-      'Failed to set cluster property "stonith-watchdog-timeout"to 0'
-    )
-    return [400, 'ERROR']
-  end
-end
-
-def remote_enable_sbd(params, request, auth_user)
-  unless allowed_for_local_cluster(auth_user, Permissions::WRITE)
-    return 403, 'Permission denied'
-  end
-
-  arg_list = []
-
-  if ['true', '1', 'on'].include?(params[:ignore_offline_nodes])
-    arg_list << '--skip-offline'
-  end
-
-  params[:watchdog].each do |node, watchdog|
-    unless watchdog.strip.empty?
-      arg_list << "--watchdog=#{watchdog.strip}@#{node}"
-    end
-  end
-
-  params[:config].each do |option, value|
-    unless value.empty?
-      arg_list << "#{option}=#{value}"
-    end
-  end
-
-  _, stderr, retcode = run_cmd(
-    auth_user, PCS, 'stonith', 'sbd', 'enable', *arg_list
-  )
-
-  if retcode != 0
-    return [400, "Unable to enable sbd in cluster:\n#{stderr.join('')}"]
-  end
-
-  return [200, 'Sbd has been enabled.']
-end
-
-def remote_disable_sbd(params, request, auth_user)
-  unless allowed_for_local_cluster(auth_user, Permissions::WRITE)
-    return 403, 'Permission denied'
-  end
-
-  arg_list = []
-
-  if ['true', '1', 'on'].include?(params[:ignore_offline_nodes])
-    arg_list << '--skip-offline'
-  end
-
-  _, stderr, retcode = run_cmd(
-    auth_user, PCS, 'stonith', 'sbd', 'disable', *arg_list
-  )
-
-  if retcode != 0
-    return [400, "Unable to disable sbd in cluster:\n#{stderr.join('')}"]
-  end
-
-  return [200, 'Sbd has been disabled.']
-end
-
-def qdevice_net_get_ca_certificate(params, request, auth_user)
-  unless allowed_for_local_cluster(auth_user, Permissions::READ)
-    return 403, 'Permission denied'
-  end
-  begin
-    return [
-      200,
-      Base64.encode64(File.read(COROSYNC_QDEVICE_NET_SERVER_CA_FILE))
-    ]
-  rescue => e
-    return [400, "Unable to read certificate: #{e}"]
-  end
-end
-
-def qdevice_net_sign_node_certificate(params, request, auth_user)
-  unless allowed_for_local_cluster(auth_user, Permissions::READ)
-    return 403, 'Permission denied'
-  end
-  stdout, stderr, retval = run_cmd_options(
-    auth_user,
-    {'stdin' => params[:certificate_request]},
-    PCS, 'qdevice', 'sign-net-cert-request', '--name', params[:cluster_name]
-  )
-  if retval != 0
-    return [400, stderr.join('')]
-  end
-  return [200, stdout.join('')]
-end
-
-def qdevice_net_client_init_certificate_storage(params, request, auth_user)
-  # Last step of adding qdevice into a cluster is distribution of corosync.conf
-  # file with qdevice settings. This requires FULL permissions currently.
-  # If that gets relaxed, we can require lower permissions in here as well.
-  unless allowed_for_local_cluster(auth_user, Permissions::FULL)
-    return 403, 'Permission denied'
-  end
-  stdout, stderr, retval = run_cmd_options(
-    auth_user,
-    {'stdin' => params[:ca_certificate]},
-    PCS, 'qdevice', 'net-client', 'setup'
-  )
-  if retval != 0
-    return [400, stderr.join('')]
-  end
-  return [200, stdout.join('')]
-end
-
-def qdevice_net_client_import_certificate(params, request, auth_user)
-  # Last step of adding qdevice into a cluster is distribution of corosync.conf
-  # file with qdevice settings. This requires FULL permissions currently.
-  # If that gets relaxed, we can require lower permissions in here as well.
-  unless allowed_for_local_cluster(auth_user, Permissions::FULL)
-    return 403, 'Permission denied'
-  end
-  stdout, stderr, retval = run_cmd_options(
-    auth_user,
-    {'stdin' => params[:certificate]},
-    PCS, 'qdevice', 'net-client', 'import-certificate'
-  )
-  if retval != 0
-    return [400, stderr.join('')]
-  end
-  return [200, stdout.join('')]
-end
-
-def qdevice_net_client_destroy(param, request, auth_user)
-  # When removing a qdevice from a cluster, an updated corosync.conf file
-  # with removed qdevice settings is distributed. This requires FULL permissions
-  # currently. If that gets relaxed, we can require lower permissions in here
-  # as well.
-  unless allowed_for_local_cluster(auth_user, Permissions::FULL)
-    return 403, 'Permission denied'
-  end
-  stdout, stderr, retval = run_cmd(
-    auth_user,
-    PCS, 'qdevice', 'net-client', 'destroy'
-  )
-  if retval != 0
-    return [400, stderr.join('')]
-  end
-  return [200, stdout.join('')]
-end
-
-def qdevice_client_disable(param, request, auth_user)
-  unless allowed_for_local_cluster(auth_user, Permissions::WRITE)
-    return 403, 'Permission denied'
-  end
-  if disable_service('corosync-qdevice')
-    msg = 'corosync-qdevice disabled'
-    $logger.info(msg)
-    return [200, msg]
-  else
-    msg = 'Disabling corosync-qdevice failed'
-    $logger.error(msg)
-    return [400, msg]
-  end
-end
-
-def qdevice_client_enable(param, request, auth_user)
-  unless allowed_for_local_cluster(auth_user, Permissions::WRITE)
-    return 403, 'Permission denied'
-  end
-  if not is_service_enabled?('corosync')
-    msg = 'corosync is not enabled, skipping'
-    $logger.info(msg)
-    return [200, msg]
-  elsif enable_service('corosync-qdevice')
-    msg = 'corosync-qdevice enabled'
-    $logger.info(msg)
-    return [200, msg]
-  else
-    msg = 'Enabling corosync-qdevice failed'
-    $logger.error(msg)
-    return [400, msg]
-  end
-end
-
-def qdevice_client_stop(param, request, auth_user)
-  unless allowed_for_local_cluster(auth_user, Permissions::WRITE)
-    return 403, 'Permission denied'
-  end
-  if stop_service('corosync-qdevice')
-    msg = 'corosync-qdevice stopped'
-    $logger.info(msg)
-    return [200, msg]
-  else
-    msg = 'Stopping corosync-qdevice failed'
-    $logger.error(msg)
-    return [400, msg]
-  end
-end
-
-def qdevice_client_start(param, request, auth_user)
-  unless allowed_for_local_cluster(auth_user, Permissions::WRITE)
-    return 403, 'Permission denied'
-  end
-  if not is_service_running?('corosync')
-    msg = 'corosync is not running, skipping'
-    $logger.info(msg)
-    return [200, msg]
-  elsif start_service('corosync-qdevice')
-    msg = 'corosync-qdevice started'
-    $logger.info(msg)
-    return [200, msg]
-  else
-    msg = 'Starting corosync-qdevice failed'
-    $logger.error(msg)
-    return [400, msg]
-  end
-end
-
-def manage_resource(param, request, auth_user)
-  unless allowed_for_local_cluster(auth_user, Permissions::WRITE)
-    return 403, 'Permission denied'
-  end
-  unless param[:resource_list_json]
-    return [400, "Required parameter 'resource_list_json' is missing."]
-  end
-  begin
-    resource_list = JSON.parse(param[:resource_list_json])
-    _, err, retval = run_cmd(
-      auth_user, PCS, 'resource', 'manage', *resource_list
-    )
-    if retval != 0
-      return [400, err.join('')]
-    end
-    return [200, '']
-  rescue JSON::ParserError
-    return [400, 'Invalid input data format']
-  end
-end
-
-def unmanage_resource(param, request, auth_user)
-  unless allowed_for_local_cluster(auth_user, Permissions::WRITE)
-    return 403, 'Permission denied'
-  end
-  unless param[:resource_list_json]
-    return [400, "Required parameter 'resource_list_json' is missing."]
-  end
-  begin
-    resource_list = JSON.parse(param[:resource_list_json])
-    _, err, retval = run_cmd(
-      auth_user, PCS, 'resource', 'unmanage', *resource_list
-    )
-    if retval != 0
-      return [400, err.join('')]
-    end
-    return [200, '']
-  rescue JSON::ParserError
-    return [400, 'Invalid input data format']
-  end
-end
-
-def booth_set_config(params, request, auth_user)
-  unless allowed_for_local_cluster(auth_user, Permissions::WRITE)
-    return 403, 'Permission denied'
-  end
-  begin
-    unless params[:data_json]
-      return [400, "Missing required parameter 'data_json'"]
-    end
-    data = JSON.parse(params[:data_json], {:symbolize_names => true})
-  rescue JSON::ParserError
-    return [400, 'Invalid input data format']
-  end
-  config = data[:config]
-  authfile = data[:authfile]
-  return [400, 'Invalid input data format'] unless (
-    config and config[:name] and config[:data]
-  )
-  return [400, 'Invalid input data format'] if (
-    authfile and (not authfile[:name] or not authfile[:data])
-  )
-  begin
-    write_booth_config(config[:name], config[:data])
-    if authfile
-      write_booth_authfile(authfile[:name], authfile[:data])
-    end
-  rescue InvalidFileNameException => e
-    return [400, "Invalid format of config/key file name '#{e.message}'"]
-  rescue => e
-    msg = "Unable to save booth configuration: #{e.message}"
-    $logger.error(msg)
-    return [400, msg]
-  end
-  msg = 'Booth configuration saved.'
-  $logger.info(msg)
-  return [200, msg]
-end
-
-def booth_save_files(params, request, auth_user)
-  unless allowed_for_local_cluster(auth_user, Permissions::WRITE)
-    return 403, 'Permission denied'
-  end
-  begin
-    data = JSON.parse(params[:data_json], {:symbolize_names => true})
-    data.each { |file|
-      unless file[:name] and file[:data]
-        return [400, 'Invalid input data format']
-      end
-      if file[:name].include?('/')
-        return [400, "Invalid file name format '#{file[:name]}'"]
-      end
-    }
-  rescue JSON::ParserError, NoMethodError
-    return [400, 'Invalid input data format']
-  end
-  rewrite_existing = (
-  params.include?('rewrite_existing') || params.include?(:rewrite_existing)
-  )
-
-  conflict_files = []
-  data.each { |file|
-    next unless File.file?(File.join(BOOTH_CONFIG_DIR, file[:name]))
-    if file[:is_authfile]
-      cur_data = read_booth_authfile(file[:name])
-    else
-      cur_data = read_booth_config(file[:name])
-    end
-    if cur_data != file[:data]
-      conflict_files << file[:name]
-    end
-  }
-
-  write_failed = {}
-  saved_files = []
-  data.each { |file|
-    next if conflict_files.include?(file[:name]) and not rewrite_existing
-    begin
-      if file[:is_authfile]
-        write_booth_authfile(file[:name], file[:data])
-      else
-        write_booth_config(file[:name], file[:data])
-      end
-      saved_files << file[:name]
-    rescue => e
-      msg = "Unable to save file (#{file[:name]}): #{e.message}"
-      $logger.error(msg)
-      write_failed[file[:name]] = e
-    end
-  }
-  return [200, JSON.generate({
-    :existing => conflict_files,
-    :saved => saved_files,
-    :failed => write_failed
-  })]
-end
-
-def booth_get_config(params, request, auth_user)
-  unless allowed_for_local_cluster(auth_user, Permissions::READ)
-    return 403, 'Permission denied'
-  end
-  name = params[:name]
-  if name
-    config_file_name = "#{name}.conf"
-  else
-    config_file_name = 'booth.conf'
-  end
-  if config_file_name.include?('/')
-    return [400, 'Invalid name of booth configuration']
-  end
-  begin
-    config_data = read_booth_config(config_file_name)
-    unless config_data
-      return [400, "Config doesn't exist"]
-    end
-    authfile_name = nil
-    authfile_data = nil
-    authfile_path = get_authfile_from_booth_config(config_data)
-    if authfile_path
-      if File.dirname(authfile_path) != BOOTH_CONFIG_DIR
-        return [
-          400, "Authfile of specified config is not in '#{BOOTH_CONFIG_DIR}'"
-        ]
-      end
-      authfile_name = File.basename(authfile_path)
-      authfile_data = read_booth_authfile(authfile_name)
-    end
-    return [200, JSON.generate({
-      :config => {
-        :name => config_file_name,
-        :data => config_data
-      },
-      :authfile => {
-        :name => authfile_name,
-        :data => authfile_data
-      }
-    })]
-  rescue => e
-    return [400, "Unable to read booth config/key file: #{e.message}"]
-  end
-end
-
-def _hash_to_argument_list(hash)
-  result = []
-  if hash.kind_of?(Hash)
-    hash.each {|key, value|
-      value = '' if value.nil?
-      result << "#{key}=#{value}"
-    }
-  end
-  return result
-end
-
-def create_alert(params, request, auth_user)
-  unless allowed_for_local_cluster(auth_user, Permissions::WRITE)
-    return 403, 'Permission denied'
-  end
-  path = params[:path]
-  unless path
-    return [400, 'Missing required parameter: path']
-  end
-  alert_id = params[:alert_id]
-  description = params[:description]
-  meta_attr_list = _hash_to_argument_list(params[:meta_attr])
-  instance_attr_list = _hash_to_argument_list(params[:instance_attr])
-  cmd = [PCS, 'alert', 'create', "path=#{path}"]
-  cmd << "id=#{alert_id}" if alert_id and alert_id != ''
-  cmd << "description=#{description}" if description and description != ''
-  cmd += ['options', *instance_attr_list] if instance_attr_list.any?
-  cmd += ['meta', *meta_attr_list] if meta_attr_list.any?
-  output, stderr, retval = run_cmd(auth_user, *cmd)
-  if retval != 0
-    return [400, "Unable to create alert: #{stderr.join("\n")}"]
-  end
-  return [200, 'Alert created']
-end
-
-def update_alert(params, request, auth_user)
-  unless allowed_for_local_cluster(auth_user, Permissions::WRITE)
-    return 403, 'Permission denied'
-  end
-  alert_id = params[:alert_id]
-  unless alert_id
-    return [400, 'Missing required parameter: alert_id']
-  end
-  path = params[:path]
-  description = params[:description]
-  meta_attr_list = _hash_to_argument_list(params[:meta_attr])
-  instance_attr_list = _hash_to_argument_list(params[:instance_attr])
-  cmd = [PCS, 'alert', 'update', alert_id]
-  cmd << "path=#{path}" if path
-  cmd << "description=#{description}" if description
-  cmd += ['options', *instance_attr_list] if instance_attr_list.any?
-  cmd += ['meta', *meta_attr_list] if meta_attr_list.any?
-  output, stderr, retval = run_cmd(auth_user, *cmd)
-  if retval != 0
-    return [400, "Unable to update alert: #{stderr.join("\n")}"]
-  end
-  return [200, 'Alert updated']
-end
-
-def remove_alerts_and_recipients(params, request, auth_user)
-  unless allowed_for_local_cluster(auth_user, Permissions::WRITE)
-    return 403, 'Permission denied'
-  end
-  alert_list = params[:alert_list]
-  recipient_list = params[:recipient_list]
-  if recipient_list.kind_of?(Array) and recipient_list.any?
-    output, stderr, retval = run_cmd(
-      auth_user, PCS, 'alert', 'recipient', 'remove', *recipient_list
-    )
-    if retval != 0
-      return [400, "Unable to remove recipients: #{stderr.join("\n")}"]
-    end
-  end
-  if alert_list.kind_of?(Array) and alert_list.any?
-    output, stderr, retval = run_cmd(
-      auth_user, PCS, 'alert', 'remove', *alert_list
-    )
-    if retval != 0
-      return [400, "Unable to remove alerts: #{stderr.join("\n")}"]
-    end
-  end
-  return [200, 'All removed']
-end
-
-def create_recipient(params, request, auth_user)
-  unless allowed_for_local_cluster(auth_user, Permissions::WRITE)
-    return 403, 'Permission denied'
-  end
-  alert_id = params[:alert_id]
-  if not alert_id or alert_id.strip! == ''
-    return [400, 'Missing required paramter: alert_id']
-  end
-  value = params[:value]
-  if not value or value == ''
-    return [400, 'Missing required paramter: value']
-  end
-  recipient_id = params[:recipient_id]
-  description = params[:description]
-  meta_attr_list = _hash_to_argument_list(params[:meta_attr])
-  instance_attr_list = _hash_to_argument_list(params[:instance_attr])
-  cmd = [PCS, 'alert', 'recipient', 'add', alert_id, "value=#{value}"]
-  cmd << "id=#{recipient_id}" if recipient_id and recipient_id != ''
-  cmd << "description=#{description}" if description and description != ''
-  cmd += ['options', *instance_attr_list] if instance_attr_list.any?
-  cmd += ['meta', *meta_attr_list] if meta_attr_list.any?
-  output, stderr, retval = run_cmd(auth_user, *cmd)
-  if retval != 0
-    return [400, "Unable to create recipient: #{stderr.join("\n")}"]
-  end
-  return [200, 'Recipient created']
-end
-
-def update_recipient(params, request, auth_user)
-  unless allowed_for_local_cluster(auth_user, Permissions::WRITE)
-    return 403, 'Permission denied'
-  end
-  recipient_id = params[:recipient_id]
-  if not recipient_id or recipient_id.strip! == ''
-    return [400, 'Missing required paramter: recipient_id']
-  end
-  value = params[:value]
-  if value and value.strip! == ''
-    return [400, 'Parameter value canot be empty string']
-  end
-  description = params[:description]
-  meta_attr_list = _hash_to_argument_list(params[:meta_attr])
-  instance_attr_list = _hash_to_argument_list(params[:instance_attr])
-  cmd = [PCS, 'alert', 'recipient', 'update', recipient_id]
-  cmd << "value=#{value}" if value
-  cmd << "description=#{description}" if description
-  cmd += ['options', *instance_attr_list] if instance_attr_list.any?
-  cmd += ['meta', *meta_attr_list] if meta_attr_list.any?
-  output, stderr, retval = run_cmd(auth_user, *cmd)
-  if retval != 0
-    return [400, "Unable to update recipient: #{stderr.join("\n")}"]
-  end
-  return [200, 'Recipient updated']
 end

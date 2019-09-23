@@ -1,44 +1,27 @@
-from __future__ import (
-    absolute_import,
-    division,
-    print_function,
-    unicode_literals,
-)
+from __future__ import absolute_import
+from __future__ import division
+from __future__ import print_function
+from __future__ import unicode_literals
 
 import sys
 import xml.dom.minidom
-from collections import defaultdict
 from xml.dom.minidom import parseString
+from collections import defaultdict
 
-import pcs.cli.constraint_colocation.command as colocation_command
-import pcs.cli.constraint_order.command as order_command
-from pcs import (
-    rule as rule_utils,
-    usage,
-    utils,
-)
-from pcs.cli import (
-    constraint_colocation,
-    constraint_order,
-)
-from pcs.cli.constraint_ticket import command as ticket_command
-from pcs.cli.common.errors import CmdLineInputError
-from pcs.lib.cib.constraint import resource_set
-from pcs.lib.cib.constraint.order import ATTRIB as order_attrib
-from pcs.lib.errors import LibraryError
+import usage
+import utils
+import resource
+import rule as rule_utils
 
 
-OPTIONS_ACTION = resource_set.ATTRIB["action"]
-
+OPTIONS_ACTION = ("start", "promote", "demote", "stop")
 DEFAULT_ACTION = "start"
+OPTIONS_ROLE = ("Stopped", "Started", "Master", "Slave")
 DEFAULT_ROLE = "Started"
-
-OPTIONS_SYMMETRICAL = order_attrib["symmetrical"]
-OPTIONS_KIND = order_attrib["kind"]
+OPTIONS_KIND = ("Optional", "Mandatory", "Serialize")
+OPTIONS_SYMMETRICAL = ("true", "false")
 
 def constraint_cmd(argv):
-    lib = utils.get_library_wrapper()
-    modificators = utils.get_modificators()
     if len(argv) == 0:
         argv = ["list"]
 
@@ -72,38 +55,13 @@ def constraint_cmd(argv):
             sub_cmd2 = argv.pop(0)
 
         if (sub_cmd2 == "set"):
-            try:
-                order_command.create_with_set(lib, argv, modificators)
-            except CmdLineInputError as e:
-                utils.exit_on_cmdline_input_errror(e, "constraint", 'order set')
-            except LibraryError as e:
-                utils.process_library_reports(e.args)
+            order_set(argv)
         elif (sub_cmd2 in ["remove","delete"]):
             order_rm(argv)
         elif (sub_cmd2 == "show"):
-            order_command.show(lib, argv, modificators)
+            order_show(argv)
         else:
             order_start([sub_cmd2] + argv)
-    elif sub_cmd == "ticket":
-        usage_name = "ticket"
-        try:
-            command_map = {
-                "set": ticket_command.create_with_set,
-                "add": ticket_command.add,
-                "remove": ticket_command.remove,
-                "show": ticket_command.show,
-            }
-            sub_command = argv[0] if argv else "show"
-            if sub_command not in command_map:
-                raise CmdLineInputError()
-            usage_name = "ticket "+sub_command
-
-            command_map[sub_command](lib, argv[1:], modificators)
-        except LibraryError as e:
-            utils.process_library_reports(e.args)
-        except CmdLineInputError as e:
-            utils.exit_on_cmdline_input_errror(e, "constraint", usage_name)
-
     elif (sub_cmd == "colocation"):
         if (len(argv) == 0):
             sub_cmd2 = "show"
@@ -115,15 +73,9 @@ def constraint_cmd(argv):
         elif (sub_cmd2 in ["remove","delete"]):
             colocation_rm(argv)
         elif (sub_cmd2 == "set"):
-            try:
-
-                colocation_command.create_with_set(lib, argv, modificators)
-            except LibraryError as e:
-                utils.process_library_reports(e.args)
-            except CmdLineInputError as e:
-                utils.exit_on_cmdline_input_errror(e, "constraint", "colocation set")
+            colocation_set(argv)
         elif (sub_cmd2 == "show"):
-            colocation_command.show(lib, argv, modificators)
+            colocation_show(argv)
         else:
             usage.constraint()
             sys.exit(1)
@@ -131,9 +83,8 @@ def constraint_cmd(argv):
         constraint_rm(argv)
     elif (sub_cmd == "show" or sub_cmd == "list"):
         location_show(argv)
-        order_command.show(lib, argv, modificators)
-        colocation_command.show(lib, argv, modificators)
-        ticket_command.show(lib, argv, modificators)
+        order_show(argv)
+        colocation_show(argv)
     elif (sub_cmd == "ref"):
         constraint_ref(argv)
     elif (sub_cmd == "rule"):
@@ -142,7 +93,39 @@ def constraint_cmd(argv):
         usage.constraint()
         sys.exit(1)
 
+def colocation_show(argv):
+    if "--full" in utils.pcs_options:
+        showDetail = True
+    else:
+        showDetail = False
 
+    (dom,constraintsElement) = getCurrentConstraints()
+
+    resource_colocation_sets = []
+    print("Colocation Constraints:")
+    for co_loc in constraintsElement.getElementsByTagName('rsc_colocation'):
+        if not co_loc.getAttribute("rsc"):
+            resource_colocation_sets.append(co_loc)
+        else:
+            print("  " + colocation_el_to_string(co_loc, showDetail))
+    print_sets(resource_colocation_sets, showDetail)
+
+def colocation_el_to_string(co_loc, showDetail=False):
+    co_resource1 = co_loc.getAttribute("rsc")
+    co_resource2 = co_loc.getAttribute("with-rsc")
+    co_id = co_loc.getAttribute("id")
+    co_score = co_loc.getAttribute("score")
+    score_text = "(score:" + co_score + ")"
+    attrs_list = [
+        "(%s:%s)" % (attr[0], attr[1])
+        for attr in co_loc.attributes.items()
+        if attr[0] not in ("rsc", "with-rsc", "id", "score")
+    ]
+    if showDetail:
+        attrs_list.append("(id:%s)" % co_id)
+    return " ".join(
+        [co_resource1, "with", co_resource2, score_text] + attrs_list
+    )
 
 def colocation_rm(argv):
     elementFound = False
@@ -268,6 +251,7 @@ def colocation_add(argv):
         role2 = DEFAULT_ROLE
     if role2 != "" and role1 == "":
         role1 = DEFAULT_ROLE
+
     element = dom.createElement("rsc_colocation")
     element.setAttribute("rsc",resource1)
     element.setAttribute("with-rsc",resource2)
@@ -284,10 +268,7 @@ def colocation_add(argv):
             utils.err(
                 "duplicate constraint already exists, use --force to override\n"
                 + "\n".join([
-                    "  " + constraint_colocation.console_report.constraint_plain(
-                            {"options": dict(dup.attributes.items())},
-                            True
-                        )
+                    "  " + colocation_el_to_string(dup, True)
                     for dup in duplicates
                 ])
             )
@@ -311,6 +292,308 @@ def colocation_find_duplicates(dom, constraint_el):
             and constraint_el is not other_el
             and normalized_el == normalize(other_el)
     ]
+
+def colocation_set(argv):
+    setoptions = []
+    for i in range(len(argv)):
+        if argv[i] == "setoptions":
+            setoptions = argv[i+1:]
+            argv[i:] = []
+            break
+
+    argv.insert(0, "set")
+    resource_sets = set_args_into_array(argv)
+    if not check_empty_resource_sets(resource_sets):
+        usage.constraint(["colocation set"])
+        sys.exit(1)
+    cib, constraints = getCurrentConstraints(utils.get_cib_dom())
+
+    attributes = []
+    score_options = ("score", "score-attribute", "score-attribute-mangle")
+    score_specified = False
+    id_specified = False
+    for opt in setoptions:
+        if "=" not in opt:
+            utils.err("missing value of '%s' option" % opt)
+        name, value = opt.split("=", 1)
+        if name == "id":
+            id_valid, id_error = utils.validate_xml_id(value, 'constraint id')
+            if not id_valid:
+                utils.err(id_error)
+            if utils.does_id_exist(cib, value):
+                utils.err(
+                    "id '%s' is already in use, please specify another one"
+                    % value
+                )
+            id_specified = True
+            attributes.append((name, value))
+        elif name in score_options:
+            if score_specified:
+                utils.err("you cannot specify multiple score options")
+            if name == "score" and not utils.is_score(value):
+                utils.err(
+                    "invalid score '%s', use integer or INFINITY or -INFINITY"
+                    % value
+                )
+            score_specified = True
+            attributes.append((name, value))
+        else:
+            utils.err(
+                "invalid option '%s', allowed options are: %s"
+                % (name, ", ".join(score_options + ("id",)))
+            )
+
+    if not score_specified:
+        attributes.append(("score", "INFINITY"))
+    if not id_specified:
+        colocation_id = "pcs_rsc_colocation"
+        for a in argv:
+            if "=" not in a:
+                colocation_id += "_" + a
+        attributes.append(("id", utils.find_unique_id(cib, colocation_id)))
+
+    rsc_colocation = cib.createElement("rsc_colocation")
+    for name, value in attributes:
+        rsc_colocation.setAttribute(name, value)
+    set_add_resource_sets(rsc_colocation, resource_sets, cib)
+    constraints.appendChild(rsc_colocation)
+    utils.replace_cib_configuration(cib)
+
+def order_show(argv):
+    if "--full" in utils.pcs_options:
+        showDetail = True
+    else:
+        showDetail = False
+
+    (dom,constraintsElement) = getCurrentConstraints()
+
+    resource_order_sets = []
+    print("Ordering Constraints:")
+    for ord_loc in constraintsElement.getElementsByTagName('rsc_order'):
+        if not ord_loc.getAttribute("first"):
+            resource_order_sets.append(ord_loc)
+        else:
+            print("  " + order_el_to_string(ord_loc, showDetail))
+    print_sets(resource_order_sets,showDetail)
+
+def order_el_to_string(ord_loc, showDetail=False):
+    oc_resource1 = ord_loc.getAttribute("first")
+    oc_resource2 = ord_loc.getAttribute("then")
+    first_action = ord_loc.getAttribute("first-action")
+    then_action = ord_loc.getAttribute("then-action")
+    oc_id = ord_loc.getAttribute("id")
+    oc_score = ord_loc.getAttribute("score")
+    oc_kind = ord_loc.getAttribute("kind")
+    oc_sym = ""
+    oc_id_out = ""
+    oc_options = ""
+    if (
+        ord_loc.getAttribute("symmetrical")
+        and
+        not utils.is_cib_true(ord_loc.getAttribute("symmetrical"))
+    ):
+        oc_sym = "(non-symmetrical)"
+    if oc_kind != "":
+        score_text = "(kind:" + oc_kind + ")"
+    elif oc_kind == "" and oc_score == "":
+        score_text = "(kind:Mandatory)"
+    else:
+        score_text = "(score:" + oc_score + ")"
+    if showDetail:
+        oc_id_out = "(id:"+oc_id+")"
+    already_processed_attrs = (
+        "first", "then", "first-action", "then-action", "id", "score", "kind",
+        "symmetrical"
+    )
+    oc_options = " ".join([
+        "{0}={1}".format(name, value)
+        for name, value in ord_loc.attributes.items()
+        if name not in already_processed_attrs
+    ])
+    if oc_options:
+        oc_options = "(Options: " + oc_options + ")"
+    return " ".join([arg for arg in [
+        first_action, oc_resource1, "then", then_action, oc_resource2,
+        score_text, oc_sym, oc_options, oc_id_out
+    ] if arg])
+
+def print_sets(sets,showDetail):
+    if len(sets) != 0:
+        print("  Resource Sets:")
+        for ro in sets:
+            print("    " + set_constraint_el_to_string(ro, showDetail))
+
+def set_constraint_el_to_string(constraint_el, showDetail=False):
+    set_list = []
+    for set_el in constraint_el.getElementsByTagName("resource_set"):
+        set_list.append("set " + " ".join(
+            [
+                res_el.getAttribute("id")
+                for res_el in set_el.getElementsByTagName("resource_ref")
+            ]
+            +
+            utils.dom_attrs_to_list(set_el, showDetail)
+        ))
+    constraint_opts = utils.dom_attrs_to_list(constraint_el, False)
+    if constraint_opts:
+        constraint_opts.insert(0, "setoptions")
+    if showDetail:
+        constraint_opts.append("(id:%s)" % constraint_el.getAttribute("id"))
+    return " ".join(set_list + constraint_opts)
+
+def set_args_into_array(argv):
+    all_sets = []
+    current_set = None
+    for elem in argv:
+        if "set" == elem:
+            if current_set is not None:
+                all_sets.append(current_set)
+            current_set = []
+        else:
+            current_set.append(elem)
+    if current_set is not None:
+        all_sets.append(current_set)
+    return all_sets
+
+def check_empty_resource_sets(sets):
+    if not sets:
+        return False
+    return all(sets)
+
+def set_add_resource_sets(elem, sets, cib):
+    allowed_options = {
+        "sequential": ("true", "false"),
+        "require-all": ("true", "false"),
+        "action" : OPTIONS_ACTION,
+        "role" : OPTIONS_ROLE,
+    }
+
+    for o_set in sets:
+        set_id = "pcs_rsc_set"
+        res_set = cib.createElement("resource_set")
+        elem.appendChild(res_set)
+        for opts in o_set:
+            if opts.find("=") != -1:
+                key,val = opts.split("=")
+                if key not in allowed_options:
+                    utils.err(
+                        "invalid option '%s', allowed options are: %s"
+                        % (key, ", ".join(allowed_options.keys()))
+                    )
+                if val not in allowed_options[key]:
+                    utils.err(
+                        "invalid value '%s' of option '%s', allowed values are: %s"
+                        % (val, key, ", ".join(allowed_options[key]))
+                    )
+                res_set.setAttribute(key, val)
+            else:
+                res_valid, res_error, correct_id \
+                    = utils.validate_constraint_resource(cib, opts)
+                if "--autocorrect" in utils.pcs_options and correct_id:
+                    opts = correct_id
+                elif not res_valid:
+                    utils.err(res_error)
+                se = cib.createElement("resource_ref")
+                res_set.appendChild(se)
+                se.setAttribute("id", opts)
+                set_id = set_id + "_" + opts
+        res_set.setAttribute("id", utils.find_unique_id(cib, set_id))
+    if "--force" not in utils.pcs_options:
+        duplicates = set_constraint_find_duplicates(cib, elem)
+        if duplicates:
+            utils.err(
+                "duplicate constraint already exists, use --force to override\n"
+                + "\n".join([
+                    "  " + set_constraint_el_to_string(dup, True)
+                    for dup in duplicates
+                ])
+            )
+
+def set_constraint_find_duplicates(dom, constraint_el):
+    def normalize(constraint_el):
+        return [
+            [
+                ref_el.getAttribute("id")
+                for ref_el in set_el.getElementsByTagName("resource_ref")
+            ]
+            for set_el in constraint_el.getElementsByTagName("resource_set")
+        ]
+
+    normalized_el = normalize(constraint_el)
+    return [
+        other_el
+        for other_el in dom.getElementsByTagName(constraint_el.tagName)
+        if other_el.getElementsByTagName("resource_set")
+            and constraint_el is not other_el
+            and normalized_el == normalize(other_el)
+    ]
+
+def order_set(argv):
+    setoptions = []
+    for i in range(len(argv)):
+        if argv[i] == "setoptions":
+            setoptions = argv[i+1:]
+            argv[i:] = []
+            break
+
+    argv.insert(0, "set")
+    resource_sets = set_args_into_array(argv)
+    if not check_empty_resource_sets(resource_sets):
+        usage.constraint(["order set"])
+        sys.exit(1)
+    cib, constraints = getCurrentConstraints(utils.get_cib_dom())
+
+    attributes = []
+    id_specified = False
+    for opt in setoptions:
+        if "=" not in opt:
+            utils.err("missing value of '%s' option" % opt)
+        name, value = opt.split("=", 1)
+        if name == "id":
+            id_valid, id_error = utils.validate_xml_id(value, 'constraint id')
+            if not id_valid:
+                utils.err(id_error)
+            if utils.does_id_exist(cib, value):
+                utils.err(
+                    "id '%s' is already in use, please specify another one"
+                    % value
+                )
+            id_specified = True
+            attributes.append((name, value))
+        elif name == "kind":
+            normalized_value = value.lower().capitalize()
+            if normalized_value not in OPTIONS_KIND:
+                utils.err(
+                    "invalid kind value '%s', allowed values are: %s"
+                    % (value, ", ".join(OPTIONS_KIND))
+                )
+            attributes.append((name, normalized_value))
+        elif name == "symmetrical":
+            if value.lower() not in OPTIONS_SYMMETRICAL:
+                utils.err(
+                    "invalid symmetrical value '%s', allowed values are: %s"
+                    % (value, ", ".join(OPTIONS_SYMMETRICAL))
+                )
+            attributes.append((name, value.lower()))
+        else:
+            utils.err(
+                "invalid option '%s', allowed options are: %s"
+                % (name, "kind, symmetrical, id")
+            )
+
+    if not id_specified:
+        order_id = "pcs_rsc_order"
+        for a in argv:
+            if "=" not in a:
+                order_id += "_" + a
+        attributes.append(("id", utils.find_unique_id(cib, order_id)))
+
+    rsc_order = cib.createElement("rsc_order")
+    for name, value in attributes:
+        rsc_order.setAttribute(name, value)
+    set_add_resource_sets(rsc_order, resource_sets, cib)
+    constraints.appendChild(rsc_order)
+    utils.replace_cib_configuration(cib)
 
 def order_rm(argv):
     if len(argv) == 0:
@@ -356,22 +639,22 @@ def order_start(argv):
     then_action = DEFAULT_ACTION
     action = argv[0]
     if action in OPTIONS_ACTION:
-        first_action = action
-        argv.pop(0)
+            first_action = action
+            argv.pop(0)
 
     resource1 = argv.pop(0)
     if argv.pop(0) != "then":
         usage.constraint()
         sys.exit(1)
-
+    
     if len(argv) == 0:
         usage.constraint()
         sys.exit(1)
 
     action = argv[0]
     if action in OPTIONS_ACTION:
-        then_action = action
-        argv.pop(0)
+            then_action = action
+            argv.pop(0)
 
     if len(argv) == 0:
         usage.constraint()
@@ -480,10 +763,7 @@ def order_add(argv,returnElementOnly=False):
             utils.err(
                 "duplicate constraint already exists, use --force to override\n"
                 + "\n".join([
-                    "  " + constraint_order.console_report.constraint_plain(
-                            {"options": dict(dup.attributes.items())},
-                            True
-                        ) for dup in duplicates
+                    "  " + order_el_to_string(dup, True) for dup in duplicates
                 ])
             )
     print(
@@ -530,7 +810,7 @@ def location_show(argv):
     else:
         valid_noderes = []
 
-    (dummy_dom,constraintsElement) = getCurrentConstraints()
+    (dom,constraintsElement) = getCurrentConstraints()
     nodehashon = {}
     nodehashoff = {}
     rschashon = {}
@@ -555,7 +835,7 @@ def location_show(argv):
 # NEED TO FIX FOR GROUP LOCATION CONSTRAINTS (where there are children of
 # rsc_location)
         if lc_score == "":
-            lc_score = "0"
+            lc_score = "0";
 
         if lc_score == "INFINITY":
             positive = True
@@ -594,7 +874,7 @@ def location_show(argv):
             print("  Node: " + node)
 
             nodehash_label = (
-                (nodehashon, "    Allowed to run:"),
+                (nodehashon, "    Allowed to run:")
                 (nodehashoff, "    Not allowed to run:")
             )
             for nodehash, label in nodehash_label:
@@ -660,7 +940,7 @@ def show_location_rules(ruleshash,showDetail,noheader=False):
             if rule.parentNode.getAttribute("resource-discovery"):
                 constraint_options[constraint_id].append("resource-discovery=%s" % rule.parentNode.getAttribute("resource-discovery"))
 
-        for constraint_id in sorted(constrainthash.keys()):
+        for constraint_id in constrainthash.keys():
             if constraint_id in constraint_options and len(constraint_options[constraint_id]) > 0:
                 constraint_option_info = " (" + " ".join(constraint_options[constraint_id]) + ")"
             else:
@@ -704,10 +984,10 @@ def location_prefer(argv):
                     score = "-" + score
             node = nodeconf_a[0]
         location_add(["location-" +rsc+"-"+node+"-"+score,rsc,node,score])
-
+        
 
 def location_add(argv,rm=False):
-    if len(argv) < 4 and (rm == False or len(argv) < 1):
+    if len(argv) < 4 and (rm == False or len(argv) < 1): 
         usage.constraint()
         sys.exit(1)
 
@@ -784,7 +1064,7 @@ def location_rule(argv):
     if len(argv) < 3:
         usage.constraint(["location", "rule"])
         sys.exit(1)
-
+    
     res_name = argv.pop(0)
     resource_valid, resource_error, correct_id \
         = utils.validate_constraint_resource(utils.get_cib_dom(), res_name)
@@ -906,7 +1186,7 @@ def constraint_rm(argv,returnStatus=False, constraintsElement=None, passed_dom=N
         use_cibadmin = True
     else:
         use_cibadmin = False
-
+        
     for co in constraintsElement.childNodes[:]:
         if co.nodeType != xml.dom.Node.ELEMENT_NODE:
             continue
@@ -950,7 +1230,7 @@ def constraint_ref(argv):
         else:
             for constraint in constraints:
                 print("  " + constraint)
-            for constraint in sorted(set_constraints):
+            for constraint in set_constraints:
                 print("  " + constraint)
 
 def remove_constraints_containing(resource_id,output=False,constraints_element = None, passed_dom=None):
@@ -1013,7 +1293,6 @@ def find_constraints_containing(resource_id, passed_dom=None):
     myConstraints = constraints.getElementsByTagName("rsc_colocation")
     myConstraints += constraints.getElementsByTagName("rsc_location")
     myConstraints += constraints.getElementsByTagName("rsc_order")
-    myConstraints += constraints.getElementsByTagName("rsc_ticket")
     attr_to_match = ["rsc", "first", "then", "with-rsc", "first", "then"]
     for c in myConstraints:
         for attr in attr_to_match:
@@ -1080,6 +1359,7 @@ def constraint_rule(argv):
 
 
     constraint_id = None
+    rule_id = None
 
     if command == "add":
         constraint_id = argv.pop(0)
@@ -1102,6 +1382,7 @@ def constraint_rule(argv):
         constraints = cib.find('.//constraints')
         loc_cons = cib.findall(str('.//rsc_location'))
 
+        rules = cib.findall(str('.//rule'))
         for loc_con in loc_cons:
             for rule in loc_con:
                 if rule.get("id") == temp_id:

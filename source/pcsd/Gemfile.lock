@@ -2,9 +2,12 @@ GEM
   remote: https://rubygems.org/
   remote: https://tojeline.fedorapeople.org/rubygems/
   specs:
-    backports (3.6.8)
+    backports (3.6.4)
+    eventmachine (1.0.7)
     json (1.8.3)
-    multi_json (1.12.0)
+    monkey-lib (0.5.4)
+      backports
+    multi_json (1.11.1)
     open4 (1.3.4)
     orderedhash (0.0.6)
     rack (1.6.4)
@@ -13,25 +16,30 @@ GEM
     rack-test (0.6.3)
       rack (>= 1.0)
     rpam-ruby19 (1.2.1)
-    sinatra (1.4.7)
+    sinatra (1.4.6)
       rack (~> 1.4)
       rack-protection (~> 1.4)
       tilt (>= 1.3, < 3)
-    sinatra-contrib (1.4.7)
+    sinatra-contrib (1.4.4)
       backports (>= 2.0)
       multi_json
       rack-protection
       rack-test
       sinatra (~> 1.4.0)
       tilt (>= 1.3, < 3)
-    tilt (2.0.3)
+    sinatra-sugar (0.5.1)
+      monkey-lib (~> 0.5.0)
+      sinatra (~> 1.0)
+    tilt (1.4.1)
 
 PLATFORMS
   ruby
 
 DEPENDENCIES
   backports
+  eventmachine
   json
+  monkey-lib
   multi_json
   open4
   orderedhash
@@ -41,4 +49,5 @@ DEPENDENCIES
   rpam-ruby19
   sinatra
   sinatra-contrib
+  sinatra-sugar
   tilt
