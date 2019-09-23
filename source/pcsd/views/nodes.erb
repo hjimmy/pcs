@@ -1,6 +1,6 @@
   <table id="main">
     <tr id="node_title_row" {{bind-attr style="Pcs.node_page"}}><td id="page_header" colspan=3>
-	NODES
+	主机
       </td>
     </tr>
     <tr id="node_header_row" {{bind-attr style="Pcs.node_page"}}>
@@ -9,13 +9,13 @@
 	  <input type="checkbox" onchange="checkBoxToggle($(this), true);">
 	</div>
 	<div id="no_coro_support">
-	  <div class="x sprites"></div><div class="link" onclick="verify_remove_nodes(); return false;">&nbsp;Remove&nbsp;&nbsp;&nbsp;&nbsp;</div>
-	  <div class="plus sprites"></div><div class="link" onclick="add_node_dialog(); return false;">&nbsp;Add</div>
+	  <div class="x sprites"></div><div class="link" onclick="verify_remove_nodes(); return false;">&nbsp;删除&nbsp;&nbsp;&nbsp;&nbsp;</div>
+	  <div class="plus sprites"></div><div class="link" onclick="add_node_dialog(); return false;">&nbsp;添加</div>
 	</div>
       </td>
       <td class="borderbottom">&nbsp;</td>
       <td id="tab_name" width="85">
-	<div style="float: left">&nbsp;Edit Node&nbsp;</div><div class="check sprites"></div>
+	<div style="float: left">&nbsp;编辑主机&nbsp;</div><div class="check sprites"></div>
       </td>
     </tr>
     <tr id="node_list_row" {{bind-attr style="Pcs.node_page"}}>

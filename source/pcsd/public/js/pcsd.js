@@ -1,4 +1,6 @@
 var pcs_timeout = 30000;
+var login_dialog_opened = false;
+var ajax_queue = Array();
 
 function curResource() {
   var obj = Pcs.resourcesContainer.get('cur_resource');
@@ -94,50 +96,76 @@ function select_menu(menu, item, initial) {
 }
 
 function create_group() {
-  var num_nodes = 0;
-  var node_names = "";
-  $("#resource_list :checked").parent().parent().each(function (index,element) {
-    if (element.getAttribute("nodeID")) {
-      num_nodes++;
-      node_names += element.getAttribute("nodeID") + " "
-    }
-  });
-
-  if (num_nodes == 0) {
+  var resource_list = get_checked_ids_from_nodelist("resource_list");
+  if (resource_list.length == 0) {
     alert("You must select at least one resource to add to a group");
     return;
   }
-
-  $("#resources_to_add_to_group").val(node_names);
+  var not_primitives = resource_list.filter(function(resource_id) {
+    var resource_obj = Pcs.resourcesContainer.get_resource_by_id(resource_id);
+    return !(resource_obj && resource_obj.get("is_primitive"));
+  });
+  if (not_primitives.length != 0) {
+    alert("Members of group have to be primitive resources. These resources" +
+      " are not primitives: " + not_primitives.join(", "));
+    return;
+  }
+  var order_el = $("#new_group_resource_list tbody");
+  order_el.empty();
+  order_el.append(resource_list.map(function (item) {
+    return `<tr value="${item}" class="cursor-move"><td>${item}</td></tr>`;
+  }));
+  var order_obj = order_el.sortable();
+  order_el.disableSelection();
   $("#add_group").dialog({
     title: 'Create Group',
+    width: 'auto',
     modal: true,
     resizable: false,
-    buttons: {
-      Cancel: function() {
-        $(this).dialog("close");
+    buttons: [
+      {
+        text: "Cancel",
+        click: function() {
+          $(this).dialog("close");
+        }
       },
-      "Create Group": function() {
-        var data = $('#add_group > form').serialize();
-        var url = get_cluster_remote_url() + "add_group";
-        $.ajax({
-          type: "POST",
-          url: url,
-          data: data,
-          success: function() {
-            Pcs.update();
-            $("#add_group").dialog("close");
-          },
-          error: function (xhr, status, error) {
-            alert(
-              "Error creating group "
-              + ajax_simple_error(xhr, status, error)
-            );
-            $("#add_group").dialog("close");
-          }
-        });
+      {
+        text: "Create Group",
+        id: "add_group_submit_btn",
+        click: function() {
+          var dialog_obj = $(this);
+          var submit_btn_obj = dialog_obj.parent().find(
+            "#add_group_submit_btn"
+          );
+          submit_btn_obj.button("option", "disabled", true);
+
+          ajax_wrapper({
+            type: "POST",
+            url: get_cluster_remote_url() + "add_group",
+            data: {
+              resource_group: $(
+                '#add_group:visible input[name=resource_group]'
+              ).val(),
+              resources: order_obj.sortable(
+                "toArray", {attribute: "value"}
+              ).join(" ")
+            },
+            success: function() {
+              submit_btn_obj.button("option", "disabled", false);
+              Pcs.update();
+              dialog_obj.dialog("close");
+            },
+            error: function (xhr, status, error) {
+              alert(
+                "Error creating group "
+                + ajax_simple_error(xhr, status, error)
+              );
+              submit_btn_obj.button("option", "disabled", false);
+            }
+          });
+        }
       }
-    }
+    ]
   });
 }
 
@@ -180,22 +208,51 @@ function add_node_dialog() {
   });
 }
 
+function add_sbd_device_textbox() {
+  var max_count = 3;
+  var device_inputs = $("#add_node_selector .add_node_sbd_device");
+  var count = device_inputs.length;
+  if (count < max_count) {
+    $(device_inputs[count-1]).after(
+      '<tr class="add_node_sbd_device"> \
+        <td>&nbsp;</td> \
+        <td> \
+          <input type="text" name="devices[]" /> \
+          <a href="#" onclick="sbd_device_remove_textbox(this); return false;"> \
+            (-) \
+          </a> \
+        </td> \
+      </tr>'
+    )
+  }
+}
+
+function sbd_device_remove_textbox(obj) {
+  $(obj).parents(".add_node_sbd_device").remove();
+}
+
 function checkAddingNode(){
   var nodeName = $("#add_node").children("form").find("[name='new_nodename']").val().trim();
   if (nodeName == "") {
     $("#add_node_submit_btn").button("option", "disabled", false);
     return false;
   }
+  var port = $("#add_node_selector input.port").val().trim();
+  var data = {};
+  data["nodes"] = nodeName;
+  data["port-" + nodeName] = port;
 
-  $.ajax({
-    type: 'POST',
-    url: '/remote/check_gui_status',
-    data: {"nodes": nodeName},
+  ajax_wrapper({
+    type: 'GET',
+    url: '/manage/check_pcsd_status',
+    data: data,
     timeout: pcs_timeout,
     success: function (data) {
       var mydata = jQuery.parseJSON(data);
       if (mydata[nodeName] == "Unable to authenticate") {
-        auth_nodes_dialog([nodeName], function(){$("#add_node_submit_btn").trigger("click");});
+        var nodes_to_auth = {};
+        nodes_to_auth[nodeName] = port;
+        auth_nodes_dialog(nodes_to_auth, function(){$("#add_node_submit_btn").trigger("click");});
         $("#add_node_submit_btn").button("option", "disabled", false);
       } else if (mydata[nodeName] == "Offline") {
         alert("Unable to contact node '" + nodeName + "'");
@@ -213,10 +270,9 @@ function checkAddingNode(){
 
 function create_node(form) {
   var dataString = $(form).serialize();
-  dataString += "&clustername=" + get_cluster_name();
-  $.ajax({
+  ajax_wrapper({
     type: "POST",
-    url: "/remote/add_node_to_cluster",
+    url: get_cluster_remote_url() + "add_node_to_cluster",
     data: dataString,
     success: function(returnValue) {
       $("#add_node_submit_btn").button("option", "disabled", false);
@@ -230,53 +286,69 @@ function create_node(form) {
   });
 }
 
+function create_resource_error_processing(error_message, form, update, stonith) {
+  var message = (
+    "Unable to " + (update ? "update " : "add ") + name + "\n" + error_message
+  );
+  if (message.indexOf('--force') == -1) {
+    alert(message);
+  }
+  else {
+    message = message.replace(', use --force to override', '');
+    if (confirm(message + "\n\nDo you want to force the operation?")) {
+      create_resource(form, update, stonith, true)
+    }
+  }
+}
+
 // If update is set to true we update the resource instead of create it
 // if stonith is set to true we update/create a stonith agent
-function create_resource(form, update, stonith) {
-  dataString = $(form).serialize();
-  var resourceID = $(form).find("[name='name']").val(); 
-  url = get_cluster_remote_url() + $(form).attr("action");
+function create_resource(form, update, stonith, force) {
+  var data = {};
+  $($(form).serializeArray()).each(function(index, obj) {
+    data[obj.name] = obj.value;
+  });
+  data["resource_type"] = data["resource_type"].replace("::", ":");
+  var url = get_cluster_remote_url() + $(form).attr("action");
   var name;
 
-  if (stonith)
+  if (stonith) {
     name = "fence device";
-  else
-    name = "resource"
+    data["resource_type"] = data["resource_type"].replace("stonith:", "");
+  } else {
+    name = "resource";
+  }
+  if (force) {
+    data["force"] = force;
+  }
 
-  $.ajax({
+  ajax_wrapper({
     type: "POST",
     url: url,
-    data: dataString,
+    data: data,
     dataType: "json",
     success: function(returnValue) {
       $('input.apply_changes').show();
       if (returnValue["error"] == "true") {
-        alert(returnValue["stderr"]);
+        create_resource_error_processing(
+          returnValue["stderr"], form, update, stonith
+        );
       } else {
         Pcs.update();
         if (!update) {
           if (stonith)
-            $('#add_stonith').dialog('close');
+            $('#new_stonith_agent').dialog('close');
           else
-            $('#add_resource').dialog('close');
+            $('#new_resource_agent').dialog('close');
         } else {
           reload_current_resource();
         }
       }
     },
     error: function(xhr, status, error) {
-      if (update) {
-        alert(
-          "Unable to update " + name + " "
-          + ajax_simple_error(xhr, status, error)
-        );
-      }
-      else {
-        alert(
-          "Unable to add " + name + " "
-          + ajax_simple_error(xhr, status, error)
-        );
-      }
+      create_resource_error_processing(
+        ajax_simple_error(xhr, status, error), form, update, stonith
+      );
       $('input.apply_changes').show();
     }
   });
@@ -290,37 +362,15 @@ function disable_spaces(item) {
   });
 }
 
-function load_resource_form(item, ra, stonith) {
-  var data = { new: true, resourcename: ra};
-  var command;
-  if (!stonith)
-    command = "resource_metadata";
-  else
-    command = "fence_device_metadata";
-  
-  item.load(get_cluster_remote_url() + command, data);
-}
-
-function update_resource_form_groups(form, group_list) {
-  var select = $(form).find("select[name='resource_group']").first();
-  if (select.length < 1) {
+function load_resource_form(agent_name, stonith) {
+  stonith = typeof stonith !== 'undefined' ? stonith : false;
+  if (!agent_name) {
     return;
   }
-  var selected = select.val();
-  var selected_valid = false;
-  var select_new = select.clone();
-  select_new.empty();
-  select_new.append('<option value="">None</options>');
-  $.each(group_list, function(index, group) {
-    select_new.append('<option value="' + group + '">' + group + '</options>');
-    if (selected == group) {
-      selected_valid = true;
-    }
-  });
-  if (selected_valid) {
-    select_new.val(selected);
-  }
-  select.replaceWith(select_new);
+  var prop_name = "new_" + (stonith ? "fence" : "resource") + "_agent_metadata";
+  get_resource_agent_metadata(agent_name, function (data) {
+      Pcs.resourcesContainer.set(prop_name, Pcs.ResourceAgent.create(data));
+  }, stonith);
 }
 
 function verify_remove(remove_func, forceable, checklist_id, dialog_id, label, ok_text, title, remove_id) {
@@ -397,7 +447,7 @@ function verify_remove_nodes(node_id) {
 function verify_remove_resources(resource_id) {
   verify_remove(
     remove_resource, true, "resource_list", "dialog_verify_remove_resources",
-    "resource", "Remove resource(s)", "Resurce Removal", resource_id
+    "resource", "Remove resource(s)", "Resource Removal", resource_id
   );
 }
 
@@ -423,26 +473,6 @@ function get_checked_ids_from_nodelist(nodelist_id) {
     }
   });
   return ids;
-}
-
-function remote_node_update() {
-  node = $('#node_info_header_title_name').first().text();
-  $.ajax({
-    type: 'GET',
-    url: '/remote/status_all',
-    timeout: pcs_timeout,
-    success: function (data) {
-
-      data = jQuery.parseJSON(data);
-      node_data = data[node];
-
-      local_node_update(node, data);
-//      window.setTimeout(remote_node_update,pcs_timeout);
-    },
-    error: function (XMLHttpRequest, textStatus, errorThrown) {
-//      window.setTimeout(remote_node_update, 60000);
-    }
-  });
 }
 
 function local_node_update(node, data) {
@@ -492,7 +522,7 @@ function setNodeStatus(node, running) {
     $('.node_name:contains("'+node+'")').css('color','red');
   }
 }
-  
+
 
 function fade_in_out(id) {
   $(id).fadeTo(1000, 0.01, function() {
@@ -503,7 +533,7 @@ function fade_in_out(id) {
 function node_link_action(link_selector, url, label) {
   var node = $.trim($("#node_info_header_title_name").text());
   fade_in_out(link_selector);
-  $.ajax({
+  ajax_wrapper({
     type: 'POST',
     url: url,
     data: {"name": node},
@@ -521,7 +551,9 @@ function node_link_action(link_selector, url, label) {
 function setup_node_links() {
   Ember.debug("Setup node links");
   $("#node_start").click(function() {
-    node_link_action("#node_start", "/remote/cluster_start", "start");
+    node_link_action(
+      "#node_start", get_cluster_remote_url() + "cluster_start", "start"
+    );
   });
   $("#node_stop").click(function() {
     var node = $.trim($("#node_info_header_title_name").text());
@@ -529,13 +561,21 @@ function setup_node_links() {
     node_stop(node, false);
   });
   $("#node_restart").click(function() {
-    node_link_action("#node_restart", "/remote/node_restart", "restart");
+    node_link_action(
+      "#node_restart", get_cluster_remote_url() + "node_restart", "restart"
+    );
   });
   $("#node_standby").click(function() {
-    node_link_action("#node_standby", "/remote/node_standby", "standby");
+    node_link_action(
+      "#node_standby", get_cluster_remote_url() + "node_standby", "standby"
+    );
   });
   $("#node_unstandby").click(function() {
-    node_link_action("#node_unstandby", "/remote/node_unstandby", "unstandby");
+    node_link_action(
+      "#node_unstandby",
+      get_cluster_remote_url() + "node_unstandby",
+      "unstandby"
+    );
   });
 }
 
@@ -545,9 +585,9 @@ function node_stop(node, force) {
   if (force) {
     data["force"] = force;
   }
-  $.ajax({
+  ajax_wrapper({
     type: 'POST',
-    url: '/remote/cluster_stop',
+    url: get_cluster_remote_url() + 'cluster_stop',
     data: data,
     timeout: pcs_timeout,
     success: function() {
@@ -563,7 +603,7 @@ function node_stop(node, force) {
         */
         return;
       }
-      var message = "Unable to stop node '" + node + " " + ajax_simple_error(
+      var message = "Unable to stop node '" + node + "' " + ajax_simple_error(
         xhr, status, error
       );
       if (message.indexOf('--force') == -1) {
@@ -589,46 +629,76 @@ function disable_resource() {
   Pcs.resourcesContainer.disable_resource(curResource());
 }
 
-function cleanup_resource() {
-  var resource = curResource();
+function resource_stonith_cleanup_refresh(
+  resource, action_button_id, action_url, action_label, full_refresh
+) {
   if (resource == null) {
     return;
   }
-  fade_in_out("#resource_cleanup_link");
-  $.ajax({
+  data = {"resource": resource}
+  if (full_refresh) {
+    data["full"] = 1
+  }
+  fade_in_out(action_button_id);
+  ajax_wrapper({
     type: 'POST',
-    url: get_cluster_remote_url() + 'resource_cleanup',
-    data: {"resource": resource},
+    url: get_cluster_remote_url() + action_url,
+    data: data,
     success: function() {
     },
     error: function (xhr, status, error) {
       alert(
-        "Unable to cleanup resource '" + resource + "' "
+        "Unable to " + action_label + " resource '" + resource + "' "
         + ajax_simple_error(xhr, status, error)
       );
     }
   });
 }
 
+function cleanup_resource() {
+  resource_stonith_cleanup_refresh(
+    curResource(),
+    "#resource_cleanup_link",
+    "resource_cleanup",
+    "cleanup"
+  )
+}
+
 function cleanup_stonith() {
-  var resource = curStonith();
-  if (resource == null) {
-    return;
-  }
-  fade_in_out("#stonith_cleanup_link");
-  $.ajax({
-    type: 'POST',
-    url: get_cluster_remote_url() + 'resource_cleanup',
-    data: {"resource": resource},
-    success: function() {
-    },
-    error: function (xhr, status, error) {
-      alert(
-        "Unable to cleanup resource '" + resource + "' "
-        + ajax_simple_error(xhr, status, error)
-      );
-    }
-  });
+  resource_stonith_cleanup_refresh(
+    curStonith(),
+    "#stonith_cleanup_link",
+    "resource_cleanup",
+    "cleanup"
+  )
+}
+
+function refresh_resource(refresh_supported) {
+  resource_stonith_cleanup_refresh(
+    curResource(),
+    "#resource_refresh_link",
+    /* previously, "refresh" was called "cleanup" */
+    refresh_supported ? "resource_refresh" : "resource_cleanup",
+    "refresh",
+    /* no way to set if we want to do the full (on all nodes) refresh from gui
+     * (yet);
+     * moreover the full refresh flag only works for refresh not for cleanup */
+    refresh_supported ? true : false
+  )
+}
+
+function refresh_stonith(refresh_supported) {
+  resource_stonith_cleanup_refresh(
+    curStonith(),
+    "#stonith_refresh_link",
+    /* previously, "refresh" was called "cleanup" */
+    refresh_supported ? "resource_refresh" : "resource_cleanup",
+    "refresh",
+    /* no way to set if we want to do the full (on all nodes) refresh from gui
+     * (yet);
+     * moreover the full refresh flag only works for refresh not for cleanup */
+    refresh_supported ? true : false
+  )
 }
 
 function checkExistingNode() {
@@ -636,11 +706,15 @@ function checkExistingNode() {
   $('input[name="node-name"]').each(function(i,e) {
     node = e.value;
   });
+  var port = $("#add_existing_cluster_form input.port").val().trim();
+  var data = {};
+  data["nodes"] = node;
+  data["port-" + node] = port;
 
-  $.ajax({
-    type: 'POST',
-    url: '/remote/check_gui_status',
-    data: {"nodes": node},
+  ajax_wrapper({
+    type: 'GET',
+    url: '/manage/check_pcsd_status',
+    data: data,
     timeout: pcs_timeout,
     success: function (data) {
       mydata = jQuery.parseJSON(data);
@@ -653,25 +727,39 @@ function checkExistingNode() {
   });
 }
 
+function get_node_ports_object_from_create_new_cluster_dialog() {
+  var nodes = {}
+  $("#create_new_cluster_form tr.new_node").each(function(i, e) {
+    var node = $(e).find(".node").val().trim();
+    var port = $(e).find(".port").val().trim();
+    nodes[node] = port;
+  });
+  return nodes;
+}
+
 function checkClusterNodes() {
-  var nodes = [];
-  $('input[name^="node-"]').each(function(i,e) {
-    if (e.value != "") {
-      nodes.push(e.value)
+  var nodes = get_node_ports_object_from_create_new_cluster_dialog();
+  var node_list_str = Object.keys(nodes).join(",");
+  var request_data = {
+    "nodes": node_list_str,
+  };
+  $.each(nodes, function(node, port) {
+    if (port) {
+      request_data["port-" + node] = port;
     }
   });
 
-  $.ajax({
-    type: 'POST',
-    url: '/remote/check_gui_status',
-    data: {"nodes": nodes.join(",")},
+  ajax_wrapper({
+    type: 'GET',
+    url: '/manage/check_pcsd_status',
+    data: request_data,
     timeout: pcs_timeout,
     success: function (data) {
       mydata = jQuery.parseJSON(data);
-      $.ajax({
-        type: 'POST',
-        url: '/remote/get_sw_versions',
-        data: {"nodes": nodes.join(",")},
+      ajax_wrapper({
+        type: 'GET',
+        url: '/manage/get_nodes_sw_versions',
+        data: {"nodes": node_list_str},
         timeout: pcs_timeout,
         success: function(data) {
           versions = jQuery.parseJSON(data);
@@ -690,9 +778,9 @@ function checkClusterNodes() {
 
 function auth_nodes(dialog) {
   $("#auth_failed_error_msg").hide();
-  $.ajax({
+  ajax_wrapper({
     type: 'POST',
-    url: '/remote/auth_gui_against_nodes',
+    url: '/manage/auth_gui_against_nodes',
     data: dialog.find("#auth_nodes_form").serialize(),
     timeout: pcs_timeout,
     success: function (data) {
@@ -761,9 +849,10 @@ function auth_nodes_dialog_update(dialog_obj, data) {
   return unauth_nodes;
 }
 
-function auth_nodes_dialog(unauth_nodes, callback_success, callback_success_one) {
+function auth_nodes_dialog(unauth_nodes, callback_success, callback_success_one, ports_required) {
   callback_success = typeof callback_success !== 'undefined' ? callback_success : null;
   callback_success_one = typeof callback_success_one !== 'undefined' ? callback_success_one : null;
+  ports_required = typeof ports_required !== 'undefined' ? ports_required : false;
 
   var buttonsOpts = [
     {
@@ -802,15 +891,16 @@ function auth_nodes_dialog(unauth_nodes, callback_success, callback_success_one)
       return false;
     }
   });
+  unauth_nodes_count = Object.keys(unauth_nodes).length;
 
-  if (unauth_nodes.length == 0) {
+  if (unauth_nodes_count == 0) {
     if (callback_success !== null) {
       callback_success();
     }
     return;
   }
 
-  if (unauth_nodes.length == 1) {
+  if (unauth_nodes_count == 1) {
     dialog_obj.find("#same_pass").hide();
   } else {
     dialog_obj.find("#same_pass").show();
@@ -820,8 +910,16 @@ function auth_nodes_dialog(unauth_nodes, callback_success, callback_success_one)
   }
 
   dialog_obj.find('#auth_nodes_list').empty();
-  unauth_nodes.forEach(function(node) {
-    dialog_obj.find('#auth_nodes_list').append("\t\t\t<tr><td>" + node + '</td><td><input type="password" name="' + node + '-pass"></td></tr>\n');
+  $.each(unauth_nodes, function(node, port) {
+    var html = "<tr><td>" + htmlEncode(node) + "</td><td>";
+    if (ports_required) {
+      html += ':<input type="text" size="5" name="port-' + htmlEncode(node) + '" placeholder="2224" />';
+    } else {
+      html += '<input type="hidden" name="port-' + htmlEncode(node) + '" value="' + htmlEncode(port) + '" />';
+    }
+    html += '</td><td><input type="password" name="' + htmlEncode(node) + '-pass"></td></tr>';
+
+    dialog_obj.find('#auth_nodes_list').append(html);
   });
 
 }
@@ -863,10 +961,28 @@ function add_existing_dialog() {
 function update_existing_cluster_dialog(data) {
   for (var i in data) {
     if (data[i] == "Online") {
-      $('#add_existing_cluster_form').submit();
+      ajax_wrapper({
+        type: "POST",
+        url: "/manage/existingcluster",
+        timeout: pcs_timeout,
+        data: $('#add_existing_cluster_form').serialize(),
+        success: function(data) {
+          if (data) {
+            alert("Operation Successful!\n\nWarnings:\n" + data);
+          }
+          $("#add_existing_cluster.ui-dialog-content").each(function(key, item) {$(item).dialog("destroy")});
+          Pcs.update();
+        },
+        error: function (xhr, status, error) {
+          alert(xhr.responseText);
+          $("#add_existing_submit_btn").button("option", "disabled", false);
+        }
+      });
       return;
     } else if (data[i] == "Unable to authenticate") {
-      auth_nodes_dialog([i], function() {$("#add_existing_submit_btn").trigger("click");});
+      var nodes_to_auth = {};
+      nodes_to_auth[i] = $("#add_existing_cluster_form input.port").val().trim();
+      auth_nodes_dialog(nodes_to_auth, function() {$("#add_existing_submit_btn").trigger("click");});
       $("#add_existing_submit_btn").button("option", "disabled", false);
       return;
     }
@@ -924,7 +1040,12 @@ function update_create_cluster_dialog(nodes, version_info) {
     });
 
     if (cant_auth_nodes.length > 0) {
-      auth_nodes_dialog(cant_auth_nodes, function(){$("#create_cluster_submit_btn").trigger("click")});
+      var ports = get_node_ports_object_from_create_new_cluster_dialog();
+      var unauth_nodes_with_ports = {};
+      $.each(cant_auth_nodes, function(i, node) {
+        unauth_nodes_with_ports[node] = ports[node];
+      });
+      auth_nodes_dialog(unauth_nodes_with_ports, function(){$("#create_cluster_submit_btn").trigger("click")});
       $("#create_cluster_submit_btn").button("option", "disabled", false);
       return;
     }
@@ -999,7 +1120,6 @@ function update_create_cluster_dialog(nodes, version_info) {
   else {
     $("#addr0_addr1_mismatch_error_msg").hide();
   }
-
   if(versions) {
     if(cman_nodes.length > 0 && transport == "udpu") {
       if(noncman_nodes.length < 1 && ring1_nodes.length < 1) {
@@ -1039,7 +1159,36 @@ function update_create_cluster_dialog(nodes, version_info) {
   }
 
   if (good_nodes != 0 && cant_connect_nodes == 0 && cant_auth_nodes.length == 0 && cluster_name != "" && addr1_match == 1 && versions_check_ok == 1) {
-    $('#create_new_cluster_form').submit();
+    ajax_wrapper({
+      type: "POST",
+      url: "/manage/newcluster",
+      timeout: 60*1000,
+      data: $('#create_new_cluster_form').serialize(),
+      success: function(data) {
+        if (data) {
+          alert("Operation Successful!\n\nWarnings:\n" + data);
+        }
+        $("#create_new_cluster.ui-dialog-content").each(function(key, item) {$(item).dialog("destroy")});
+        Pcs.update();
+      },
+      error: function (xhr, status, error) {
+        var err_msg = "";
+        if ((status == "timeout") || ($.trim(error) == "timeout")) {
+          err_msg = (
+            "Operation takes longer to complete than expected. " +
+            "It may continue running in the background. Later, you can try " +
+            "to add this cluster as existing one."
+          );
+        } else {
+          err_msg = xhr.responseText.replace(
+            /, use --force to override[^\n]*/g,
+            ''
+          );
+        }
+        alert(err_msg);
+        $("#create_cluster_submit_btn").button("option", "disabled", false);
+      }
+    });
   } else {
     $("#create_cluster_submit_btn").button("option", "disabled", false);
   }
@@ -1080,7 +1229,8 @@ function create_cluster_add_nodes() {
 
   first_node = node_list.eq(0);
   new_node = first_node.clone();
-  $("input",new_node).attr("name", "node-"+(cur_num_nodes+1));
+  $("input[name=node-1]",new_node).attr("name", "node-"+(cur_num_nodes+1));
+  $("input[name=port-1]",new_node).attr("name", "port-"+(cur_num_nodes+1));
   $("input",new_node).val("");
   $("td", new_node).first().text("Node " + (cur_num_nodes+1)+ ":");
   new_node.insertAfter(node_list.last());
@@ -1129,8 +1279,8 @@ function hover_out(o) {
 }
 
 function reload_current_resource() {
-  tree_view_onclick(curResource(), true);
-  tree_view_onclick(curStonith(), true);
+  tree_view_onclick(curResource());
+  tree_view_onclick(curStonith());
 }
 
 function load_row(node_row, ac, cur_elem, containing_elem, also_set, initial_load){
@@ -1162,41 +1312,11 @@ function load_row(node_row, ac, cur_elem, containing_elem, also_set, initial_loa
   });
 }
 
-function load_agent_form(resource_id, stonith) {
-  var url;
-  var form;
-  if (stonith) {
-    form = $("#stonith_agent_form");
-    url = '/managec/' + Pcs.cluster_name + '/fence_device_form';
-  } else {
-    form = $("#resource_agent_form");
-    url = '/managec/' + Pcs.cluster_name + '/resource_form?version=2';
-  }
-
-  form.empty();
-
-  var resource_obj = Pcs.resourcesContainer.get_resource_by_id(resource_id);
-  if (!resource_obj || !resource_obj.get('is_primitive'))
-    return;
-
-  var data = {resource: resource_id};
-
-  $.ajax({
-    type: 'GET',
-    url: url,
-    data: data,
-    timeout: pcs_timeout,
-    success: function (data) {
-      Ember.run.next(function(){form.html(data);});
-    }
-  });
-}
-
 function show_loading_screen() {
   $("#loading_screen_progress_bar").progressbar({ value: 100});
   $("#loading_screen").dialog({
     modal: true,
-    title: "Loading",
+    title: "加载中",
     height: 100,
     width: 250,
     hide: {
@@ -1221,14 +1341,14 @@ function remove_cluster(ids) {
   $.each(ids, function(_, cluster) {
     data[ "clusterid-" + cluster] = true;
   });
-  $.ajax({
+  ajax_wrapper({
     type: 'POST',
     url: '/manage/removecluster',
     data: data,
     timeout: pcs_timeout,
     success: function () {
       $("#dialog_verify_remove_clusters.ui-dialog-content").each(function(key, item) {$(item).dialog("destroy")});
-      location.reload();
+      Pcs.update();
     },
     error: function (xhr, status, error) {
       alert("Unable to remove cluster: " + res + " ("+error+")");
@@ -1246,7 +1366,7 @@ function remove_nodes(ids, force) {
     data["force"] = force;
   }
 
-  $.ajax({
+  ajax_wrapper({
     type: 'POST',
     url: get_cluster_remote_url() + 'remove_nodes',
     data: data,
@@ -1293,15 +1413,17 @@ function remove_resource(ids, force) {
   if (force) {
     data["force"] = force;
   }
-  var res = "";
-  for (var i=0; i<ids.length; i++) {
-    res += ids[i] + ", ";
-    var resid_name = "resid-" + ids[i];
-    data[resid_name] = true;
-  }
-  res = res.slice(0,-2);
+  var res_obj;
+  $.each(ids, function(_, id) {
+    res_obj = Pcs.resourcesContainer.get_resource_by_id(id);
+    if (!res_obj) {
+      return true; // continue
+    } else if ($.inArray(res_obj.get("parent_id"), ids) == -1) {
+      data["resid-" + id] = true;
+    }
+  });
 
-  $.ajax({
+  ajax_wrapper({
     type: 'POST',
     url: get_cluster_remote_url() + 'remove_resource',
     data: data,
@@ -1312,12 +1434,27 @@ function remove_resource(ids, force) {
       Pcs.update();
     },
     error: function (xhr, status, error) {
-      error = $.trim(error)
-      var message = "Unable to remove resources (" + error + ")";
+      error = $.trim(error);
+      var message = "";
       if (
-        (xhr.responseText.substring(0,6) == "Error:") || ("Forbidden" == error)
+        status == "timeout" ||
+        error == "timeout" ||
+        xhr.responseText == '{"noresponse":true}'
       ) {
-        message += "\n\n" + xhr.responseText.replace("--force", "'Enforce removal'");
+        message = "Operation takes longer to complete than expected.";
+      } else {
+        message = "Unable to remove resources (" + error + ")";
+        if (
+          (xhr.responseText.substring(0, 6) == "Error:") ||
+          ("Forbidden" == error)
+        ) {
+          message += "\n\n" + xhr.responseText.replace(
+            "--force", "'Enforce removal'"
+          );
+          alert(message);
+          $("#verify_remove_submit_btn").button("option", "disabled", false);
+          return;
+        }
       }
       alert(message);
       $("#dialog_verify_remove_resources.ui-dialog-content").each(
@@ -1342,7 +1479,7 @@ function add_remove_fence_level(parent_id,remove) {
     data["node"] = Pcs.nodesController.cur_node.name;
   }
   fade_in_out(parent_id.parent());
-  $.ajax({
+  ajax_wrapper({
     type: 'POST',
     url: get_cluster_remote_url() + 'add_fence_level_remote',
     data: data,
@@ -1383,7 +1520,7 @@ function remove_node_attr(parent_id) {
   data["value"] = ""; // empty value will remove attribute
   fade_in_out(parent_id.parent());
 
-  $.ajax({
+  ajax_wrapper({
     type: 'POST',
     url: get_cluster_remote_url() + 'add_node_attr_remote',
     data: data,
@@ -1408,7 +1545,7 @@ function add_node_attr(parent_id) {
   data["value"] = $(parent_id + " input[name='new_node_attr_value']").val();
   fade_in_out($(parent_id));
 
-  $.ajax({
+  ajax_wrapper({
     type: 'POST',
     url: get_cluster_remote_url() + 'add_node_attr_remote',
     data: data,
@@ -1433,7 +1570,7 @@ function node_maintenance(node) {
     key: "maintenance",
     value: "on"
   };
-  $.ajax({
+  ajax_wrapper({
     type: 'POST',
     url: get_cluster_remote_url() + 'add_node_attr_remote',
     data: data,
@@ -1456,7 +1593,7 @@ function node_unmaintenance(node) {
     key: "maintenance",
     value: ""
   };
-  $.ajax({
+  ajax_wrapper({
     type: 'POST',
     url: get_cluster_remote_url() + 'add_node_attr_remote',
     data: data,
@@ -1495,25 +1632,42 @@ function add_meta_attr(parent_id) {
   Pcs.resourcesContainer.update_meta_attr(resource_id, attr, value);
 }
 
+
+function add_constraint_prepare_data(parent_id, constraint_type){
+  var value = function(sibling){
+    var form_value = $(parent_id + " " + sibling).val();
+    return form_value ? form_value.trim() : form_value;
+  };
+  switch(constraint_type){
+    case "ticket": return {
+      ticket: value("input[name='ticket']"),
+      role: value("select[name='role']"),
+      "loss-policy": value("select[name='loss-policy']"),
+    };
+  }
+  return {
+    rule: value("input[name='node_id']"),
+    score: value("input[name='score']"),
+    target_res_id: value("input[name='target_res_id']"),
+    order: value("select[name='order']"),
+    target_action: value("select[name='target_action']"),
+    res_action: value("select[name='res_action']"),
+    colocation_type: value("select[name='colocate']"),
+  };
+}
+
 function add_constraint(parent_id, c_type, force) {
-  var data = {};
+  var data = add_constraint_prepare_data(parent_id, c_type);
   data["disable_autocorrect"] = true;
   data["res_id"] = Pcs.resourcesContainer.cur_resource.get('id');
   data["node_id"] = $(parent_id + " input[name='node_id']").val();
-  data["rule"] = $(parent_id + " input[name='node_id']").val();
-  data["score"] = $(parent_id + " input[name='score']").val();
-  data["target_res_id"] = $(parent_id + " input[name='target_res_id']").val();
-  data["order"] = $(parent_id + " select[name='order']").val();
-  data["target_action"] = $(parent_id + " select[name='target_action']").val();
-  data["res_action"] = $(parent_id + " select[name='res_action']").val();
-  data["colocation_type"] = $(parent_id + " select[name='colocate']").val();
   data["c_type"] = c_type;
   if (force) {
     data["force"] = force;
   }
   fade_in_out($(parent_id));
 
-  $.ajax({
+  ajax_wrapper({
     type: 'POST',
     url: get_cluster_remote_url() + (
       data['node_id'] && (data['node_id'].trim().indexOf(' ') != -1)
@@ -1552,10 +1706,21 @@ function add_constraint(parent_id, c_type, force) {
   });
 }
 
+function add_constraint_set_get_options(parent_id, constraint_type){
+  switch(constraint_type){
+    case "ticket": return {
+      ticket: $(parent_id + " input[name='ticket']").val().trim(),
+      "loss-policy": $(parent_id + " select[name='loss-policy']").val().trim(),
+    };
+  }
+  return {};
+}
+
 function add_constraint_set(parent_id, c_type, force) {
   var data = {
     resources: [],
-    disable_autocorrect: true
+    disable_autocorrect: true,
+    options: {},
   };
   $(parent_id + " input[name='resource_ids[]']").each(function(index, element) {
     var resources = element.value.trim();
@@ -1563,6 +1728,7 @@ function add_constraint_set(parent_id, c_type, force) {
       data['resources'].push(resources.split(/\s+/));
     }
   });
+  data.options = add_constraint_set_get_options(parent_id, c_type);
   data["c_type"] = c_type;
   if (force) {
     data["force"] = force;
@@ -1572,7 +1738,7 @@ function add_constraint_set(parent_id, c_type, force) {
   }
   fade_in_out($(parent_id))
 
-  $.ajax({
+  ajax_wrapper({
     type: "POST",
     url: get_cluster_remote_url() + "add_constraint_set_remote",
     data: data,
@@ -1621,7 +1787,7 @@ function reset_constraint_set_form(parent_id) {
 
 function remove_constraint(id) {
   fade_in_out($("[constraint_id='"+id+"']").parent());
-  $.ajax({
+  ajax_wrapper({
     type: 'POST',
     url: get_cluster_remote_url() + 'remove_constraint_remote',
     data: {"constraint_id": id},
@@ -1638,9 +1804,14 @@ function remove_constraint(id) {
   });
 }
 
+function remove_constraint_action(remover_element){
+  remove_constraint($(remover_element).parent().attr('constraint_id'));
+  return false;
+}
+
 function remove_constraint_rule(id) {
   fade_in_out($("[rule_id='"+id+"']").parent());
-  $.ajax({
+  ajax_wrapper({
     type: 'POST',
     url: get_cluster_remote_url() + 'remove_constraint_rule_remote',
     data: {"rule_id": id},
@@ -1661,7 +1832,7 @@ function add_acl_role(form) {
   var data = {}
   data["name"] = $(form).find("input[name='name']").val().trim();
   data["description"] = $(form).find("input[name='description']").val().trim();
-  $.ajax({
+  ajax_wrapper({
     type: "POST",
     url: get_cluster_remote_url() + "add_acl_role",
     data: data,
@@ -1684,7 +1855,7 @@ function remove_acl_roles(ids) {
   for (var i = 0; i < ids.length; i++) {
     data["role-" + i] = ids[i];
   }
-  $.ajax({
+  ajax_wrapper({
     type: "POST",
     url: get_cluster_remote_url() + "remove_acl_roles",
     data: data,
@@ -1727,7 +1898,7 @@ function add_acl_item(parent_id, item_type) {
       break;
   }
   fade_in_out($(parent_id));
-  $.ajax({
+  ajax_wrapper({
     type: "POST",
     url: get_cluster_remote_url() + 'add_acl',
     data: data,
@@ -1755,15 +1926,17 @@ function remove_acl_item(id,item) {
       data["acl_perm_id"] = id.attr("acl_perm_id");
       item_label = "permission"
       break;
-    case "usergroup":
+    case "group":
+    case "user":
       data["item"] = "usergroup";
+      data["item_type"] = item;
       data["usergroup_id"] = id.attr("usergroup_id")
       data["role_id"] = id.attr("role_id")
       item_label = "user / group"
       break;
   }
 
-  $.ajax({
+  ajax_wrapper({
     type: 'POST',
     url: get_cluster_remote_url() + 'remove_acl',
     data: data,
@@ -1783,13 +1956,13 @@ function remove_acl_item(id,item) {
 function update_cluster_settings() {
   $("#cluster_properties button").prop("disabled", true);
   var data = {
-    'hidden[hidden_input]': null // this is needed for backward compatibility 
+    'hidden[hidden_input]': null // this is needed for backward compatibility
   };
   $.each(Pcs.settingsController.get("properties"), function(_, prop) {
     data[prop.get("form_name")] = prop.get("cur_val");
   });
   show_loading_screen();
-  $.ajax({
+  ajax_wrapper({
     type: 'POST',
     url: get_cluster_remote_url() + 'update_cluster_settings',
     data: data,
@@ -1811,7 +1984,7 @@ function update_cluster_settings() {
 function refresh_cluster_properties() {
   Pcs.settingsController.set("filter", "");
   $("#cluster_properties button").prop("disabled", true);
-  $.ajax({
+  ajax_wrapper({
     url: get_cluster_remote_url() + "cluster_properties",
     timeout: pcs_timeout,
     dataType: "json",
@@ -1819,11 +1992,7 @@ function refresh_cluster_properties() {
       Pcs.settingsController.update(data);
     },
     error: function (xhr, status, error) {
-      alert(
-        "Unable to get cluster properties: "
-        + ajax_simple_error(xhr, status, error)
-      );
-      Pcs.settingsController.update({});
+      Pcs.settingsController.set("error", true);
     },
     complete: function() {
       hide_loading_screen();
@@ -1911,6 +2080,7 @@ function get_status_value(status) {
     maintenance: 2,
     "partially running": 2,
     disabled: 3,
+    unmanaged: 3,
     unknown: 4,
     ok: 5,
     running: 5,
@@ -1927,7 +2097,8 @@ function status_comparator(a,b) {
   return valA - valB;
 }
 
-function get_status_icon_class(status_val) {
+function get_status_icon_class(status_val, is_unmanaged) {
+  var is_unmanaged = typeof is_unmanaged !== 'undefined' ? is_unmanaged : false;
   switch (status_val) {
     case get_status_value("error"):
       return "error";
@@ -1935,15 +2106,16 @@ function get_status_icon_class(status_val) {
     case get_status_value("warning"):
       return "warning";
     case get_status_value("ok"):
-      return "check";
+      return is_unmanaged ? "warning" : "check";
     default:
       return "x";
   }
 }
 
-function get_status_color(status_val) {
+function get_status_color(status_val, is_unmanaged) {
+  var is_unmanaged = typeof is_unmanaged !== 'undefined' ? is_unmanaged : false;
   if (status_val == get_status_value("ok")) {
-    return "green";
+    return is_unmanaged? "orange" : "green";
   }
   else if (status_val == get_status_value("warning") || status_val == get_status_value("unknown") || status_val == get_status_value('disabled')) {
     return "orange";
@@ -2012,10 +2184,9 @@ function htmlEncode(s)
 function fix_auth_of_cluster() {
   show_loading_screen();
   var clustername = Pcs.clusterController.cur_cluster.name;
-  $.ajax({
-    url: "/remote/fix_auth_of_cluster",
+  ajax_wrapper({
+    url: get_cluster_remote_url(clustername) + "fix_auth_of_cluster",
     type: "POST",
-    data: "clustername=" + clustername,
     success: function(data) {
       hide_loading_screen();
       Pcs.update();
@@ -2028,8 +2199,13 @@ function fix_auth_of_cluster() {
   });
 }
 
-function get_tree_view_element_id(element) {
-  return $(element).parents('table.tree-element')[0].id;
+function get_tree_view_resource_id(element) {
+  var suffix = '-treeview-element';
+  var element_id = $(element).parents('table.tree-element')[0].id;
+  if (element_id && element_id.endsWith(suffix)) {
+    return element_id.substr(0, element_id.lastIndexOf(suffix));
+  }
+  return null;
 }
 
 function get_list_view_element_id(element) {
@@ -2037,7 +2213,16 @@ function get_list_view_element_id(element) {
 }
 
 function auto_show_hide_constraints() {
-  var cont = ["location_constraints", "ordering_constraints", "ordering_set_constraints", "colocation_constraints", "meta_attributes"];
+  var cont = [
+    "location_constraints",
+    "ordering_constraints",
+    "ordering_set_constraints",
+    "colocation_constraints",
+    "colocation_set_constraints",
+    "ticket_constraints",
+    "ticket_set_constraints",
+    "meta_attributes",
+  ];
   $.each(cont, function(index, name) {
     var elem = $("#" + name)[0];
     var cur_resource = Pcs.resourcesContainer.get('cur_resource');
@@ -2051,31 +2236,64 @@ function auto_show_hide_constraints() {
   });
 }
 
-function tree_view_onclick(resource_id, auto) {
-  auto = typeof auto !== 'undefined' ? auto : false;
+function get_resource_agent_metadata(agent, on_success, stonith) {
+  stonith = typeof stonith !== 'undefined' ? stonith : false;
+  var request = (stonith)
+    ? 'get_fence_agent_metadata'
+    : 'get_resource_agent_metadata';
+  ajax_wrapper({
+    url: get_cluster_remote_url() + request,
+    dataType: "json",
+    data: {agent: agent},
+    timeout: pcs_timeout,
+    success: on_success,
+    error: function (xhr, status, error) {
+      alert(
+        "Unable to get metadata for resource agent '" + agent + "' "
+        + ajax_simple_error(xhr, status, error)
+      );
+    }
+  })
+}
+
+function update_instance_attributes(resource_id) {
+  var res_obj = Pcs.resourcesContainer.get_resource_by_id(resource_id);
+  if (!(res_obj && res_obj.get("is_primitive"))) {
+    return;
+  }
+  get_resource_agent_metadata(res_obj.get("resource_type"), function(data) {
+    var agent = Pcs.ResourceAgent.create(data);
+    res_obj.set("resource_agent", agent);
+    $.each(res_obj.get("instance_attr"), function(_, attr) {
+      agent.get_parameter(attr.name).set("value", attr.value);
+    });
+  }, res_obj.get("stonith"));
+}
+
+function tree_view_onclick(resource_id) {
   var resource_obj = Pcs.resourcesContainer.get_resource_by_id(resource_id);
   if (!resource_obj) {
     console.log("Resource " + resource_id + "not found.");
     return;
   }
   if (resource_obj.get('stonith')) {
+    if (window.location.hash.startsWith("#/fencedevices")) {
+      window.location.hash = "/fencedevices/" + resource_id;
+    }
     Pcs.resourcesContainer.set('cur_fence', resource_obj);
-    if (!auto) window.location.hash = "/fencedevices/" + resource_id;
   } else {
+    if (window.location.hash.startsWith("#/resources")) {
+      window.location.hash = "/resources/" + resource_id;
+    }
     Pcs.resourcesContainer.set('cur_resource', resource_obj);
-    if (!auto) window.location.hash = "/resources/" + resource_id;
     auto_show_hide_constraints();
   }
-
+  update_instance_attributes(resource_id);
   tree_view_select(resource_id);
-
-  Ember.run.next(Pcs, function() {
-    load_agent_form(resource_id, resource_obj.get('stonith'));
-  });
 }
 
 function tree_view_select(element_id) {
-  var e = $('#' + element_id);
+  var e = $(`#${element_id}-treeview-element`);
   var view = e.parents('table.tree-view');
   view.find('div.arrow').hide();
   view.find('tr.children').hide();
@@ -2085,15 +2303,6 @@ function tree_view_select(element_id) {
   e.find('tr.tree-element-name div.arrow:first').show();
   e.parents('tr.children').show();
   e.find('tr.children').show();
-}
-
-function list_view_select(element_id) {
-  var e = $('#' + element_id);
-  var view = e.parents('table.list-view');
-  view.find('div.arrow').hide();
-  view.find('tr.list-view-element').removeClass("node_selected");
-  e.addClass('node_selected');
-  e.find('div.arrow').show();
 }
 
 function tree_view_checkbox_onchange(element) {
@@ -2110,7 +2319,7 @@ function resource_master(resource_id) {
     return;
   }
   show_loading_screen();
-  $.ajax({
+  ajax_wrapper({
     type: 'POST',
     url: get_cluster_remote_url() + 'resource_master',
     data: {resource_id: resource_id},
@@ -2132,7 +2341,7 @@ function resource_clone(resource_id) {
     return;
   }
   show_loading_screen();
-  $.ajax({
+  ajax_wrapper({
     type: 'POST',
     url: get_cluster_remote_url() + 'resource_clone',
     data: {resource_id: resource_id},
@@ -2155,10 +2364,14 @@ function resource_unclone(resource_id) {
   }
   show_loading_screen();
   var resource_obj = Pcs.resourcesContainer.get_resource_by_id(resource_id);
+  if (!resource_obj) {
+    console.log("Resource '" + resource_id + "' not found.");
+    return;
+  }
   if (resource_obj.get('class_type') == 'clone') {
     resource_id = resource_obj.get('member').get('id');
   }
-  $.ajax({
+  ajax_wrapper({
     type: 'POST',
     url: get_cluster_remote_url() + 'resource_unclone',
     data: {resource_id: resource_id},
@@ -2180,7 +2393,7 @@ function resource_ungroup(group_id) {
     return;
   }
   show_loading_screen();
-  $.ajax({
+  ajax_wrapper({
     type: 'POST',
     url: get_cluster_remote_url() + 'resource_ungroup',
     data: {group_id: group_id},
@@ -2197,27 +2410,31 @@ function resource_ungroup(group_id) {
   });
 }
 
-function resource_change_group(resource_id, group_id) {
+function resource_change_group(resource_id, form) {
   if (resource_id == null) {
     return;
   }
   show_loading_screen();
   var resource_obj = Pcs.resourcesContainer.get_resource_by_id(resource_id);
+  if (!resource_obj) {
+    console.log("Resource '" + resource_id + "' not found.");
+    return;
+  }
   var data = {
-    resource_id: resource_id,
-    group_id: group_id
+    resource_id: resource_id
   };
-  
-  if (resource_obj.get('parent')) {
-    if (resource_obj.get('parent').get('id') == group_id) {
-      return;  
-    }
-    if (resource_obj.get('parent').get('class_type') == 'group') {
-      data['old_group_id'] = resource_obj.get('parent').get('id');
-    }
+  $.each($(form).serializeArray(), function(_, item) {
+    data[item.name] = item.value;
+  });
+
+  if (
+    resource_obj.get('parent') &&
+    resource_obj.get('parent').get('class_type') == 'group'
+  ) {
+    data['old_group_id'] = resource_obj.get('parent').get('id');
   }
 
-  $.ajax({
+  ajax_wrapper({
     type: 'POST',
     url: get_cluster_remote_url() + 'resource_change_group',
     data: data,
@@ -2244,6 +2461,137 @@ function ajax_simple_error(xhr, status, error) {
     message = message + "\n\n" + $.trim(xhr.responseText);
   }
   return message;
+}
+
+function ajax_wrapper(options) {
+  // get original callback functions
+  var error_original = function(xhr, status, error) {};
+  if (options.error) {
+    error_original = options.error;
+  }
+  var complete_original = function(xhr, status) {};
+  if (options.complete) {
+    complete_original = options.complete;
+  }
+
+  // prepare new callback functions
+  var options_new = $.extend(true, {}, options);
+  // display login dialog on error
+  options_new.error = function(xhr, status, error) {
+    if (xhr.status == 401) {
+      ajax_queue.push(options);
+      if (!login_dialog_opened) {
+        login_dialog(function() {
+          var item;
+          while (ajax_queue.length > 0) {
+            item = ajax_queue.shift();
+            ajax_wrapper(item);
+          }
+        });
+      }
+    }
+    else {
+      error_original(xhr, status, error);
+    }
+  }
+  // Do not run complete function if login dialog is open.
+  // Once user is logged in again, the original complete function will be run
+  // in repeated ajax call run by login dialog on success.
+  options_new.complete = function(xhr, status) {
+    if (xhr.status == 401) {
+      return;
+    }
+    else {
+      complete_original(xhr, status);
+    }
+  }
+
+  // run ajax request or put it into a queue
+  if (login_dialog_opened) {
+    ajax_queue.push(options);
+  }
+  else {
+    $.ajax(options_new);
+  }
+}
+
+function login_dialog(on_success) {
+  var ok_button_id = "login_form_ok";
+  var ok_button_selector = "#" + ok_button_id;
+  var buttons = [
+    {
+      text: "Log In",
+      id: ok_button_id,
+      click: function() {
+        var me = $(this);
+        var my_dialog = $(this).dialog()
+        my_dialog.find("#login_form_denied").hide();
+        $(ok_button_selector).button("option", "disabled", true);
+        $.ajax({
+          type: "POST",
+          url: "/login",
+          data: my_dialog.find("#login_form").serialize(),
+          complete: function() {
+            $(ok_button_selector).button("option", "disabled", false);
+          },
+          success: function() {
+            my_dialog.find("#login_form_username").val("");
+            my_dialog.find("#login_form_password").val("");
+            me.dialog("destroy");
+            login_dialog_opened = false;
+            on_success();
+          },
+          error: function(xhr, status, error) {
+            if (xhr.status == 401) {
+              my_dialog.find("#login_form_denied").show();
+              my_dialog.find("#login_form_password").val("");
+            }
+            else {
+              alert("Login error " + ajax_simple_error(xhr, status, error));
+            }
+          },
+        });
+      },
+    },
+    {
+      text: "Cancel",
+      id: "login_form_cancel",
+      // cancel will close the dialog the same way as X button does
+      click: function() {
+        $(this).dialog("close");
+      },
+    },
+  ];
+  var dialog_obj = $("#dialog_login").dialog({
+    title: "Log In",
+    modal: true,
+    resizable: true,
+    width: 400,
+    buttons: buttons,
+    open: function(event, ui) {
+      login_dialog_opened = true;
+    },
+    create: function(event, ui) {
+      login_dialog_opened = true;
+    },
+    // make sure to logout the user on dialog close
+    close: function(event, ui) {
+      login_dialog_opened = false;
+      location = "/logout";
+    },
+  });
+  dialog_obj.find("#login_form_denied").hide();
+  // submit on enter
+  dialog_obj.keypress(function(e) {
+    if (
+      e.keyCode == $.ui.keyCode.ENTER
+      &&
+      !dialog_obj.parent().find(ok_button_selector).button("option", "disabled")
+    ) {
+      dialog_obj.parent().find(ok_button_selector).trigger("click");
+      return false;
+    }
+  });
 }
 
 var permissions_current_cluster;
@@ -2284,7 +2632,7 @@ function permissions_load_all() {
 
 function permissions_load_cluster(cluster_name, callback) {
   var element_id = "permissions_cluster_" + cluster_name;
-  $.ajax({
+  ajax_wrapper({
     type: "GET",
     url: "/permissions_cluster_form/" + cluster_name,
     timeout: pcs_timeout,
@@ -2330,9 +2678,9 @@ function permissions_show_cluster(cluster_name, list_row) {
 function permissions_save_cluster(form) {
   var dataString = $(form).serialize();
   var cluster_name = permissions_get_clustername(form);
-  $.ajax({
+  ajax_wrapper({
     type: "POST",
-    url: "/permissions_save/",
+    url: get_cluster_remote_url(cluster_name) + "permissions_save",
     timeout: pcs_timeout,
     data: dataString,
     success: function() {
@@ -2543,7 +2891,7 @@ function set_utilization(type, entity_id, name, value) {
   } else return false;
   var url = get_cluster_remote_url() + "set_" + type + "_utilization";
 
-  $.ajax({
+  ajax_wrapper({
     type: 'POST',
     url: url,
     data: data,
@@ -2571,7 +2919,7 @@ Ember.Handlebars.helper('selector-helper', function (content, value, place_holde
   var out = "";
   var line;
   if (place_holder) {
-    out += '<option value="">' + place_holder + '</option>'; 
+    out += '<option value="">' + place_holder + '</option>';
   }
   $.each(content, function(_, opt){
     line = '<option value="' + opt["value"] + '"';
@@ -2583,3 +2931,250 @@ Ember.Handlebars.helper('selector-helper', function (content, value, place_holde
   });
   return new Handlebars.SafeString(out);
 });
+
+Ember.Handlebars.helper('bool-to-icon', function(value, options) {
+  var out = '<span class="sprites inverted ';
+  if (typeof(value) == 'undefined' || value == null) {
+    out += "questionmarkdark";
+  } else if (value) {
+    out += "checkdark"
+  } else {
+    out += "Xdark"
+  }
+  return new Handlebars.SafeString(out + '">&nbsp;</span>');
+});
+
+function nl2br(text) {
+  return text.replace(/(?:\r\n|\r|\n)/g, '<br />');
+}
+
+function enable_sbd(dialog) {
+  ajax_wrapper({
+    type: 'POST',
+    url: get_cluster_remote_url() + "remote_enable_sbd",
+    data: dialog.find("#enable_sbd_form").serialize(),
+    timeout: pcs_timeout,
+    success: function() {
+      dialog.parent().find("#enable_sbd_btn").button(
+        "option", "disabled", false
+      );
+      dialog.dialog("close");
+      alert(
+        'SBD enabled! You have to restart cluster in order to apply changes.'
+      );
+      Pcs.update();
+    },
+    error: function (xhr, status, error) {
+      dialog.parent().find("#enable_sbd_btn").button(
+        "option", "disabled", false
+      );
+      xhr.responseText = xhr.responseText.replace(
+        "--skip-offline", "option 'ignore offline nodes'"
+      );
+      alert(
+        ajax_simple_error(xhr, status, error)
+      );
+    }
+  });
+}
+
+function enable_sbd_dialog(node_list) {
+  var buttonsOpts = [
+    {
+      text: "Enable SBD",
+      id: "enable_sbd_btn",
+      click: function() {
+        var dialog = $(this);
+        dialog.parent().find("#enable_sbd_btn").button(
+          "option", "disabled", true
+        );
+        enable_sbd(dialog);
+      }
+    },
+    {
+      text:"Cancel",
+      click: function () {
+        $(this).dialog("close");
+      }
+    }
+  ];
+
+  var dialog_obj = $("#enable_sbd_dialog").dialog({title: 'Enable SBD',
+    modal: true, resizable: false,
+    width: 'auto',
+    buttons: buttonsOpts
+  });
+
+  dialog_obj.keypress(function(e) {
+    if (
+      e.keyCode == $.ui.keyCode.ENTER &&
+      !dialog_obj.parent().find("#enable_sbd_btn").button("option", "disabled")
+    ) {
+      dialog_obj.parent().find("#enable_sbd_btn").trigger("click");
+      return false;
+    }
+  });
+  dialog_obj.find('#watchdog_table').empty();
+  $.each(node_list, function(_, node) {
+    dialog_obj.find("#watchdog_table").append(
+      '<tr>' +
+        '<td>' +
+          node + ':' +
+        '</td>' +
+        '<td>' +
+          '<input ' +
+            'type="text" ' +
+            'placeholder="/dev/watchdog" ' +
+            'name="watchdog[' + node + ']" ' +
+          '/>' +
+        '</td>' +
+      '</tr>'
+    )
+  });
+}
+
+function disable_sbd(dialog) {
+  ajax_wrapper({
+    type: 'POST',
+    url: get_cluster_remote_url() + "remote_disable_sbd",
+    data: dialog.find("#disable_sbd_form").serialize(),
+    timeout: pcs_timeout,
+    success: function() {
+      dialog.parent().find("#disable_sbd_btn").button(
+        "option", "disabled", false
+      );
+      dialog.dialog("close");
+      alert(
+        'SBD disabled! You have to restart cluster in order to apply changes.'
+      );
+      Pcs.update();
+    },
+    error: function (xhr, status, error) {
+      dialog.parent().find("#disable_sbd_btn").button(
+        "option", "disabled", false
+      );
+      xhr.responseText = xhr.responseText.replace(
+        "--skip-offline", "option 'ignore offline nodes'"
+      );
+      alert(ajax_simple_error(xhr, status, error));
+    }
+  });
+}
+
+function disable_sbd_dialog() {
+  var buttonsOpts = [
+    {
+      text: "Disable SBD",
+      id: "disable_sbd_btn",
+      click: function() {
+        var dialog = $(this);
+        dialog.parent().find("#disable_sbd_btn").button(
+          "option", "disabled", true
+        );
+        disable_sbd(dialog);
+      }
+    },
+    {
+      text:"Cancel",
+      click: function () {
+        $(this).dialog("close");
+      }
+    }
+  ];
+
+  $("#disable_sbd_dialog").dialog({
+    title: 'Disable SBD',
+    modal: true, resizable: false,
+    width: 'auto',
+    buttons: buttonsOpts
+  });
+}
+
+function sbd_status_dialog() {
+  var buttonsOpts = [
+    {
+      text: "Enable SBD",
+      click: function() {
+        enable_sbd_dialog(Pcs.nodesController.get_node_name_list());
+      }
+    },
+    {
+      text: "Disable SBD",
+      click: disable_sbd_dialog
+    },
+    {
+      text:"Close",
+      click: function () {
+        $(this).dialog("close");
+      }
+    }
+  ];
+
+  $("#sbd_status_dialog").dialog({
+    title: 'SBD',
+    modal: true, resizable: false,
+    width: 'auto',
+    buttons: buttonsOpts
+  });
+}
+
+function unmanage_resource(resource_id) {
+  if (!resource_id) {
+    return;
+  }
+  fade_in_out("#resource_unmanage_link");
+  ajax_wrapper({
+    type: 'POST',
+    url: get_cluster_remote_url() + "unmanage_resource",
+    data: {
+      resource_list_json: JSON.stringify([resource_id]),
+    },
+    timeout: pcs_timeout,
+    complete: function() {
+      Pcs.update();
+    },
+    error: function (xhr, status, error) {
+      alert(
+        `Unable to unmanage '${resource_id}': ` +
+        ajax_simple_error(xhr, status, error)
+      );
+    },
+  });
+}
+
+function manage_resource(resource_id) {
+  if (!resource_id) {
+    return;
+  }
+  fade_in_out("#resource_manage_link");
+  ajax_wrapper({
+    type: 'POST',
+    url: get_cluster_remote_url() + "manage_resource",
+    data: {
+      resource_list_json: JSON.stringify([resource_id]),
+    },
+    timeout: pcs_timeout,
+    complete: function() {
+      Pcs.update();
+    },
+    error: function (xhr, status, error) {
+      alert(
+        `Unable to manage '${resource_id}': ` +
+        ajax_simple_error(xhr, status, error)
+      );
+    }
+  });
+}
+
+function show_add_resource_dialog() {
+  var new_resource_group_selector_id = $(
+    "#new_resource_agent .group-selector"
+  ).attr("id");
+  Ember.View.views[new_resource_group_selector_id].set(
+    "group_select_value", null
+  );
+  $('#new_resource_agent').dialog({
+    title: 'Add Resource',
+    modal:true, width: 'auto'
+  });
+}

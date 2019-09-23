@@ -5,7 +5,7 @@
 <tr {{bind-attr style="Pcs.acls_page"}}>
   <td id="remove_add" class="borderbottom">
     <div class="x sprites"></div>
-    <div class="link" onclick="verify_remove_acl_roles();return false;">&nbsp;Remove&nbsp;&nbsp;&nbsp;&nbsp;</div>
+    <div class="link" onclick="verify_remove_acl_roles();return false;">&nbsp;删除&nbsp;&nbsp;&nbsp;&nbsp;</div>
     <div class="plus sprites"></div>
     <div class="link" onclick="$('#add_acl_role').dialog({
         title: 'Add ACL Role',
@@ -21,11 +21,11 @@
             $(this).dialog('close');
           },
         }
-      }); return false;">&nbsp;Add</div>
+      }); return false;">&nbsp;添加</div>
   </td>
   <td class="borderbottom">&nbsp;</td>
   <td id="tab_name" width="125">
-    <div style="float: left">&nbsp;Edit ACL Role&nbsp;</div>
+    <div style="float: left">&nbsp;编辑访问控制角色&nbsp;</div>
     <div class="check sprites"></div>
   </td>
 </tr>
@@ -94,7 +94,7 @@
                   </select>
                 </td>
                 <td><input type="text" name="role_query_id"></td>
-                <td><button type="button" onclick="add_acl_item('#new_acl_perm', 'perm');" name="add">Add</button></td>
+                <td><button type="button" onclick="add_acl_item('#new_acl_perm', 'perm');" name="add">添加</button></td>
               </tr>
             </table>
           </div>
@@ -106,7 +106,7 @@
       <tr><td colspan=2>
           <div id="">
             <table class="datatable">
-              <tr><th>User Name</th><th>Remove</th></tr>
+              <tr><th>User Name</th><th>删除</th></tr>
               {{#each user in Pcs.aclsController.cur_role.user_list}}
               <tr {{bind-attr usergroup_id="user"}} {{bind-attr role_id="Pcs.aclsController.cur_role.name"}}>
                   <td>{{user}}</td>

@@ -1,6 +1,6 @@
 <% @pageName = @myView == "resource" ? "Resource" : "Fence Device" %>
 <tr id="<%=@myView%>_title_row" {{bind-attr style="Pcs.<%=@myView%>_page"}}><td id="page_header" colspan=3>
-<%= @myView == "resource" ? "RESOURCES" : "FENCE DEVICES" %>
+<%= @myView == "resource" ? "资源" : "FENCE设备" %>
     </td>
   </tr>
   <tr id="<%=@myView%>_header_row" {{bind-attr style="Pcs.<%=@myView%>_page"}}>
@@ -11,21 +11,21 @@
 	<% else %>
 	  <a href="#" onclick='verify_remove_fence_devices(); return false;'>
 	<% end %>
-      Remove</a>&nbsp;&nbsp;&nbsp;&nbsp;</div>
+      删除资源</a>&nbsp;&nbsp;&nbsp;&nbsp;</div>
   <div class="plus sprites"></div><div class="link">&nbsp;
     <% if @myView == "resource" %>
       <a href="#" onclick="$('#add_resource').dialog({title: 'Add Resource', modal:true, width: 'auto'});return false;">
     <% else %>
       <a href="#" onclick="$('#add_stonith').dialog({title: 'Add Fence Device', modal:true, width: 'auto'});return false;">
     <% end %>
-  Add</a>&nbsp;&nbsp;&nbsp;&nbsp;</div>
+  添加资源</a>&nbsp;&nbsp;&nbsp;&nbsp;</div>
     <% if @myView == "resource" %>
-      <div class="plus sprites"></div><div class="link">&nbsp;<a href="#" onclick="create_group();return false;">Create Group</a></div>
+      <div class="plus sprites"></div><div class="link">&nbsp;<a href="#" onclick="create_group();return false;">创建组资源</a></div>
     <% end %>
     </td>
     <td class="borderbottom">&nbsp;</td>
     <td id="tab_name" width="125">
-      <div style="float: left">&nbsp;Edit <%= @pageName%>&nbsp;</div><div class="check sprites"></div>
+      <div style="float: left">&nbsp;编辑 <%= @pageName%>&nbsp;</div><div class="check sprites"></div>
     </td>
   </tr>
   <tr id="<%=@myView%>_list_row" {{bind-attr style="Pcs.<%=@myView%>_page"}}>

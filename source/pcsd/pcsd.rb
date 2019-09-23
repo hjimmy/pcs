@@ -77,7 +77,7 @@ before do
 end
 
 configure do
-  DISABLE_GUI = (ENV['DISABLE_GUI'] and ENV['DISABLE_GUI'].downcase == 'true')
+  DISABLE_GUI = (ENV['DISABLE_GUI'] and ENV['DISABLE_GUI'].downcase == 'false')
   PCS = get_pcs_path(File.expand_path(File.dirname(__FILE__)))
   logger = File.open("/var/log/pcsd/pcsd.log", "a+", 0600)
   STDOUT.reopen(logger)
