@@ -33,6 +33,13 @@ set +a
 lockfile=/var/lock/subsys/$prog
 
 start() {
+    ret=`python /usr/local/ha/pacemaker_lic.py`
+    if [ $ret -ne 0 ];then
+         echo "The license has expired, please contact technical support!"
+         failure
+         retval=1
+         return $retval
+    fi
     [ -x $exec ] || return 5
     retval=0
     echo -n $"Starting $prog: "

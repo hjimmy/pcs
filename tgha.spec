@@ -128,6 +128,11 @@ cp -f %SOURCE15 pcsd/vendor/cache
 
 %install
 rm -rf $RPM_BUILD_ROOT
+mkdir $RPM_BUILD_ROOT/usr/local/ha/ -p
+mkdir $RPM_BUILD_ROOT/usr/bin/ -p
+cp pacemaker_lic.py  $RPM_BUILD_ROOT/usr/local/ha/ 
+cp license-install $RPM_BUILD_ROOT/usr/bin/
+
 make install DESTDIR=$RPM_BUILD_ROOT PYTHON_SITELIB=%{python_sitelib}
 make install_pcsd DESTDIR=$RPM_BUILD_ROOT PYTHON_SITELIB=%{python_sitelib} hdrdir="%{_includedir}" rubyhdrdir="%{_includedir}" includedir="%{_includedir}" initdir="%{_initrddir}"
 chmod 755 $RPM_BUILD_ROOT/%{python_sitelib}/pcs/pcs.py
@@ -148,6 +153,10 @@ fi
 %defattr(-,root,root,-)
 %{python_sitelib}/pcs
 %{python_sitelib}/pcs-%{version}-py2.*.egg-info
+/usr/bin/license-install
+/usr/local/ha/pacemaker_lic.py
+/usr/local/ha/pacemaker_lic.pyc
+/usr/local/ha/pacemaker_lic.pyo
 /usr/sbin/pcs
 /usr/lib/pcsd/*
 /usr/lib/pcsd/.bundle/config
