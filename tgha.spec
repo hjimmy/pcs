@@ -1,6 +1,6 @@
 Name: tgha		
 Version: 0.9.148
-Release: 7%{?dist}
+Release: 8%{?dist}
 License: GPLv2
 URL: http://github.com/feist/pcs
 Group: System Environment/Base
@@ -173,6 +173,9 @@ fi
 %doc COPYING README
 
 %changelog
+* Wed Sep 25 2019 jimmy - 0.9.148-8
+- 修改web资源无法显示的问题
+
 * Tue Mar 22 2016 Ivan Devat <idevat@redhat.com> - 0.9.148-7
 - Fixed handling permission config file corner cases
 - Resolves: rhbz#1317812
