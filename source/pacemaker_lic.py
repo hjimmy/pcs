@@ -39,9 +39,9 @@ def check_license():
 if __name__ == '__main__':
     create_license()
     if check_license() >= 0:
-        print 0
-    else:
-        print 1
-       #status, output = commands.getstatusoutput("/etc/init.d/pacemaker start")
+        #print 0
     #else:
-       #print "The license has expired, please contact technical support!"
+    #    print 1
+       status, output = commands.getstatusoutput("/usr/sbin/pacemakerd -f")
+    else:
+       print "The license has expired, please contact technical support!"

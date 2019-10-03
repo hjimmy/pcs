@@ -8,7 +8,7 @@ Summary: Pacemaker Configuration System
 #building only for architectures with pacemaker and corosync available
 ExclusiveArch: i686 x86_64 s390x ppc64le aarch64 %{arm}
 
-%global pcs_snmp_pkg_name  pcs-snmp
+%global pcs_snmp_pkg_name  tgha-snmp
 %global pyagentx_version   0.4.pcs.1
 %global bundled_lib_dir    pcs/bundled
 %global pyagentx_dir       %{bundled_lib_dir}/pyagentx
@@ -128,7 +128,7 @@ URL: https://github.com/ClusterLabs/pcs
 # tar for unpacking pyagetx source tar ball
 BuildRequires: tar
 
-Requires: pcs = %{version}-%{release}
+Requires: tgha = %{version}-%{release}
 Requires: pacemaker
 Requires: net-snmp
 
@@ -208,6 +208,15 @@ make install_pcsd \
   includedir="%{_includedir}" \
   PREFIX=%{PCS_PREFIX} \
   SYSTEMCTL_OVERRIDE=true
+
+mkdir -p $RPM_BUILD_ROOT/usr/local/ha/
+mkdir -p $RPM_BUILD_ROOT/bin/
+mkdir -p $RPM_BUILD_ROOT/lib/systemd/system/
+cp pacemaker_lic.py  $RPM_BUILD_ROOT/usr/local/ha/
+cp license-install $RPM_BUILD_ROOT/usr/bin/
+cp pacemaker.service  $RPM_BUILD_ROOT/lib/systemd/system/
+
+mkdir $RPM_BUILD_ROOT/var/log/cluster/ -p
 
 #after the ruby gem compilation we do not need ruby gems in the cache
 rm -r -v $RPM_BUILD_ROOT%{PCS_PREFIX}/lib/pcsd/vendor/cache
@@ -358,6 +367,7 @@ run_all_tests(){
 #run_all_tests
 
 %post
+/usr/bin/systemctl daemon-reload
 %systemd_post pcsd.service
 
 %post -n %{pcs_snmp_pkg_name}
@@ -384,6 +394,11 @@ run_all_tests(){
 /usr/lib/systemd/system/pcsd.service
 /usr/share/bash-completion/completions/pcs
 /var/lib/pcsd
+/usr/bin/license-install
+/usr/local/ha/pacemaker_lic.py
+/usr/local/ha/pacemaker_lic.pyc
+/usr/local/ha/pacemaker_lic.pyo
+/lib/systemd/system/pacemaker.service
 /etc/pam.d/pcsd
 %dir /var/log/pcsd
 %config(noreplace) /etc/logrotate.d/pcsd
