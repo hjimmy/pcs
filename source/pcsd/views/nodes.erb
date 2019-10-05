@@ -327,11 +327,11 @@
   <form method=POST action="/add_node_all">
     <table id="add_node_selector">
       <tr>
-        <td>Node Name:</td>
+        <td>主机名称:</td>
         <td><input type=text name=new_nodename></td>
       </tr>
       <tr>
-        <td>PCSD port:</td>
+        <td>服务端口:</td>
         <td><input class="port" type="text" name="new_node_port" placeholder="<%= PCSD_DEFAULT_PORT %>"/></td>
       </tr>
       {{#if Pcs.need_ring1_address}}
@@ -341,7 +341,7 @@
       </tr>
       {{/if}}
       <tr>
-        <td>Auto Start/Enable:</td>
+        <td>自动启动:</td>
         <td><input type="checkbox" name="auto_start" value="1" checked></td>
       </tr>
       {{#if Pcs.is_sbd_enabled}}

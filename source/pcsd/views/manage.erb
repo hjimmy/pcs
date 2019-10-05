@@ -22,7 +22,7 @@
 	  <td>
 	    <a href="#" class="plus sprites"></a>
 	    <div class="link">
-	      <a id="manage_create_cluster" href="#" onclick="create_cluster_dialog();">新建集群</a>
+	      <a id="manage_create_cluster" href="#" onclick="create_cluster_dialog();">创建集群</a>
 	    </div>
 	  </td>
 	</tr>
@@ -181,7 +181,7 @@
 <div id="add_existing_cluster" style="display: none;">
   <form id="add_existing_cluster_form" action="/manage/existingcluster" method="post">
     <br>
-    Enter the hostname/IP of a node in a cluster that you would like to manage:
+    输入已有集群中的任意主机名称或主机IP:
     <br>
     <br>
     <table class="err_msg_table" style="width: 100%">
@@ -191,23 +191,23 @@
       </td></tr>
     </table>
     <table>
-      <tr><td align=right>Node Name/IP:</td><td><input size="50" name="node-name" type="text"></td></tr>
-      <tr><td align=right>PCSD port:</td><td><input class="port" size="5" name="node-port" type="text" placeholder="<%= PCSD_DEFAULT_PORT %>"></td></tr>
+      <tr><td align=right>主机名或主机IP:</td><td><input size="50" name="node-name" type="text"></td></tr>
+      <tr><td align=right>服务端口:</td><td><input class="port" size="5" name="node-port" type="text" placeholder="<%= PCSD_DEFAULT_PORT %>"></td></tr>
     </table>
   </form>
 </div>
 <div id="create_new_cluster" style="display: none;">
   <form id="create_new_cluster_form" action="/manage/newcluster" method="post">
     <br>
-    Enter the hostnames and ports of the nodes you would like to use to create a cluster:
+    输入新集群的主机名和服务端口:
     <br>
     <br>
     <table>
-      <tr><td align=right>Cluster Name:</td><td colspan="2"><input size="50" name="clustername" type="text"></input></td></tr>
-      <tr class="new_node"><td align=right>Node 1:</td><td><input class="node" size="50" name="node-1" type="text"></input></td><td>:<input class="port" size="5" name="port-1" type="text" placeholder="<%= PCSD_DEFAULT_PORT %>"/></td></tr>
-      <tr class="new_node"><td align=right>Node 2:</td><td><input class="node" size="50" name="node-2" type="text"></input></td><td>:<input class="port" size="5" name="port-2" type="text" placeholder="<%= PCSD_DEFAULT_PORT %>"/></td></tr>
-      <tr class="new_node"><td align=right>Node 3:</td><td><input class="node" size="50" name="node-3" type="text"></input></td><td>:<input class="port" size="5" name="port-3" type="text" placeholder="<%= PCSD_DEFAULT_PORT %>"/></td></tr>
-      <tr><td></td><td id="manage_more_nodes" onclick="create_cluster_add_nodes();" style="color: #2B85DB;">More nodes...</td></tr>
+      <tr><td align=right>集群名称:</td><td colspan="2"><input size="50" name="clustername" type="text"></input></td></tr>
+      <tr class="new_node"><td align=right>主机1:</td><td><input class="node" size="50" name="node-1" type="text"></input></td><td>:<input class="port" size="5" name="port-1" type="text" placeholder="<%= PCSD_DEFAULT_PORT %>"/></td></tr>
+      <tr class="new_node"><td align=right>主机2:</td><td><input class="node" size="50" name="node-2" type="text"></input></td><td>:<input class="port" size="5" name="port-2" type="text" placeholder="<%= PCSD_DEFAULT_PORT %>"/></td></tr>
+      <tr class="new_node"><td align=right>主机3:</td><td><input class="node" size="50" name="node-3" type="text"></input></td><td>:<input class="port" size="5" name="port-3" type="text" placeholder="<%= PCSD_DEFAULT_PORT %>"/></td></tr>
+      <tr><td></td><td id="manage_more_nodes" onclick="create_cluster_add_nodes();" style="color: #2B85DB;">更多主机...</td></tr>
     </table>
     <table class="err_msg_table" style="width:100%">
       <tr><td align=center style="color: red" colspan=2"><span id="unable_to_connect_error_msg" style="display:none;">Unable to contact nodes highlighted in red.<br>Please make sure pcsd is started on all nodes.</span></td></tr>
@@ -218,7 +218,7 @@
       <tr><td align=center style="color: red" colspan=2"><span id="rhel_version_mismatch_error_msg" style="display:none;">Cannot create a cluster using nodes running different versions of RHEL.</span></td></tr>
       <tr><td align=center style="color: red" colspan=2"><span id="cman_mismatch_error_msg" style="display:none;">Cannot mix nodes running CMAN and nodes without CMAN in one cluster.</span></td></tr>
     </table>
-    <span onclick='$(".advanced_open").toggle();$("#advanced_cluster_create_options").toggle();'><span class="advanced_open rightarrow sprites"></span><span class="advanced_open downarrow sprites" style="display:none;"></span>Advanced Options:</span>
+    <span onclick='$(".advanced_open").toggle();$("#advanced_cluster_create_options").toggle();'><span class="advanced_open rightarrow sprites"></span><span class="advanced_open downarrow sprites" style="display:none;"></span>高级选项:</span>
     <div id="advanced_cluster_create_options" style="display:none;">
       <table>
 	<% transport_desc = "\

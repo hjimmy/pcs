@@ -67,7 +67,7 @@
   <div style="width: 450px;">
     <table cellpadding="0" cellspacing="0" class="tree-view" style="width: 100%; border: none;">
       <tr>
-        <th style="width:27px;"><input type="checkbox" onchange="checkBoxToggle(this,false)"></th><th style="width:47px;"></th><th>NAME</th><th style="width:220px;">TYPE</th><th style="width:18px;"></th>
+        <th style="width:27px;"><input type="checkbox" onchange="checkBoxToggle(this,false)"></th><th style="width:47px;"></th><th>名称</th><th style="width:220px;">类型</th><th style="width:18px;"></th>
       </tr>
       {{#each element in elements}}
       <tr><td colspan="5" style="padding-top: 0px; padding-bottom: 0px;">
@@ -353,9 +353,9 @@
     {{/if}}
   {{else}}
     {{#if stonith}}
-      NO FENCE DEVICE IN CLUSTER
+      集群中没有Fence设备
     {{else}}
-      NO RESOURCES IN CLUSTER
+      集群中没有资源
     {{/if}}
   {{/if}}
   </script>
@@ -1080,7 +1080,7 @@ Use the 'Add' button to submit the form.">
           <input type="button" onclick="tree_view_onclick(curStonith()); return false;" value="刷新" />
         {{else}}
           <center>
-            <input class="apply_changes" type="button" type="submit" onclick="$(this).hide();create_resource($(this).parents('form'), false, true); return false;" value="Create Fence Instance" style="margin-top: 1em;" />
+            <input class="apply_changes" type="button" type="submit" onclick="$(this).hide();create_resource($(this).parents('form'), false, true); return false;" value="创建Fence实例" style="margin-top: 1em;" />
           </center>
         {{/if}}
       </form>
@@ -1187,7 +1187,7 @@ Use the 'Add' button to submit the form.">
                         <table style="background: #4b77be">
                           <tr>
                             <td>
-                              <%=@manage ? "Select Cluster" : "Cluster: " + @cluster_name%>
+                              <%=@manage ? "选择集群" : "集群: " + @cluster_name%>
                             </td>
                             <td>
                               <div style="float:right;" class="downarrow sprites"></div>
