@@ -288,9 +288,9 @@
     {{/if}}
   {{else}}
     {{#if stonith}}
-      NO FENCE DEVICE IN CLUSTER
+      集群中没有Fence设备
     {{else}}
-      NO RESOURCES IN CLUSTER
+      集群中没有资源
     {{/if}}
   {{/if}}
   </script>
@@ -612,7 +612,7 @@ Use the 'Add' button to submit the form.">
                         <table style="background: #4b77be">
                           <tr>
                             <td>
-                              <%=@manage ? "Select Cluster" : "Cluster: " + @cluster_name%>
+                              <%=@manage ? "选择集群" : "集群: " + @cluster_name%>
                             </td>
                             <td>
                               <div style="float:right;" class="downarrow sprites"></div>

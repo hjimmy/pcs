@@ -104,20 +104,20 @@ function create_group() {
   });
 
   if (num_nodes == 0) {
-    alert("You must select at least one resource to add to a group");
+    alert("必须至少选择一个要添加到组中的资源!");
     return;
   }
 
   $("#resources_to_add_to_group").val(node_names);
   $("#add_group").dialog({
-    title: 'Create Group',
+    title: '创建组资源',
     modal: true,
     resizable: false,
     buttons: {
       Cancel: function() {
         $(this).dialog("close");
       },
-      "Create Group": function() {
+      "创建组资源": function() {
         var data = $('#add_group > form').serialize();
         var url = get_cluster_remote_url() + "add_group";
         $.ajax({
@@ -144,7 +144,7 @@ function create_group() {
 function add_node_dialog() {
   var buttonOpts = [
     {
-      text: "Add Node",
+      text: "添加",
       id: "add_node_submit_btn",
       click: function() {
         $("#add_node_submit_btn").button("option", "disabled", true);
@@ -152,7 +152,7 @@ function add_node_dialog() {
       }
     },
     {
-      text: "Cancel",
+      text: "退出",
       click: function() {
         $(this).dialog("close");
       }
@@ -172,7 +172,7 @@ function add_node_dialog() {
   });
 
   $('#add_node').dialog({
-    title: 'Add Node',
+    title: '添加主机',
     modal:true,
     resizable: false,
     width: 'auto',
@@ -332,7 +332,22 @@ function verify_remove(remove_func, forceable, checklist_id, dialog_id, label, o
     remove_id_list = get_checked_ids_from_nodelist(checklist_id);
   }
   if (remove_id_list.length < 1) {
-    alert("You must select at least one " + label + " to remove.");
+    if (label == "cluster"){
+	label = "集群"
+    }
+    else if (label == "node"){
+        label = "主机"
+    }
+    else if (label == "fence device"){
+        label = "Fence设备"
+    }
+    else if (label == "ACL role"){
+        label = "ACL角色"
+    }    
+    else if (label == "resource"){
+        label = "资源"
+    }
+    alert("必须至少选择一个" + label + "去删除!");
     return;
   }
 
@@ -355,7 +370,7 @@ function verify_remove(remove_func, forceable, checklist_id, dialog_id, label, o
       }
     },
     {
-      text: "Cancel",
+      text: "退出",
       id: "verify_remove_cancel_btn",
       click: function() {
         $(this).dialog("destroy");
@@ -383,35 +398,35 @@ function verify_remove(remove_func, forceable, checklist_id, dialog_id, label, o
 function verify_remove_clusters(cluster_id) {
   verify_remove(
     remove_cluster, false, "cluster_list", "dialog_verify_remove_clusters",
-    "cluster", "Remove Cluster(s)", "Cluster Removal", cluster_id
+    "cluster", "删除", "删除集群", cluster_id
   );
 }
 
 function verify_remove_nodes(node_id) {
   verify_remove(
     remove_nodes, false, "node_list", "dialog_verify_remove_nodes",
-    "node", "Remove Node(s)", "Remove Node", node_id
+    "node", "删除", "删除主机", node_id
   );
 }
 
 function verify_remove_resources(resource_id) {
   verify_remove(
     remove_resource, true, "resource_list", "dialog_verify_remove_resources",
-    "resource", "Remove resource(s)", "Resurce Removal", resource_id
+    "resource", "删除", "删除资源", resource_id
   );
 }
 
 function verify_remove_fence_devices(resource_id) {
   verify_remove(
     remove_resource, false, "stonith_list", "dialog_verify_remove_resources",
-    "fence device", "Remove device(s)", "Fence Device Removal", resource_id
+    "fence device", "删除", "删除Fence设备", resource_id
   );
 }
 
 function verify_remove_acl_roles(role_id) {
   verify_remove(
     remove_acl_roles, false, "acls_roles_list", "dialog_verify_remove_acl_roles",
-    "ACL role", "Remove Role(s)", "Remove ACL Role", role_id
+    "ACL role", "删除", "删除ACL角色", role_id
   );
 }
 
@@ -779,7 +794,7 @@ function auth_nodes_dialog(unauth_nodes, callback_success, callback_success_one)
       }
     },
     {
-      text:"Cancel",
+      text:"退出",
       click: function () {
         $(this).dialog("close");
       }
@@ -829,7 +844,7 @@ function auth_nodes_dialog(unauth_nodes, callback_success, callback_success_one)
 function add_existing_dialog() {
   var buttonOpts = [
     {
-      text: "Add Existing",
+      text: "添加",
       id: "add_existing_submit_btn",
       click: function () {
         $("#add_existing_cluster").find("table.err_msg_table").find("span[id$=_error_msg]").hide();
@@ -838,7 +853,7 @@ function add_existing_dialog() {
       }
     },
     {
-      text: "Cancel",
+      text: "退出",
       click: function() {
         $(this).dialog("close");
       }
@@ -853,7 +868,7 @@ function add_existing_dialog() {
     }
   });
 
-  $("#add_existing_cluster").dialog({title: 'Add Existing Cluster',
+  $("#add_existing_cluster").dialog({title: '添加已有集群',
     modal: false, resizable: false,
     width: 'auto',
     buttons: buttonOpts
@@ -1048,7 +1063,7 @@ function update_create_cluster_dialog(nodes, version_info) {
 
 function create_cluster_dialog() {
   var buttonOpts = [{
-    text: "Create Cluster",
+    text: "创建",
     id: "create_cluster_submit_btn",
     click: function() {
       $("#create_new_cluster").find("table.err_msg_table").find("span[id$=_error_msg]").hide();
@@ -1057,14 +1072,14 @@ function create_cluster_dialog() {
     }
   },
   {
-    text: "Cancel",
+    text: "退出",
     id: "create_cluster_cancel_btn",
     click: function() {
       $(this).dialog("close");
     }
   }]
 
-  $("#create_new_cluster").dialog({title: 'Create Cluster',
+  $("#create_new_cluster").dialog({title: '创建集群',
     modal: false, resizable: false,
     width: 'auto',
     buttons: buttonOpts

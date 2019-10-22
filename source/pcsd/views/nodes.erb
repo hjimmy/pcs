@@ -322,7 +322,7 @@
   <form method=POST action="/add_node_all">
     <table id="add_node_selector">
       <tr>
-        <td>Node Name:</td>
+        <td>主机名称:</td>
         <td><input type=text name=new_nodename></td>
       </tr>
       {{#if Pcs.need_ring1_address}}
@@ -332,7 +332,7 @@
       </tr>
       {{/if}}
       <tr>
-        <td>Auto Start/Enable:</td>
+        <td>自动启动:</td>
         <td><input type="checkbox" name="auto_start" value="1" checked></td>
       </tr>
       {{#if Pcs.is_cman_with_udpu_transport}}

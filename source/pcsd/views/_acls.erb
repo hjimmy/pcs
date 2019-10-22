@@ -35,7 +35,7 @@
       <tr>
         <th><input type="checkbox" onchange="checkBoxToggle(this,false)"></th>
         <th></th>
-        <th>ROLE&nbsp;NAME</th>
+        <th>角色名</th>
         <th></th>
       </tr>
       {{#each Pcs.aclsController}}
@@ -57,7 +57,7 @@
   <td id="node_info" colspan=2>
     <div id="role_info_div">
     <table>
-      <tr><td>Role Name:</td><td><input disabled type="text" size="40" {{bind-attr value="Pcs.aclsController.cur_role.name"}}></td></tr>
+      <tr><td>角色名:</td><td><input disabled type="text" size="40" {{bind-attr value="Pcs.aclsController.cur_role.name"}}></td></tr>
       <tr><td>Role Description:</td><td><input disabled type="text" size="40" {{bind-attr value="Pcs.aclsController.cur_role.description"}}></td></tr>
     </table>
     <table>
@@ -106,7 +106,7 @@
       <tr><td colspan=2>
           <div id="">
             <table class="datatable">
-              <tr><th>User Name</th><th>删除</th></tr>
+              <tr><th>用户名</th><th>删除</th></tr>
               {{#each user in Pcs.aclsController.cur_role.user_list}}
               <tr {{bind-attr usergroup_id="user"}} {{bind-attr role_id="Pcs.aclsController.cur_role.name"}}>
                   <td>{{user}}</td>
